@@ -37,12 +37,27 @@ Desktop icons and conky stay clickable: pointer events on the wallpaper window a
 
 ## Install
 
-Dependencies (Debian/Ubuntu package names):
+Dependencies per distro (X11, `libx11`/`libxrandr`/`libxrender` and a C toolchain are assumed present):
+
+**Arch**
 
 ```sh
-libx11-dev libxrandr-dev libxrender-dev libimlib2-dev libmpv-dev \
-libwebkit2gtk-4.1-dev libgtk-3-dev pkg-config
+sudo pacman -S --needed base-devel imlib2 mpv gtk3 webkit2gtk-4.1
 ```
+
+> `libmpv` is provided by the `mpv` package on Arch (there is no separate package).
+
+**Debian / Ubuntu**
+
+```sh
+sudo apt install build-essential pkg-config \
+  libimlib2-dev libmpv-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+```
+
+> `libmpv-dev` is a standalone package and does not pull in the `mpv` player binary.
+> If the build reports missing X11 headers, also install `libx11-dev libxrandr-dev libxrender-dev`.
+
+Optional, for `make test-xvfb`: `xorg-server-xvfb` (Arch) / `xvfb` (Debian/Ubuntu).
 
 Build and install:
 
