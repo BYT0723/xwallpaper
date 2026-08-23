@@ -76,7 +76,7 @@ Video options:
 
 - `--rotate <0|90|180|270>` — static rotation, e.g. portrait clips on landscape screens
 - `--keybinds <file>` — an mpv `input.conf`-style file for runtime control (pause, cycle rotation, …)
-- `--fps <number>` — force the playback frame rate (lower = less CPU)
+- `--fps <number>` — re-sample playback to this frame rate (drops frames; keeps speed; lower = less CPU/GPU)
 - `--mute` / `--volume <0-100>` — audio control
 
 See `xwallpaper --help` for the full list.

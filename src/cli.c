@@ -112,7 +112,7 @@ void xw_cli_usage(FILE *f) {
     "  --scale <mode>          image/video: fill(default)|contain|stretch|tile\n"
     "  --rotate <0|90|180|270> video: static rotation (e.g. portrait clips)\n"
     "  --keybinds <file>       video: mpv input.conf-style keybindings\n"
-    "  --fps <number>          video: force playback frame rate\n"
+    "  --fps <number>          video: target frame rate (keeps speed, drops frames)\n"
     "  --mute --volume <0-100> video\n"
     "  -o <0.0-1.0>            window opacity\n"
     "  -b -s -st -sp -nf       below, sticky, skip-taskbar, skip-pager, no-focus\n"
