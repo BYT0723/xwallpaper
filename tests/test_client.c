@@ -72,6 +72,32 @@ static void test_encode_set_output(void) {
   TEST_CHECK(has_field(msg, n, "volume=40"));
 }
 
+static void test_encode_set_video_fps(void) {
+  TEST_BEGIN("set --fps encodes fps field; default omits it");
+  reset();
+  cfg.command = XW_CMD_SET;
+  cfg.target = XW_TARGET_PRIMARY;
+  snprintf(cfg.path, sizeof(cfg.path), "clip.mp4");
+  cfg.backend_explicit = XW_BACKEND_VIDEO;
+  cfg.fps = 30.0;
+
+  char msg[XW_MSG_MAX];
+  int n = xw_proto_encode_set(&cfg, msg, sizeof(msg));
+  TEST_CHECK(n > 0);
+  TEST_CHECK(has_field(msg, n, "fps=30"));
+
+  /* default fps=0 is not encoded */
+  reset();
+  cfg.command = XW_CMD_SET;
+  cfg.target = XW_TARGET_PRIMARY;
+  snprintf(cfg.path, sizeof(cfg.path), "clip.mp4");
+  cfg.backend_explicit = XW_BACKEND_VIDEO;
+  n = xw_proto_encode_set(&cfg, msg, sizeof(msg));
+  TEST_CHECK(n > 0);
+  TEST_CHECK(!has_field(msg, n, "fps="));
+}
+
+
 static void test_encode_set_geom(void) {
   TEST_BEGIN("set -g encodes geometry");
   reset();
@@ -253,6 +279,7 @@ int main(void) {
   test_encode_list_exit();
   test_encode_set_video_extras();
   test_encode_set_rotate_default_omitted();
+  test_encode_set_video_fps();
   test_client_roundtrip();
   TEST_SUMMARY();
 }

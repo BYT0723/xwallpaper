@@ -131,6 +131,11 @@ static int encode_common(const char *verb, const XWConfig *cfg,
     if (append_field(msg, n, &off, kb) < 0)
       return -1;
   }
+  if (cfg->fps > 0.0) {
+    snprintf(kv, sizeof(kv), "fps=%g", cfg->fps);
+    if (append_field(msg, n, &off, kv) < 0)
+      return -1;
+  }
   snprintf(kv, sizeof(kv), "volume=%.0f", cfg->volume);
   if (append_field(msg, n, &off, kv) < 0)
     return -1;
@@ -279,6 +284,11 @@ static int decode_set(char *msg, size_t n, XWConfig *cfg, char *errbuf, size_t e
   if (kv_str(&d, "keybinds", kb, sizeof(kb)) == 0)
     snprintf(cfg->keybinds, sizeof(cfg->keybinds), "%s", kb);
   double dv;
+  char fp[32];
+  if (kv_str(&d, "fps", fp, sizeof(fp)) == 0) {
+    dv = atof(fp);
+    if (dv > 0.0) cfg->fps = dv;
+  }
   char vol[32];
   if (kv_str(&d, "volume", vol, sizeof(vol)) == 0) {
     dv = atof(vol);
