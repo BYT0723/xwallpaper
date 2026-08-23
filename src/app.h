@@ -1,0 +1,59 @@
+#ifndef XW_APP_H
+#define XW_APP_H
+
+#include <X11/Xlib.h>
+
+#include "backend.h"
+#include "cli.h"
+#include "xw_err.h"
+
+typedef struct XWApp XWApp;
+
+/* Create the daemon's app context: opens the shared display, creates no
+ * windows yet. Returns NULL with err set on failure. */
+XWApp *xw_app_create(XWError *err);
+
+/* Apply a `set` command:
+ *   - TARGET_OUTPUT: find the window for that output and swap its backend in
+ *     place, or create it if absent.
+ *   - TARGET_GEOM:   replace any geometry-driven window at that rect.
+ *   - TARGET_ALL:    tear down all windows and create one per connected output.
+ * Returns 0 on success, -1 on error. */
+int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err);
+
+/* Apply a `clear` command: remove the given output's window (TARGET_OUTPUT)
+ * or all windows (TARGET_ALL). Returns 0. */
+int xw_app_clear(XWApp *app, const XWConfig *cfg, XWError *err);
+
+/* Remove all windows. Returns 0. */
+int xw_app_clear_all(XWApp *app);
+
+/* Run the event loop until stop is requested. */
+int xw_app_run(XWApp *app);
+
+/* Request the loop to stop at the next iteration. */
+void xw_app_stop(XWApp *app);
+
+/* Whether stop was requested. */
+int xw_app_stopped(XWApp *app);
+
+/* Number of windows. */
+int xw_app_window_count(XWApp *app);
+
+/* Access window i (0..count-1). */
+XWWindow *xw_app_window(XWApp *app, int i);
+
+/* The daemon's X display (for event polling). */
+Display *xw_app_display(XWApp *app);
+
+/* Route an X event to the owning window: pointer forwarding + backend
+ * on_event hook. Returns 1 if consumed. */
+int xw_app_handle_event(XWApp *app, XEvent *ev);
+
+/* Current app instance (for signal handlers). NULL before create / after destroy. */
+XWApp *xw_app_get(void);
+
+/* Tear down windows and close the display. */
+void xw_app_destroy(XWApp *app);
+
+#endif /* XW_APP_H */

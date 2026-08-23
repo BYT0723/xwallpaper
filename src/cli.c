@@ -1,0 +1,338 @@
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "cli.h"
+
+/* Parse an X11 geometry string "WxH+X+Y" or "WxH". Returns 1 on success.
+ * Offset defaults to 0,0. Negative offsets ("-X-Y") are accepted. */
+int xw_geom_parse(const char *s, int *x, int *y, unsigned int *w, unsigned int *h) {
+  unsigned int ww, hh;
+  int xi = 0, yi = 0;
+  char *end;
+
+  if (!s || !*s)
+    return 0;
+
+  ww = (unsigned int)strtoul(s, &end, 10);
+  if (end == s || ww == 0)
+    return 0;
+  if (*end != 'x' && *end != 'X')
+    return 0;
+  end++;
+  if (*end == '\0')
+    return 0;
+  hh = (unsigned int)strtoul(end, &end, 10);
+  if (hh == 0)
+    return 0;
+
+  if (*end == '\0') {
+    /* no offset */
+  } else if (*end == '+' || *end == '-') {
+    xi = (int)strtol(end, &end, 10);
+    if (*end == '\0') {
+      /* x only, y = 0 */
+    } else if (*end == '+' || *end == '-') {
+      yi = (int)strtol(end, &end, 10);
+      if (*end != '\0')
+        return 0;
+    } else {
+      return 0;
+    }
+  } else {
+    return 0;
+  }
+
+  *w = ww;
+  *h = hh;
+  *x = xi;
+  *y = yi;
+  return 1;
+}
+
+static int is_image_ext(const char *ext) {
+  static const char *imgs[] = {"png", "jpg", "jpeg", "webp", "bmp"};
+  for (size_t i = 0; i < sizeof(imgs) / sizeof(imgs[0]); i++)
+    if (strcmp(ext, imgs[i]) == 0)
+      return 1;
+  return 0;
+}
+
+static int is_video_ext(const char *ext) {
+  static const char *vids[] = {"mp4", "webm", "mkv", "mov", "gif", "avi", "m4v"};
+  for (size_t i = 0; i < sizeof(vids) / sizeof(vids[0]); i++)
+    if (strcmp(ext, vids[i]) == 0)
+      return 1;
+  return 0;
+}
+
+static int is_web_ext(const char *ext) {
+  return strcmp(ext, "html") == 0 || strcmp(ext, "htm") == 0 || strcmp(ext, "svg") == 0;
+}
+
+int xw_cli_detect_backend(const char *path) {
+  const char *dot = strrchr(path, '.');
+  if (!dot || dot == path || dot[1] == '\0')
+    return -1;
+
+  char ext[16];
+  size_t len = 0;
+  for (const char *p = dot + 1; *p && len < sizeof(ext) - 1; p++) {
+    ext[len++] = (char)tolower((unsigned char)*p);
+  }
+  ext[len] = '\0';
+
+  if (is_image_ext(ext))
+    return XW_BACKEND_IMAGE;
+  if (is_video_ext(ext))
+    return XW_BACKEND_VIDEO;
+  if (is_web_ext(ext))
+    return XW_BACKEND_WEB;
+  return -1;
+}
+
+void xw_cli_usage(FILE *f) {
+  fprintf(f,
+    "Usage:\n"
+    "  xwallpaper set [--image|--video|--web] [target] [opts] <path>\n"
+    "  xwallpaper clear [-m <name|output>]\n"
+    "  xwallpaper --list\n"
+    "  xwallpaper exit\n"
+    "  xwallpaper --daemon   (debug: run the daemon in the foreground)\n"
+    "\n"
+    "Target:\n"
+    "  (default)     primary output\n"
+    "  -m <output>   xrandr output name (e.g. DP-1, HDMI-1)\n"
+    "  --all         every output\n"
+    "  -g WxH+X+Y --name <n>   explicit geometry window, named (required)\n"
+    "\n"
+    "Options:\n"
+    "  --image --video --web   force backend (default: by file extension)\n"
+    "  --scale <mode>          image/video: fill(default)|contain|stretch|tile\n"
+    "  --mute --volume <0-100> video\n"
+    "  -o <0.0-1.0>            window opacity\n"
+    "  -b -s -st -sp -nf       below, sticky, skip-taskbar, skip-pager, no-focus\n"
+    "  -d                      daemonize (fork to background)\n"
+    "  --debug                 verbose diagnostics\n"
+    "\n"
+    "Examples:\n"
+    "  xwallpaper set ~/wall.png\n"
+    "  xwallpaper set --all --video ~/clip.mp4 --mute\n"
+    "  xwallpaper set -m HDMI-1 --web ~/page.html\n"
+    "  xwallpaper set -g 3840x2160+0+0 --name dual --video ~/wide.mp4\n"
+    "  xwallpaper clear -m dual\n");
+}
+
+int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
+  memset(cfg, 0, sizeof(*cfg));
+  cfg->backend_explicit = -1;
+  cfg->scale_mode = XW_SCALE_FILL;
+  cfg->volume = 100.0;
+  cfg->opacity = 1.0;
+  cfg->command = XW_CMD_NONE;
+
+  if (argc < 2) {
+    XW_ERROR_SET(err, 1, "no command given");
+    return -1;
+  }
+
+  int i = 1;
+  const char *cmd = argv[i++];
+
+  if (strcmp(cmd, "--help") == 0 || strcmp(cmd, "-h") == 0) {
+    xw_cli_usage(stdout);
+    exit(0);
+  }
+
+  if (strcmp(cmd, "--list") == 0) {
+    cfg->command = XW_CMD_LIST;
+    if (i < argc) {
+      XW_ERROR_SET(err, 1, "unexpected argument after --list");
+      return -1;
+    }
+    return 0;
+  }
+
+  if (strcmp(cmd, "--daemon") == 0) {
+    cfg->command = XW_CMD_DAEMON;
+    if (i < argc) {
+      XW_ERROR_SET(err, 1, "unexpected argument after --daemon");
+      return -1;
+    }
+    return 0;
+  }
+
+  if (strcmp(cmd, "exit") == 0) {
+    cfg->command = XW_CMD_EXIT;
+    if (i < argc) {
+      XW_ERROR_SET(err, 1, "unexpected argument after exit");
+      return -1;
+    }
+    return 0;
+  }
+
+  if (strcmp(cmd, "set") == 0) {
+    cfg->command = XW_CMD_SET;
+    cfg->target = XW_TARGET_PRIMARY;
+  } else if (strcmp(cmd, "clear") == 0) {
+    cfg->command = XW_CMD_CLEAR;
+    cfg->target = XW_TARGET_ALL;
+  } else {
+    XW_ERROR_SET(err, 1, "unknown command '%s'", cmd);
+    return -1;
+  }
+
+  for (; i < argc; i++) {
+    const char *a = argv[i];
+
+    if (cfg->command == XW_CMD_CLEAR) {
+      /* clear accepts --all or -m <name/output> */
+      if (strcmp(a, "--all") == 0) {
+        cfg->target = XW_TARGET_ALL;
+      } else if (strcmp(a, "-m") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "-m requires an output name");
+          return -1;
+        }
+        snprintf(cfg->output, sizeof(cfg->output), "%s", argv[i]);
+        cfg->target = XW_TARGET_OUTPUT;
+      } else {
+        XW_ERROR_SET(err, 1, "clear: unexpected argument '%s'", a);
+        return -1;
+      }
+      continue;
+    }
+
+    /* --flag form */
+    if (strncmp(a, "--", 2) == 0) {
+      if (strcmp(a, "--image") == 0) {
+        cfg->backend_explicit = XW_BACKEND_IMAGE;
+      } else if (strcmp(a, "--video") == 0) {
+        cfg->backend_explicit = XW_BACKEND_VIDEO;
+      } else if (strcmp(a, "--web") == 0) {
+        cfg->backend_explicit = XW_BACKEND_WEB;
+      } else if (strcmp(a, "--all") == 0) {
+        cfg->target = XW_TARGET_ALL;
+      } else if (strcmp(a, "--name") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "--name requires a value");
+          return -1;
+        }
+        snprintf(cfg->name, sizeof(cfg->name), "%s", argv[i]);
+      } else if (strcmp(a, "--mute") == 0) {
+        cfg->mute = 1;
+      } else if (strcmp(a, "--volume") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "--volume requires a value");
+          return -1;
+        }
+        cfg->volume = atof(argv[i]);
+        if (cfg->volume < 0 || cfg->volume > 100) {
+          XW_ERROR_SET(err, 1, "--volume must be 0..100");
+          return -1;
+        }
+      } else if (strcmp(a, "--scale") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "--scale requires a mode");
+          return -1;
+        }
+        const char *m = argv[i];
+        if (strcmp(m, "contain") == 0)
+          cfg->scale_mode = XW_SCALE_CONTAIN;
+        else if (strcmp(m, "stretch") == 0)
+          cfg->scale_mode = XW_SCALE_STRETCH;
+        else if (strcmp(m, "fill") == 0)
+          cfg->scale_mode = XW_SCALE_FILL;
+        else if (strcmp(m, "tile") == 0)
+          cfg->scale_mode = XW_SCALE_TILE;
+        else {
+          XW_ERROR_SET(err, 1, "--scale: unknown mode '%s'", m);
+          return -1;
+        }
+      } else if (strcmp(a, "--debug") == 0) {
+        cfg->debug = 1;
+      } else {
+        XW_ERROR_SET(err, 1, "unknown option '%s'", a);
+        return -1;
+      }
+      continue;
+    }
+
+    /* -x short flags */
+    if (a[0] == '-' && a[1] != '\0') {
+      if (strcmp(a, "-m") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "-m requires an output name");
+          return -1;
+        }
+        snprintf(cfg->output, sizeof(cfg->output), "%s", argv[i]);
+        cfg->target = XW_TARGET_OUTPUT;
+      } else if (strcmp(a, "-g") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "-g requires a geometry string");
+          return -1;
+        }
+        if (!xw_geom_parse(argv[i], &cfg->geom_x, &cfg->geom_y,
+                           &cfg->geom_w, &cfg->geom_h)) {
+          XW_ERROR_SET(err, 1, "invalid geometry '%s' (want WxH[+X+Y])", argv[i]);
+          return -1;
+        }
+        cfg->have_geom = 1;
+        cfg->target = XW_TARGET_GEOM;
+      } else if (strcmp(a, "-n") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "-n requires a value");
+          return -1;
+        }
+        snprintf(cfg->name, sizeof(cfg->name), "%s", argv[i]);
+      } else if (strcmp(a, "-o") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "-o requires a value");
+          return -1;
+        }
+        cfg->opacity = atof(argv[i]);
+        if (cfg->opacity < 0 || cfg->opacity > 1) {
+          XW_ERROR_SET(err, 1, "-o must be 0..1");
+          return -1;
+        }
+      } else if (strcmp(a, "-b") == 0) {
+        cfg->below = 1;
+      } else if (strcmp(a, "-s") == 0) {
+        cfg->sticky = 1;
+      } else if (strcmp(a, "-st") == 0) {
+        cfg->skip_taskbar = 1;
+      } else if (strcmp(a, "-sp") == 0) {
+        cfg->skip_pager = 1;
+      } else if (strcmp(a, "-nf") == 0) {
+        cfg->no_focus = 1;
+      } else if (strcmp(a, "-d") == 0) {
+        cfg->daemonize = 1;
+      } else {
+        XW_ERROR_SET(err, 1, "unknown option '%s'", a);
+        return -1;
+      }
+      continue;
+    }
+
+    /* positional: the wallpaper path */
+    if (cfg->path[0] != '\0') {
+      XW_ERROR_SET(err, 1, "unexpected extra argument '%s'", a);
+      return -1;
+    }
+    snprintf(cfg->path, sizeof(cfg->path), "%s", a);
+  }
+
+  if (cfg->command == XW_CMD_SET && cfg->path[0] == '\0') {
+    XW_ERROR_SET(err, 1, "set requires a wallpaper path");
+    return -1;
+  }
+
+  if (cfg->command == XW_CMD_SET && cfg->have_geom && cfg->name[0] == '\0') {
+    XW_ERROR_SET(err, 1, "-g requires --name <name> so the window can be "
+                 "addressed by clear/--list");
+    return -1;
+  }
+
+  return 0;
+}
