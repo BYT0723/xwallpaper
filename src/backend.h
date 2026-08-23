@@ -31,6 +31,8 @@ typedef struct XWBackendOpt {
   /* video */
   int mute;
   double volume;        /* 0.0 .. 100.0 */
+  int rotate;           /* 0/90/180/270 */
+  const char *keybinds; /* mpv input.conf path, may be NULL */
 } XWBackendOpt;
 
 /* Backend lifecycle. app codes only against this interface.
