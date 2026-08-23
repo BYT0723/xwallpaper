@@ -33,6 +33,7 @@ typedef struct XWBackendOpt {
   double volume;        /* 0.0 .. 100.0 */
   int rotate;           /* 0/90/180/270 */
   const char *keybinds; /* mpv input.conf path, may be NULL */
+  double fps;           /* forced frame rate, 0 = auto */
 } XWBackendOpt;
 
 /* Backend lifecycle. app codes only against this interface.

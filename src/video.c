@@ -60,6 +60,14 @@ static int video_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWEr
     mpv_set_option_string(ctx->mpv, "input-conf", opt->keybinds);
     mpv_set_option_string(ctx->mpv, "input-vo-keyboard", "yes");
   }
+  /* forced frame rate: container-fps-override needs correct-pts=no,
+   * which is fine for wallpaper clips (no audio/seek interaction) */
+  if (opt->fps > 0.0) {
+    char fps[32];
+    snprintf(fps, sizeof(fps), "%g", opt->fps);
+    mpv_set_option_string(ctx->mpv, "container-fps-override", fps);
+    mpv_set_option_string(ctx->mpv, "correct-pts", "no");
+  }
 
   /* scale mode: FILL crops to fill (panscan 1.0), STRETCH disables aspect,
    * CONTAIN keeps aspect with bars (mpv default) */

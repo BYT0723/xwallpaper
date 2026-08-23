@@ -26,14 +26,14 @@ static const char *make_keybinds_file(void) {
   return path;
 }
 
-static void test_video_lifecycle(void) {
-  TEST_BEGIN("video backend init/start/destroy");
+/* run a full backend lifecycle (init+start+destroy) with the given opts
+ * under Xvfb; returns 0 on success, -1 if init or start fails */
+static int run_with_opts(const XWBackendOpt *opt) {
   XWError err;
   memset(&err, 0, sizeof(err));
   Display *dpy = xw_x11_open_display(&err);
-  TEST_CHECK(dpy != NULL);
   if (!dpy)
-    return;
+    return -1;
 
   XWConfig cfg;
   memset(&cfg, 0, sizeof(cfg));
@@ -42,15 +42,31 @@ static void test_video_lifecycle(void) {
   int x, y;
   unsigned int w, h;
   if (xw_x11_resolve_geometry(dpy, &cfg, &x, &y, &w, &h, NULL) != 0) {
-    TEST_FAIL("cannot resolve primary geometry");
-    return;
+    xw_x11_close_display(dpy);
+    return -1;
   }
 
   XWWindow *win = xw_x11_create_window(dpy, &cfg, x, y, w, h, &err);
-  TEST_CHECK(win != NULL);
-  if (!win)
-    return;
+  if (!win) {
+    xw_x11_close_display(dpy);
+    return -1;
+  }
 
+  XWBackend *tmpl = xw_video_backend_new();
+  XWBackend backend = *tmpl;
+  int rc = 0;
+  if (backend.init(&backend, win, opt, &err) != 0 || backend.start(&backend) != 0)
+    rc = -1;
+
+  usleep(100000);
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+  xw_x11_close_display(dpy);
+  return rc;
+}
+
+static void test_video_lifecycle(void) {
+  TEST_BEGIN("video backend init/start/destroy");
   XWBackendOpt opt;
   memset(&opt, 0, sizeof(opt));
   opt.type = XW_BACKEND_VIDEO;
@@ -59,64 +75,34 @@ static void test_video_lifecycle(void) {
   opt.volume = 50.0;
   opt.rotate = 90;
   opt.keybinds = make_keybinds_file();
-
-  XWBackend *tmpl = xw_video_backend_new();
-  XWBackend backend = *tmpl;
-  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
-  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
-
-  /* let mpv run briefly */
-  usleep(200000);
-
-  backend.destroy(&backend);
-  xw_x11_destroy_window(win);
+  TEST_CHECK_EQ_INT(run_with_opts(&opt), 0);
 }
 
 static void test_video_default_opts(void) {
-  TEST_BEGIN("video init with default rotate/keybinds");
-  XWError err;
-  memset(&err, 0, sizeof(err));
-  Display *dpy = xw_x11_open_display(&err);
-  TEST_CHECK(dpy != NULL);
-  if (!dpy)
-    return;
-
-  XWConfig cfg;
-  memset(&cfg, 0, sizeof(cfg));
-  cfg.target = XW_TARGET_PRIMARY;
-
-  int x, y;
-  unsigned int w, h;
-  if (xw_x11_resolve_geometry(dpy, &cfg, &x, &y, &w, &h, NULL) != 0) {
-    TEST_FAIL("cannot resolve primary geometry");
-    return;
-  }
-
-  XWWindow *win = xw_x11_create_window(dpy, &cfg, x, y, w, h, &err);
-  TEST_CHECK(win != NULL);
-  if (!win)
-    return;
-
+  TEST_BEGIN("video init with default rotate/keybinds/fps");
   XWBackendOpt opt;
   memset(&opt, 0, sizeof(opt));
   opt.type = XW_BACKEND_VIDEO;
   opt.path = "tests/data/bounce.mp4";
   opt.mute = 1;
+  TEST_CHECK_EQ_INT(run_with_opts(&opt), 0);
+}
 
-  XWBackend *tmpl = xw_video_backend_new();
-  XWBackend backend = *tmpl;
-  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
-  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
-
-  usleep(100000);
-
-  backend.destroy(&backend);
-  xw_x11_destroy_window(win);
+static void test_video_fps_override(void) {
+  TEST_BEGIN("video init with forced fps");
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_VIDEO;
+  opt.path = "tests/data/bounce.mp4";
+  opt.mute = 1;
+  opt.fps = 30.0;
+  TEST_CHECK_EQ_INT(run_with_opts(&opt), 0);
 }
 
 int main(void) {
   TEST_SUITE("video backend (Xvfb)");
   test_video_lifecycle();
   test_video_default_opts();
+  test_video_fps_override();
   TEST_SUMMARY();
 }
