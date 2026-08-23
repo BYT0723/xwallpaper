@@ -14,8 +14,6 @@ typedef struct {
   int mute;
   double volume;
   int scale_mode;
-  int rotate;
-  char keybinds[1024];
 } VideoCtx;
 
 /* Start playback asynchronously; if it fails, mpv reports via events. */
@@ -34,9 +32,6 @@ static int video_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWEr
   ctx->mute = opt->mute;
   ctx->volume = opt->volume;
   ctx->scale_mode = opt->scale_mode;
-  ctx->rotate = opt->rotate;
-  snprintf(ctx->keybinds, sizeof(ctx->keybinds), "%s",
-           opt->keybinds ? opt->keybinds : "");
 
   ctx->mpv = mpv_create();
   if (!ctx->mpv) {
@@ -61,8 +56,8 @@ static int video_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWEr
   mpv_set_option_string(ctx->mpv, "osc", "no");
   mpv_set_option_string(ctx->mpv, "osd-level", "0");
   /* load custom keybinds from an input.conf-style file (empty = none) */
-  if (ctx->keybinds[0]) {
-    mpv_set_option_string(ctx->mpv, "input-conf", ctx->keybinds);
+  if (opt->keybinds && opt->keybinds[0]) {
+    mpv_set_option_string(ctx->mpv, "input-conf", opt->keybinds);
     mpv_set_option_string(ctx->mpv, "input-vo-keyboard", "yes");
   }
 
@@ -95,8 +90,8 @@ static int video_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWEr
   }
 
   /* static rotation: initial angle for the video, e.g. portrait clips */
-  if (ctx->rotate != 0) {
-    int64_t rot = ctx->rotate;
+  if (opt->rotate != 0) {
+    int64_t rot = opt->rotate;
     mpv_set_property(ctx->mpv, "video-rotate", MPV_FORMAT_INT64, &rot);
   }
 
