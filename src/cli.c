@@ -255,7 +255,13 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
           XW_ERROR_SET(err, 1, "--rotate requires a value");
           return -1;
         }
-        cfg->rotate = atoi(argv[i]);
+        char *end;
+        long r = strtol(argv[i], &end, 10);
+        if (*argv[i] == '\0' || *end != '\0') {
+          XW_ERROR_SET(err, 1, "--rotate must be a number");
+          return -1;
+        }
+        cfg->rotate = (int)r;
         if (cfg->rotate != 0 && cfg->rotate != 90 &&
             cfg->rotate != 180 && cfg->rotate != 270) {
           XW_ERROR_SET(err, 1, "--rotate must be 0, 90, 180 or 270");

@@ -222,6 +222,12 @@ static void test_rotate_flag(void) {
   TEST_CHECK_EQ_INT(parse(argv4, 6), -1);
   TEST_CHECK(err.code != 0);
 
+  /* non-numeric rotate must error (not silently treated as 0) */
+  reset();
+  char *argv_bad[] = {"xwallpaper", "set", "--video", "--rotate", "abc", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv_bad, 6), -1);
+  TEST_CHECK(err.code != 0);
+
   reset();
   char *argv5[] = {"xwallpaper", "set", "--video", "--rotate", "180", "a.mp4"};
   TEST_CHECK_EQ_INT(parse(argv5, 6), 0);
