@@ -198,6 +198,50 @@ static void test_scale_mode_flag(void) {
   TEST_CHECK_EQ_INT(cfg.scale_mode, XW_SCALE_TILE);
 }
 
+static void test_rotate_flag(void) {
+  TEST_BEGIN("--rotate parses and validates 0/90/180/270");
+  reset();
+  char *argv[] = {"xwallpaper", "set", "--video", "--rotate", "90", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv, 6), 0);
+  TEST_CHECK_EQ_INT(cfg.rotate, 90);
+
+  reset();
+  char *argv2[] = {"xwallpaper", "set", "--video", "--rotate", "270", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv2, 6), 0);
+  TEST_CHECK_EQ_INT(cfg.rotate, 270);
+
+  /* default is 0 */
+  reset();
+  char *argv3[] = {"xwallpaper", "set", "--video", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv3, 4), 0);
+  TEST_CHECK_EQ_INT(cfg.rotate, 0);
+
+  /* invalid angles must error */
+  reset();
+  char *argv4[] = {"xwallpaper", "set", "--video", "--rotate", "45", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv4, 6), -1);
+  TEST_CHECK(err.code != 0);
+
+  reset();
+  char *argv5[] = {"xwallpaper", "set", "--video", "--rotate", "180", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv5, 6), 0);
+  TEST_CHECK_EQ_INT(cfg.rotate, 180);
+}
+
+static void test_keybinds_flag(void) {
+  TEST_BEGIN("--keybinds stores the config path");
+  reset();
+  char *argv[] = {"xwallpaper", "set", "--video", "--keybinds", "/tmp/keys.conf", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv, 6), 0);
+  TEST_CHECK_EQ_STR(cfg.keybinds, "/tmp/keys.conf");
+
+  /* default is empty */
+  reset();
+  char *argv2[] = {"xwallpaper", "set", "--video", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv2, 4), 0);
+  TEST_CHECK_EQ_STR(cfg.keybinds, "");
+}
+
 int main(void) {
   TEST_SUITE("cli");
   test_detect_backend();
@@ -219,5 +263,7 @@ int main(void) {
   test_unknown_flag();
   test_unknown_command();
   test_scale_mode_flag();
+  test_rotate_flag();
+  test_keybinds_flag();
   TEST_SUMMARY();
 }

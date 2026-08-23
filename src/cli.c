@@ -250,6 +250,23 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
           XW_ERROR_SET(err, 1, "--scale: unknown mode '%s'", m);
           return -1;
         }
+      } else if (strcmp(a, "--rotate") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "--rotate requires a value");
+          return -1;
+        }
+        cfg->rotate = atoi(argv[i]);
+        if (cfg->rotate != 0 && cfg->rotate != 90 &&
+            cfg->rotate != 180 && cfg->rotate != 270) {
+          XW_ERROR_SET(err, 1, "--rotate must be 0, 90, 180 or 270");
+          return -1;
+        }
+      } else if (strcmp(a, "--keybinds") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "--keybinds requires a file path");
+          return -1;
+        }
+        snprintf(cfg->keybinds, sizeof(cfg->keybinds), "%s", argv[i]);
       } else if (strcmp(a, "--debug") == 0) {
         cfg->debug = 1;
       } else {

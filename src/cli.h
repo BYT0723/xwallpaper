@@ -38,6 +38,8 @@ typedef struct XWConfig {
   int scale_mode;     /* XW_SCALE_* for image */
   int mute;           /* video */
   double volume;      /* video, 0..100, default 100 */
+  int rotate;         /* video, 0/90/180/270, default 0 */
+  char keybinds[1024]; /* video, mpv input-conf file path, empty = none */
   double opacity;     /* 0..1, default 1.0 */
   int below;          /* -b */
   int sticky;         /* -s */
