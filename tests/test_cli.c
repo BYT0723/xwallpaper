@@ -248,6 +248,36 @@ static void test_keybinds_flag(void) {
   TEST_CHECK_EQ_STR(cfg.keybinds, "");
 }
 
+static void test_fps_flag(void) {
+  TEST_BEGIN("--fps parses and validates a positive frame rate");
+  reset();
+  char *argv[] = {"xwallpaper", "set", "--video", "--fps", "30", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv, 6), 0);
+  TEST_CHECK_EQ_INT((int)cfg.fps, 30);
+
+  /* default is 0 (auto) */
+  reset();
+  char *argv2[] = {"xwallpaper", "set", "--video", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv2, 4), 0);
+  TEST_CHECK_EQ_INT((int)cfg.fps, 0);
+
+  /* non-numeric / non-positive must error */
+  reset();
+  char *argv3[] = {"xwallpaper", "set", "--video", "--fps", "abc", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv3, 6), -1);
+  TEST_CHECK(err.code != 0);
+
+  reset();
+  char *argv4[] = {"xwallpaper", "set", "--video", "--fps", "-5", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv4, 6), -1);
+  TEST_CHECK(err.code != 0);
+
+  reset();
+  char *argv5[] = {"xwallpaper", "set", "--video", "--fps", "0", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv5, 6), -1);
+  TEST_CHECK(err.code != 0);
+}
+
 int main(void) {
   TEST_SUITE("cli");
   test_detect_backend();
@@ -271,5 +301,6 @@ int main(void) {
   test_scale_mode_flag();
   test_rotate_flag();
   test_keybinds_flag();
+  test_fps_flag();
   TEST_SUMMARY();
 }

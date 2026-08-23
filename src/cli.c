@@ -110,6 +110,9 @@ void xw_cli_usage(FILE *f) {
     "Options:\n"
     "  --image --video --web   force backend (default: by file extension)\n"
     "  --scale <mode>          image/video: fill(default)|contain|stretch|tile\n"
+    "  --rotate <0|90|180|270> video: static rotation (e.g. portrait clips)\n"
+    "  --keybinds <file>       video: mpv input.conf-style keybindings\n"
+    "  --fps <number>          video: force playback frame rate\n"
     "  --mute --volume <0-100> video\n"
     "  -o <0.0-1.0>            window opacity\n"
     "  -b -s -st -sp -nf       below, sticky, skip-taskbar, skip-pager, no-focus\n"
@@ -273,6 +276,18 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
           return -1;
         }
         snprintf(cfg->keybinds, sizeof(cfg->keybinds), "%s", argv[i]);
+      } else if (strcmp(a, "--fps") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "--fps requires a value");
+          return -1;
+        }
+        char *end;
+        double f = strtod(argv[i], &end);
+        if (*argv[i] == '\0' || *end != '\0' || f <= 0.0) {
+          XW_ERROR_SET(err, 1, "--fps must be a positive number");
+          return -1;
+        }
+        cfg->fps = f;
       } else if (strcmp(a, "--debug") == 0) {
         cfg->debug = 1;
       } else {
