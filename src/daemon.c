@@ -120,6 +120,17 @@ static int encode_common(const char *verb, const XWConfig *cfg,
   snprintf(kv, sizeof(kv), "mute=%d", cfg->mute);
   if (append_field(msg, n, &off, kv) < 0)
     return -1;
+  if (cfg->rotate != 0) {
+    snprintf(kv, sizeof(kv), "rotate=%d", cfg->rotate);
+    if (append_field(msg, n, &off, kv) < 0)
+      return -1;
+  }
+  if (cfg->keybinds[0]) {
+    char kb[sizeof(cfg->keybinds) + 16];
+    snprintf(kb, sizeof(kb), "keybinds=%s", cfg->keybinds);
+    if (append_field(msg, n, &off, kb) < 0)
+      return -1;
+  }
   snprintf(kv, sizeof(kv), "volume=%.0f", cfg->volume);
   if (append_field(msg, n, &off, kv) < 0)
     return -1;
@@ -260,6 +271,13 @@ static int decode_set(char *msg, size_t n, XWConfig *cfg, char *errbuf, size_t e
   if (kv_str(&d, "scale", scaleval, sizeof(scaleval)) == 0)
     cfg->scale_mode = scale_from_name(scaleval);
   if (kv_int(&d, "mute", &v) == 0) cfg->mute = v;
+  if (kv_int(&d, "rotate", &v) == 0) {
+    if (v == 0 || v == 90 || v == 180 || v == 270)
+      cfg->rotate = v;
+  }
+  char kb[1024];
+  if (kv_str(&d, "keybinds", kb, sizeof(kb)) == 0)
+    snprintf(cfg->keybinds, sizeof(cfg->keybinds), "%s", kb);
   double dv;
   char vol[32];
   if (kv_str(&d, "volume", vol, sizeof(vol)) == 0) {

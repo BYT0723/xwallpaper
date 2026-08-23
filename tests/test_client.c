@@ -213,6 +213,37 @@ static void test_client_roundtrip(void) {
   TEST_CHECK_EQ_INT(memcmp(got, expected, (size_t)n), 0);
 }
 
+static void test_encode_set_video_extras(void) {
+  TEST_BEGIN("set encodes rotate and keybinds");
+  reset();
+  cfg.command = XW_CMD_SET;
+  cfg.target = XW_TARGET_OUTPUT;
+  snprintf(cfg.output, sizeof(cfg.output), "DP-1");
+  snprintf(cfg.path, sizeof(cfg.path), "clip.mp4");
+  cfg.backend_explicit = XW_BACKEND_VIDEO;
+  cfg.rotate = 90;
+  snprintf(cfg.keybinds, sizeof(cfg.keybinds), "/tmp/keys.conf");
+
+  char msg[XW_MSG_MAX];
+  int n = xw_proto_encode_set(&cfg, msg, sizeof(msg));
+  TEST_CHECK(has_field(msg, n, "rotate=90"));
+  TEST_CHECK(has_field(msg, n, "keybinds=/tmp/keys.conf"));
+}
+
+static void test_encode_set_rotate_default_omitted(void) {
+  TEST_BEGIN("default rotate (0) is omitted from the wire");
+  reset();
+  cfg.command = XW_CMD_SET;
+  cfg.target = XW_TARGET_PRIMARY;
+  snprintf(cfg.path, sizeof(cfg.path), "a.mp4");
+  cfg.backend_explicit = XW_BACKEND_VIDEO;
+
+  char msg[XW_MSG_MAX];
+  int n = xw_proto_encode_set(&cfg, msg, sizeof(msg));
+  TEST_CHECK(!has_field(msg, n, "rotate="));
+  TEST_CHECK(!has_field(msg, n, "keybinds="));
+}
+
 int main(void) {
   TEST_SUITE("client/protocol");
   test_encode_set_basic();
@@ -220,6 +251,8 @@ int main(void) {
   test_encode_set_geom();
   test_encode_clear();
   test_encode_list_exit();
+  test_encode_set_video_extras();
+  test_encode_set_rotate_default_omitted();
   test_client_roundtrip();
   TEST_SUMMARY();
 }
