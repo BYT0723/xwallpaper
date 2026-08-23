@@ -41,6 +41,7 @@ typedef struct XWConfig {
   int rotate;         /* video, 0/90/180/270, default 0 */
   char keybinds[1024]; /* video, mpv input-conf file path, empty = none */
   double fps;         /* video, target frame rate, 0 = auto */
+  char audio_client_name[64]; /* audio API client name, default "xwallpaper" */
   double opacity;     /* 0..1, default 1.0 */
   int below;          /* -b */
   int sticky;         /* -s */

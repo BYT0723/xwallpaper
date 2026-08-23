@@ -55,6 +55,9 @@ static int video_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWEr
   mpv_set_option_string(ctx->mpv, "input-vo-keyboard", "no");
   mpv_set_option_string(ctx->mpv, "osc", "no");
   mpv_set_option_string(ctx->mpv, "osd-level", "0");
+  /* identify the audio stream (PulseAudio/PipeWire/ALSA) with a friendly name */
+  if (opt->audio_client_name && opt->audio_client_name[0])
+    mpv_set_option_string(ctx->mpv, "audio-client-name", opt->audio_client_name);
   /* load custom keybinds from an input.conf-style file (empty = none) */
   if (opt->keybinds && opt->keybinds[0]) {
     mpv_set_option_string(ctx->mpv, "input-conf", opt->keybinds);

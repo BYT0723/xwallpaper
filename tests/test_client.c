@@ -270,6 +270,32 @@ static void test_encode_set_rotate_default_omitted(void) {
   TEST_CHECK(!has_field(msg, n, "keybinds="));
 }
 
+static void test_encode_set_audio_client_name(void) {
+  TEST_BEGIN("set encodes audio_client_name; default omitted");
+  reset();
+  cfg.command = XW_CMD_SET;
+  cfg.target = XW_TARGET_PRIMARY;
+  snprintf(cfg.path, sizeof(cfg.path), "clip.mp4");
+  cfg.backend_explicit = XW_BACKEND_VIDEO;
+  snprintf(cfg.audio_client_name, sizeof(cfg.audio_client_name), "xwallpaper");
+
+  char msg[XW_MSG_MAX];
+  int n = xw_proto_encode_set(&cfg, msg, sizeof(msg));
+  TEST_CHECK(n > 0);
+  TEST_CHECK(has_field(msg, n, "audio_client_name=xwallpaper"));
+
+  /* custom name round-trips */
+  snprintf(cfg.audio_client_name, sizeof(cfg.audio_client_name), "mywall");
+  n = xw_proto_encode_set(&cfg, msg, sizeof(msg));
+  TEST_CHECK(has_field(msg, n, "audio_client_name=mywall"));
+
+  /* empty default is not encoded */
+  cfg.audio_client_name[0] = '\0';
+  n = xw_proto_encode_set(&cfg, msg, sizeof(msg));
+  TEST_CHECK(n > 0);
+  TEST_CHECK(!has_field(msg, n, "audio_client_name="));
+}
+
 int main(void) {
   TEST_SUITE("client/protocol");
   test_encode_set_basic();
@@ -280,6 +306,7 @@ int main(void) {
   test_encode_set_video_extras();
   test_encode_set_rotate_default_omitted();
   test_encode_set_video_fps();
+  test_encode_set_audio_client_name();
   test_client_roundtrip();
   TEST_SUMMARY();
 }

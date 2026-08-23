@@ -114,6 +114,7 @@ void xw_cli_usage(FILE *f) {
     "  --keybinds <file>       video: mpv input.conf-style keybindings\n"
     "  --fps <number>          video: target frame rate (keeps speed, drops frames)\n"
     "  --mute --volume <0-100> video\n"
+    "  --audio-client-name <name>   audio API client name (default: xwallpaper)\n"
     "  -o <0.0-1.0>            window opacity\n"
     "  -b -s -st -sp -nf       below, sticky, skip-taskbar, skip-pager, no-focus\n"
     "  -d                      daemonize (fork to background)\n"
@@ -133,6 +134,7 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
   cfg->scale_mode = XW_SCALE_FILL;
   cfg->volume = 100.0;
   cfg->opacity = 1.0;
+  snprintf(cfg->audio_client_name, sizeof(cfg->audio_client_name), "xwallpaper");
   cfg->command = XW_CMD_NONE;
 
   if (argc < 2) {
@@ -276,6 +278,12 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
           return -1;
         }
         snprintf(cfg->keybinds, sizeof(cfg->keybinds), "%s", argv[i]);
+      } else if (strcmp(a, "--audio-client-name") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "--audio-client-name requires a value");
+          return -1;
+        }
+        snprintf(cfg->audio_client_name, sizeof(cfg->audio_client_name), "%s", argv[i]);
       } else if (strcmp(a, "--fps") == 0) {
         if (++i >= argc) {
           XW_ERROR_SET(err, 1, "--fps requires a value");

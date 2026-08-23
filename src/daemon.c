@@ -58,6 +58,21 @@ static int append_field(char *msg, size_t n, size_t *off, const char *field) {
   return 0;
 }
 
+/* append a "key=value" field without a scratch buffer; fails on overflow
+ * instead of truncating, so oversized values never silently corrupt the msg */
+static int append_kv(char *msg, size_t n, size_t *off,
+                     const char *key, const char *value) {
+  size_t kl = strlen(key), vl = strlen(value);
+  if (*off + kl + vl + 1 >= n)
+    return -1;
+  memcpy(msg + *off, key, kl);
+  *off += kl;
+  memcpy(msg + *off, value, vl);
+  *off += vl;
+  msg[(*off)++] = '\0';
+  return 0;
+}
+
 static int finish(char *msg, size_t n, size_t *off) {
   if (*off + 1 >= n)
     return -1;
@@ -126,14 +141,16 @@ static int encode_common(const char *verb, const XWConfig *cfg,
       return -1;
   }
   if (cfg->keybinds[0]) {
-    char kb[sizeof(cfg->keybinds) + 16];
-    snprintf(kb, sizeof(kb), "keybinds=%s", cfg->keybinds);
-    if (append_field(msg, n, &off, kb) < 0)
+    if (append_kv(msg, n, &off, "keybinds=", cfg->keybinds) < 0)
       return -1;
   }
   if (cfg->fps > 0.0) {
     snprintf(kv, sizeof(kv), "fps=%g", cfg->fps);
     if (append_field(msg, n, &off, kv) < 0)
+      return -1;
+  }
+  if (cfg->audio_client_name[0]) {
+    if (append_kv(msg, n, &off, "audio_client_name=", cfg->audio_client_name) < 0)
       return -1;
   }
   snprintf(kv, sizeof(kv), "volume=%.0f", cfg->volume);
@@ -155,9 +172,7 @@ static int encode_common(const char *verb, const XWConfig *cfg,
       return -1;
   }
   if (cfg->name[0]) {
-    char kvn[96];
-    snprintf(kvn, sizeof(kvn), "name=%s", cfg->name);
-    if (append_field(msg, n, &off, kvn) < 0)
+    if (append_kv(msg, n, &off, "name=", cfg->name) < 0)
       return -1;
   }
   return finish(msg, n, &off);
@@ -243,6 +258,7 @@ static int decode_set(char *msg, size_t n, XWConfig *cfg, char *errbuf, size_t e
   cfg->scale_mode = XW_SCALE_FILL;
   cfg->volume = 100.0;
   cfg->opacity = 1.0;
+  snprintf(cfg->audio_client_name, sizeof(cfg->audio_client_name), "xwallpaper");
 
   Decoded d;
   split_fields(msg, n, &d);
@@ -294,6 +310,9 @@ static int decode_set(char *msg, size_t n, XWConfig *cfg, char *errbuf, size_t e
     dv = atof(vol);
     if (dv >= 0 && dv <= 100) cfg->volume = dv;
   }
+  char acn[64];
+  if (kv_str(&d, "audio_client_name", acn, sizeof(acn)) == 0)
+    snprintf(cfg->audio_client_name, sizeof(cfg->audio_client_name), "%s", acn);
   char op[32];
   if (kv_str(&d, "opacity", op, sizeof(op)) == 0) {
     dv = atof(op);

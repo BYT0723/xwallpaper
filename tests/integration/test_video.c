@@ -99,10 +99,22 @@ static void test_video_fps_override(void) {
   TEST_CHECK_EQ_INT(run_with_opts(&opt), 0);
 }
 
+static void test_video_audio_client_name(void) {
+  TEST_BEGIN("video init with custom audio client name");
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_VIDEO;
+  opt.path = "tests/data/bounce.mp4";
+  opt.mute = 1;
+  opt.audio_client_name = "xwallpaper";
+  TEST_CHECK_EQ_INT(run_with_opts(&opt), 0);
+}
+
 int main(void) {
   TEST_SUITE("video backend (Xvfb)");
   test_video_lifecycle();
   test_video_default_opts();
   test_video_fps_override();
+  test_video_audio_client_name();
   TEST_SUMMARY();
 }

@@ -54,6 +54,7 @@ static void fill_backend_opt(XWBackendOpt *opt, const XWConfig *cfg) {
   opt->rotate = cfg->rotate;
   opt->keybinds = cfg->keybinds[0] ? cfg->keybinds : NULL;
   opt->fps = cfg->fps;
+  opt->audio_client_name = cfg->audio_client_name[0] ? cfg->audio_client_name : NULL;
 }
 
 /* Find a window by its identity key. Windows are identified by win->output:

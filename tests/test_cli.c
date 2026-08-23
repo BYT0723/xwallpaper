@@ -248,6 +248,26 @@ static void test_keybinds_flag(void) {
   TEST_CHECK_EQ_STR(cfg.keybinds, "");
 }
 
+static void test_audio_client_name_flag(void) {
+  TEST_BEGIN("--audio-client-name parses; default is xwallpaper");
+  reset();
+  char *argv[] = {"xwallpaper", "set", "--video", "--audio-client-name", "mywall", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv, 7), 0);
+  TEST_CHECK_EQ_STR(cfg.audio_client_name, "mywall");
+
+  /* default is "xwallpaper" */
+  reset();
+  char *argv2[] = {"xwallpaper", "set", "--video", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv2, 4), 0);
+  TEST_CHECK_EQ_STR(cfg.audio_client_name, "xwallpaper");
+
+  /* missing value must error */
+  reset();
+  char *argv3[] = {"xwallpaper", "set", "--video", "--audio-client-name", "a.mp4"};
+  TEST_CHECK_EQ_INT(parse(argv3, 5), -1);
+  TEST_CHECK(err.code != 0);
+}
+
 static void test_fps_flag(void) {
   TEST_BEGIN("--fps parses and validates a positive frame rate");
   reset();
@@ -301,6 +321,7 @@ int main(void) {
   test_scale_mode_flag();
   test_rotate_flag();
   test_keybinds_flag();
+  test_audio_client_name_flag();
   test_fps_flag();
   TEST_SUMMARY();
 }

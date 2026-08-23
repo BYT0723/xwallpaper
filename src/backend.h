@@ -34,6 +34,7 @@ typedef struct XWBackendOpt {
   int rotate;           /* 0/90/180/270 */
   const char *keybinds; /* mpv input.conf path, may be NULL */
   double fps;           /* target frame rate, 0 = auto */
+  const char *audio_client_name; /* audio API client name, may be NULL */
 } XWBackendOpt;
 
 /* Backend lifecycle. app codes only against this interface.
