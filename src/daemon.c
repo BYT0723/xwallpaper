@@ -450,6 +450,11 @@ int xw_daemon_main(void) {
       break;
     }
 
+    /* pause/resume rendering backends when the display DPMS state changes
+     * (throttled internally; keeps video wallpapers from re-waking the
+     * display after lock/screen-off) */
+    xw_app_dpms_poll(cur);
+
     for (int i = 0; i < gnfds; i++)
       gfds[i].revents = fds[2 + i].revents;
     g_main_context_check(NULL, gprio, gfds, gnfds);

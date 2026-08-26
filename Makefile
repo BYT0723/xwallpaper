@@ -8,7 +8,7 @@ PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
 DESTDIR ?=
 
-PKGS := x11 xrandr xrender imlib2 mpv gtk+-3.0 webkit2gtk-4.1
+PKGS := x11 xrandr xrender xext imlib2 mpv gtk+-3.0 webkit2gtk-4.1
 CFLAGS  += $(shell pkg-config --cflags $(PKGS))
 LDLIBS  := $(shell pkg-config --libs $(PKGS))
 

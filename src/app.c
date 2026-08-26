@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <X11/extensions/Xrandr.h>
+#include <X11/extensions/dpms.h>
 #include <glib.h>
 
 #include "app.h"
@@ -18,9 +19,16 @@ struct XWApp {
   int nwins;
   int stop_requested;
   int uses_gtk;
+  /* DPMS state (lazily probed; -1 power level = never polled yet) */
+  int dpms_available;
+  int dpms_queried;
+  int dpms_power_level;
+  uint64_t dpms_last_poll_ms;
 };
 
 static XWApp *the_app = NULL;
+
+static void apply_dpms_to_backend(XWApp *app, XWBackend *b);
 
 static XWBackend *make_backend(const XWConfig *cfg, XWError *err) {
   int k = cfg->backend_explicit;
@@ -156,6 +164,7 @@ XWApp *xw_app_create(XWError *err) {
     return NULL;
   }
   app->dpy = dpy;
+  app->dpms_power_level = -1;
   the_app = app;
   return app;
 }
@@ -199,6 +208,7 @@ int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err) {
         XW_ERROR_SET(err, 1, "backend failed to start");
         return -1;
       }
+      apply_dpms_to_backend(app, app->backends[i]);
     }
     return 0;
   }
@@ -251,6 +261,7 @@ int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err) {
       XW_ERROR_SET(err, 1, "backend failed to start");
       return -1;
     }
+    apply_dpms_to_backend(app, b);
     return 0;
   }
 
@@ -268,6 +279,7 @@ int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err) {
     XW_ERROR_SET(err, 1, "backend failed to start");
     return -1;
   }
+  apply_dpms_to_backend(app, app->backends[app->nwins - 1]);
   return 0;
 }
 
@@ -335,6 +347,53 @@ int xw_app_handle_event(XWApp *app, XEvent *ev) {
   return 0;
 }
 
+#define DPMS_POLL_INTERVAL_MS 500
+
+static uint64_t now_monotonic_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+}
+
+/* Distribute the current DPMS state to one backend. Newly created backends
+ * must start paused if the display is already powered off, otherwise they
+ * keep presenting frames until the next state change. */
+static void apply_dpms_to_backend(XWApp *app, XWBackend *b) {
+  if (app->dpms_power_level >= 0 && b && b->set_paused)
+    b->set_paused(b, app->dpms_power_level != DPMSModeOn);
+}
+
+void xw_app_dpms_poll(XWApp *app) {
+  if (!app)
+    return;
+  if (!app->dpms_queried) {
+    app->dpms_queried = 1;
+    /* libXext's DPMSQueryExtension writes both bases unconditionally —
+     * pass real locals, never NULL */
+    int ev_base, err_base;
+    app->dpms_available =
+        DPMSQueryExtension(app->dpy, &ev_base, &err_base);
+  }
+  if (!app->dpms_available)
+    return;
+  uint64_t now = now_monotonic_ms();
+  if (now - app->dpms_last_poll_ms < DPMS_POLL_INTERVAL_MS)
+    return;
+  app->dpms_last_poll_ms = now;
+
+  CARD16 power_level;
+  BOOL state;
+  if (!DPMSInfo(app->dpy, &power_level, &state))
+    return;
+  if (power_level == app->dpms_power_level)
+    return;
+  app->dpms_power_level = power_level;
+
+  /* every powered-off mode (standby/suspend/off) must stop presenting */
+  for (int i = 0; i < app->nwins; i++)
+    apply_dpms_to_backend(app, app->backends[i]);
+}
+
 static void pump_gtk(void) {
   /* non-blocking: drain sources that are ready now */
   g_main_context_iteration(NULL, FALSE);
@@ -346,6 +405,7 @@ int xw_app_run(XWApp *app) {
   while (!app->stop_requested) {
     if (app->uses_gtk)
       pump_gtk();
+    xw_app_dpms_poll(app);
 
     struct pollfd pfd = {xfd, POLLIN, 0};
     int r = poll(&pfd, 1, 100); /* 100ms timeout keeps signals responsive */

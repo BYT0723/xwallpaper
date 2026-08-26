@@ -50,6 +50,13 @@ Display *xw_app_display(XWApp *app);
  * on_event hook. Returns 1 if consumed. */
 int xw_app_handle_event(XWApp *app, XEvent *ev);
 
+/* Poll the X DPMS power state (throttled internally, ~500ms) and pause or
+ * resume rendering backends when the display enters/exits a powered-off
+ * state. Rendering backends keep presenting frames while DPMS is off, which
+ * wakes the display back up; pausing them keeps it off. Safe to call from
+ * any event loop iteration. */
+void xw_app_dpms_poll(XWApp *app);
+
 /* Current app instance (for signal handlers). NULL before create / after destroy. */
 XWApp *xw_app_get(void);
 

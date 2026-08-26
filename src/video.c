@@ -122,6 +122,14 @@ static void video_stop(XWBackend *b) {
     mpv_command_string(ctx->mpv, "stop");
 }
 
+/* Pause/resume playback: mpv stops rendering (no frame presents) while
+ * paused, which is what lets DPMS stay off on the display side. */
+static void video_set_paused(XWBackend *b, int paused) {
+  VideoCtx *ctx = (VideoCtx *)b->priv;
+  if (ctx)
+    mpv_set_property_string(ctx->mpv, "pause", paused ? "yes" : "no");
+}
+
 static void video_destroy(XWBackend *b) {
   if (!b || !b->priv)
     return;
@@ -139,6 +147,7 @@ XWBackend *xw_video_backend_new(void) {
     .stop = video_stop,
     .destroy = video_destroy,
     .on_event = NULL,
+    .set_paused = video_set_paused,
   };
   return &backend;
 }

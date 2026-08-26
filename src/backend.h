@@ -54,6 +54,11 @@ struct XWBackend {
   /* optional: receive X events (Expose, ConfigureNotify) for this window.
    * Return 1 if consumed. Called by app's event loop. May be NULL. */
   int (*on_event)(XWBackend *b, XEvent *ev);
+  /* optional: pause/resume rendering when the X display is in DPMS
+   * power-off (standby/suspend/off). Rendering backends (e.g. mpv) keep
+   * presenting frames while DPMS is off, which wakes the display back up.
+   * May be NULL (static images need no pause). */
+  void (*set_paused)(XWBackend *b, int paused);
 };
 
 #endif /* XW_BACKEND_H */
