@@ -24,7 +24,7 @@ TEST_BIN := $(TEST_SRC:.c=)
 INTEG_BIN := tests/integration/test_x11 tests/integration/test_image \
              tests/integration/test_video tests/integration/test_web \
              tests/integration/test_app_geom tests/integration/test_app_all \
-             tests/integration/test_fill
+             tests/integration/test_fill tests/integration/test_restore
 
 ifdef DEBUG
 CFLAGS  += -O0 -g3 -fsanitize=address,undefined -fno-omit-frame-pointer

@@ -110,11 +110,65 @@ static void test_video_audio_client_name(void) {
   TEST_CHECK_EQ_INT(run_with_opts(&opt), 0);
 }
 
+/* Startup self-heal: retry() reloads when mpv has no video track, but must
+ * not pile up loadfile calls — two calls right after each other must not both
+ * reload (the first records last_load_ms, the second is <1.5s later). Whether
+ * the first call reloads depends on mpv/Xvfb state; the anti-pileup contract
+ * (second call != reload) is environment-independent. */
+static void test_video_retry_antipileup(void) {
+  TEST_BEGIN("retry() does not pile up reloads");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_PRIMARY;
+  int x, y;
+  unsigned int w, h;
+  if (xw_x11_resolve_geometry(dpy, &cfg, &x, &y, &w, &h, NULL) != 0) {
+    TEST_FAIL("cannot resolve primary geometry");
+    xw_x11_close_display(dpy);
+    return;
+  }
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, x, y, w, h, &err);
+  TEST_CHECK(win != NULL);
+  if (!win) {
+    xw_x11_close_display(dpy);
+    return;
+  }
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_VIDEO;
+  opt.path = "tests/data/bounce.mp4";
+  opt.mute = 1;
+  opt.volume = 50.0;
+
+  XWBackend *tmpl = xw_video_backend_new();
+  XWBackend backend = *tmpl;
+  int ok = backend.init(&backend, win, &opt, &err) == 0 &&
+           backend.start(&backend) == 0;
+  TEST_CHECK(ok);
+  if (ok) {
+    backend.retry(&backend); /* first call may reload */
+    int r2 = backend.retry(&backend);
+    TEST_CHECK(r2 != 1); /* anti-pileup: second call never reloads */
+  }
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+  xw_x11_close_display(dpy);
+}
+
 int main(void) {
   TEST_SUITE("video backend (Xvfb)");
   test_video_lifecycle();
   test_video_default_opts();
   test_video_fps_override();
   test_video_audio_client_name();
+  test_video_retry_antipileup();
   TEST_SUMMARY();
 }

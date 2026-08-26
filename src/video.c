@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <mpv/client.h>
 
@@ -14,10 +15,17 @@ typedef struct {
   int mute;
   double volume;
   int scale_mode;
+  int64_t last_load_ms; /* 上次 loadfile 时刻 (retry 防堆积) */
 } VideoCtx;
 
-/* Start playback asynchronously; if it fails, mpv reports via events. */
+/* Start playback asynchronously; if it fails, mpv reports via events.
+ * 统一记录 loadfile 时刻 (启动/换壁纸/自愈共用), 供 video_retry 防堆积 —
+ * 若只记 retry 自己的时刻, video_start 的首次 loadfile 尚未建立 track 时
+ * 会被 retry 误判为无视频并重复加载。 */
 static void load_file(VideoCtx *ctx) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  ctx->last_load_ms = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
   const char *cmd[] = {"loadfile", ctx->path, "replace", NULL};
   mpv_command(ctx->mpv, cmd);
 }
@@ -71,6 +79,21 @@ static int video_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWEr
     mpv_set_option_string(ctx->mpv, "vf", vf);
   }
 
+  /* 诊断: debug 时开启 mpv 日志文件 + 命令 IPC, 首次开机黑屏时可查
+   * pause/playback 状态与解码器报错 (mpv log 写 /tmp/xw-mpv-<winid>.log,
+   * IPC 用 socat 连 socket 后 get_property pause 等) */
+  if (getenv("XW_DEBUG_DAEMON")) {
+    char logf[128];
+    snprintf(logf, sizeof(logf), "/tmp/xw-mpv-%lx.log",
+             (unsigned long)win->win);
+    mpv_set_option_string(ctx->mpv, "log-file", logf);
+    mpv_request_log_messages(ctx->mpv, "debug");
+    char sock[128];
+    snprintf(sock, sizeof(sock), "/tmp/xw-mpv-%lx.sock",
+             (unsigned long)win->win);
+    mpv_set_option_string(ctx->mpv, "input-ipc-server", sock);
+  }
+
   /* scale mode: FILL crops to fill (panscan 1.0), STRETCH disables aspect,
    * CONTAIN keeps aspect with bars (mpv default) */
   if (ctx->scale_mode == XW_SCALE_FILL) {
@@ -82,8 +105,10 @@ static int video_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWEr
   if (getenv("XW_DEBUG_DAEMON"))
     fprintf(stderr, "xwallpaperd: mpv_initialize (win 0x%lx)...\n",
             (unsigned long)win->win);
-  if (mpv_initialize(ctx->mpv) < 0) {
-    XW_ERROR_SET(err, 1, "mpv_initialize failed");
+  int merr = mpv_initialize(ctx->mpv);
+  if (merr < 0) {
+    XW_ERROR_SET(err, 1, "mpv_initialize failed: %s",
+                 mpv_error_string(merr));
     mpv_terminate_destroy(ctx->mpv);
     free(ctx);
     return -1;
@@ -130,6 +155,33 @@ static void video_set_paused(XWBackend *b, int paused) {
     mpv_set_property_string(ctx->mpv, "pause", paused ? "yes" : "no");
 }
 
+/* 启动自愈: 首次开机 GPU/GL 未就绪时 vo/gpu 的 Vulkan swapchain 创建会失败
+ * (VK_ERROR_INITIALIZATION_FAILED), mpv 因此丢掉 video track — 只剩音频在走,
+ * 窗口存在但画面黑 (restore 认为成功, 不触发窗口重建)。检测 mpv 的 video
+ * 属性, 无视频则重新 loadfile, 让 mpv 重建渲染路径, 环境就绪后即恢复。
+ * 防堆积: 距上次 loadfile ≥1.5s — daemon 以 0.5s 节拍轮询, 但 4K HEVC
+ * loadfile 本身需几百 ms, 间隔过短会让 loadfile 排队堆积。 */
+static int video_retry(XWBackend *b) {
+  VideoCtx *ctx = (VideoCtx *)b->priv;
+  if (!ctx || !ctx->mpv)
+    return -1;
+  int v = 0;
+  if (mpv_get_property(ctx->mpv, "video", MPV_FORMAT_FLAG, &v) < 0)
+    return -1;
+  if (v)
+    return 0;
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  int64_t now_ms = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+  if (now_ms - ctx->last_load_ms < 1500)
+    return 0;
+  if (getenv("XW_DEBUG_DAEMON"))
+    fprintf(stderr, "xwallpaperd: video %.100s has no video track, reloading\n",
+            ctx->path);
+  load_file(ctx);
+  return 1;
+}
+
 static void video_destroy(XWBackend *b) {
   if (!b || !b->priv)
     return;
@@ -165,6 +217,7 @@ XWBackend *xw_video_backend_new(void) {
     .on_event = NULL,
     .set_paused = video_set_paused,
     .reload = video_reload,
+    .retry = video_retry,
   };
   return &backend;
 }

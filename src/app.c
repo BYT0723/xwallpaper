@@ -621,4 +621,31 @@ static int restore_entries(XWApp *app, int keep_flag) {
 
 int xw_app_restore_startup(XWApp *app) { return restore_entries(app, 0); }
 
+int xw_app_restore_pending(XWApp *app) {
+  char path[1024];
+  if (xw_state_path(path, sizeof(path)) != 0)
+    return 0;
+  XWStateEntry entries[XW_STATE_MAX_ENTRIES];
+  int count = 0;
+  if (xw_state_load(path, entries, XW_STATE_MAX_ENTRIES, &count) != 0)
+    return 0;
+  int pending = 0;
+  for (int i = 0; i < count; i++)
+    if (entries[i].keep == 0 && find_window_by_key(app, entries[i].name) < 0)
+      pending++;
+  return pending;
+}
+
 int xw_app_restore_kept(XWApp *app) { return restore_entries(app, 1); }
+
+int xw_app_retry_backends(XWApp *app) {
+  if (!app)
+    return 0;
+  int n = 0;
+  for (int i = 0; i < app->nwins; i++) {
+    XWBackend *b = app->backends[i];
+    if (b && b->retry && b->retry(b) > 0)
+      n++;
+  }
+  return n;
+}

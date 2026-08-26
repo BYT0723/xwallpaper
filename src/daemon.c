@@ -447,6 +447,15 @@ int xw_daemon_main(void) {
   signal(SIGTERM, daemon_signal);
   signal(SIGINT, daemon_signal);
 
+  /* 首次启动时 GPU/GL 可能尚未就绪, 视频 backend init 失败 → 部分 restore
+   * 条目未恢复 (pending>0), 或 mpv 因 swapchain 失败丢掉 video track (窗口在、
+   * 只剩音频)。启动后 2 分钟窗口内以 0.5s 节拍轮询检测并自愈 — GPU 就绪后
+   * 立即出视频, 避免黑屏/明显滞后。 */
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  int64_t startup_ms = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+  int64_t last_selfheal_ms = startup_ms;
+
   while (xw_app_get() && !xw_app_stopped(xw_app_get())) {
     XWApp *cur = xw_app_get();
     if (!cur || xw_app_stopped(cur))
@@ -489,6 +498,24 @@ int xw_daemon_main(void) {
      * (throttled internally; keeps video wallpapers from re-waking the
      * display after lock/screen-off) */
     xw_app_dpms_poll(cur);
+
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    int64_t now_ms = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+
+    if (now_ms - startup_ms < 120000) {
+      if (now_ms - last_selfheal_ms >= 500) {
+        last_selfheal_ms = now_ms;
+        if (xw_app_restore_pending(cur) > 0) {
+          if (getenv("XW_DEBUG_DAEMON"))
+            fprintf(stderr, "xwallpaperd: retry pending restore\n");
+          xw_app_restore_startup(cur);
+        }
+        int v = xw_app_retry_backends(cur);
+        if (v > 0 && getenv("XW_DEBUG_DAEMON"))
+          fprintf(stderr, "xwallpaperd: retry %d video(s) without frames\n",
+                  v);
+      }
+    }
 
     for (int i = 0; i < gnfds; i++)
       gfds[i].revents = fds[2 + i].revents;

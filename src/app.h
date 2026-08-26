@@ -80,6 +80,17 @@ int xw_app_keep_all(XWApp *app);
  * wallpapers. Failures on individual entries are ignored. Returns 0. */
 int xw_app_restore_startup(XWApp *app);
 
+/* Number of non-kept state entries that are not yet live windows.
+ * >0 after a failed startup restore (e.g. video backend init failed
+ * because the GPU/GL stack wasn't ready yet); the daemon retries
+ * xw_app_restore_startup until this reaches 0. */
+int xw_app_restore_pending(XWApp *app);
+
+/* Startup self-heal: call every backend's retry() hook. Video backends
+ * whose mpv dropped its video track (Vulkan swapchain failed on first boot
+ * before the GPU was ready) reload the file; returns how many were retried. */
+int xw_app_retry_backends(XWApp *app);
+
 /* Rebuild every kept entry as a live window (the `restore` command:
  * brings back last wallpapers after `clear --keep` hid them). Returns 0. */
 int xw_app_restore_kept(XWApp *app);

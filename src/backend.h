@@ -65,6 +65,11 @@ struct XWBackend {
    * presenting frames while DPMS is off, which wakes the display back up.
    * May be NULL (static images need no pause). */
   void (*set_paused)(XWBackend *b, int paused);
+  /* optional: 启动早期 GPU 未就绪时, 渲染资源可能建不起来 (mpv 的 Vulkan
+   * swapchain 创建失败会丢掉 video track, 窗口在但画面黑)。此方法检测渲染
+   * 是否健康, 需要重建时返回 1 并触发自愈 (mpv 重新 loadfile)。0 = 健康,
+   * -1 = 不适用。用于 daemon 的启动自愈轮询。 */
+  int (*retry)(XWBackend *b);
 };
 
 #endif /* XW_BACKEND_H */
