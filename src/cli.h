@@ -10,8 +10,10 @@ enum {
   XW_CMD_SET,     /* set a wallpaper */
   XW_CMD_CLEAR,   /* remove wallpaper(s) */
   XW_CMD_LIST,    /* list running instances (--list) */
+  XW_CMD_STATE,   /* dump window state as name/type/path/rotation TSV (--state) */
   XW_CMD_EXIT,    /* stop the daemon (exit) */
   XW_CMD_DAEMON,  /* run the daemon in the foreground (--daemon) */
+  XW_CMD_RESTORE, /* restore last wallpapers kept by clear --keep (restore) */
 };
 
 /* Which windows a command targets */
@@ -50,6 +52,7 @@ typedef struct XWConfig {
   int no_focus;       /* -nf */
   int daemonize;      /* -d */
   int debug;          /* --debug */
+  int keep;           /* clear --keep: remove windows but retain last state */
 } XWConfig;
 
 /* Parse argv (argc>=1, argv[0]=program). Returns 0 on success, -1 on error

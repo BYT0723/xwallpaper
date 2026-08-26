@@ -14,7 +14,7 @@ LDLIBS  := $(shell pkg-config --libs $(PKGS))
 
 SRC := src/main.c src/x11.c src/cli.c src/app.c \
        src/image.c src/video.c src/web.c \
-       src/client.c src/daemon.c
+       src/client.c src/daemon.c src/state.c
 OBJ := $(SRC:.c=.o)
 BIN := xwallpaper
 

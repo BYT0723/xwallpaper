@@ -164,13 +164,44 @@ static void image_destroy(XWBackend *b) {
     imlib_context_set_image(ctx->scaled);
     imlib_free_image();
   }
-  imlib_context_set_image(ctx->img);
-  imlib_free_image();
+  if (ctx->img) {
+    imlib_context_set_image(ctx->img);
+    imlib_free_image();
+  }
   imlib_context_pop();
-  imlib_context_free(ctx->ctx);
   imlib_set_ximage_cache_size_max(0); /* drop GCs tied to the destroyed window */
+  imlib_context_free(ctx->ctx);
   free(ctx);
   b->priv = NULL;
+}
+
+/* 同类型复用: 加载新图替换旧图 (失败保留旧壁纸), 再重绘。 */
+static int image_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
+  ImageCtx *ctx = (ImageCtx *)b->priv;
+  if (!ctx)
+    return -1;
+  imlib_context_push(ctx->ctx);
+  Imlib_Image img = imlib_load_image_immediately_without_cache(opt->path);
+  if (img) {
+    if (ctx->img) {
+      imlib_context_set_image(ctx->img);
+      imlib_free_image();
+    }
+    if (ctx->scaled) {
+      imlib_context_set_image(ctx->scaled);
+      imlib_free_image();
+      ctx->scaled = NULL;
+    }
+    ctx->img = img;
+    ctx->scale_mode = opt->scale_mode;
+  }
+  imlib_context_pop();
+  if (!ctx->img) {
+    XW_ERROR_SET(err, 1, "cannot load image '%s'", opt->path);
+    return -1;
+  }
+  redraw(ctx);
+  return 0;
 }
 
 XWBackend *xw_image_backend_new(void) {
@@ -181,6 +212,7 @@ XWBackend *xw_image_backend_new(void) {
     .stop = NULL,
     .destroy = image_destroy,
     .on_event = image_on_event,
+    .reload = image_reload,
   };
   return &backend;
 }

@@ -129,6 +129,19 @@ static void test_encode_clear(void) {
   snprintf(cfg.output, sizeof(cfg.output), "HDMI-1");
   xw_proto_encode_clear(&cfg, msg, sizeof(msg));
   TEST_CHECK(strncmp(msg, "clear\0HDMI-1\n", 13) == 0);
+
+  /* --keep appends keep=1 field */
+  cfg.keep = 1;
+  int nk = xw_proto_encode_clear(&cfg, msg, sizeof(msg));
+  TEST_CHECK(strncmp(msg, "clear\0", 6) == 0);
+  TEST_CHECK(has_field(msg, (size_t)nk, "keep=1"));
+}
+
+static void test_encode_restore(void) {
+  TEST_BEGIN("restore encodes as verb-only line");
+  char msg[64];
+  TEST_CHECK_EQ_INT(xw_proto_encode_restore(msg, sizeof(msg)), 8);
+  TEST_CHECK(strcmp(msg, "restore\n") == 0);
 }
 
 static void test_encode_list_exit(void) {
@@ -302,6 +315,7 @@ int main(void) {
   test_encode_set_output();
   test_encode_set_geom();
   test_encode_clear();
+  test_encode_restore();
   test_encode_list_exit();
   test_encode_set_video_extras();
   test_encode_set_rotate_default_omitted();

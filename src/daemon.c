@@ -109,6 +109,10 @@ static int encode_common(const char *verb, const XWConfig *cfg,
     const char *t = (cfg->target == XW_TARGET_OUTPUT) ? cfg->output : "all";
     if (append_field(msg, n, &off, t) < 0)
       return -1;
+    if (cfg->keep) {
+      if (append_field(msg, n, &off, "keep=1") < 0)
+        return -1;
+    }
     return finish(msg, n, &off);
   }
 
@@ -188,6 +192,10 @@ int xw_proto_encode_clear(const XWConfig *cfg, char *msg, size_t n) {
 
 int xw_proto_encode_list(char *msg, size_t n) {
   return snprintf(msg, n, "list\n") < (int)n ? (int)strlen("list\n") : -1;
+}
+
+int xw_proto_encode_restore(char *msg, size_t n) {
+  return snprintf(msg, n, "restore\n") < (int)n ? (int)strlen("restore\n") : -1;
 }
 
 int xw_proto_encode_exit(char *msg, size_t n) {
@@ -346,6 +354,9 @@ static int decode_clear(char *msg, size_t n, XWConfig *cfg) {
     cfg->target = XW_TARGET_OUTPUT;
     snprintf(cfg->output, sizeof(cfg->output), "%s", d.fields[1]);
   }
+  int keep = 0;
+  if (kv_int(&d, "keep", &keep) == 0)
+    cfg->keep = keep;
   return 0;
 }
 
@@ -380,6 +391,20 @@ int xw_daemon_main(void) {
   if (slash)
     *slash = '\0';
   mkdir(dir, 0700);
+  /* 单例: 若已有 daemon 正在监听同一 socket, 直接退出而非 unlink+bind
+   * 抢占 (否则旧 daemon 变孤儿: 监听已删 inode, 空转渲染但收不到请求) */
+  int probe = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (probe >= 0) {
+    struct sockaddr_un pa;
+    memset(&pa, 0, sizeof(pa));
+    pa.sun_family = AF_UNIX;
+    snprintf(pa.sun_path, sizeof(pa.sun_path), "%.107s", path);
+    if (connect(probe, (struct sockaddr *)&pa, sizeof(pa)) == 0) {
+      close(probe);
+      return 0; /* daemon 已存在 */
+    }
+    close(probe);
+  }
   unlink(path);
 
   server_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -406,6 +431,16 @@ int xw_daemon_main(void) {
     close(server_fd);
     unlink(path);
     return 1;
+  }
+  /* 恢复上次会话的壁纸 (keep=0 条目) */
+  struct timespec rt0, rt1;
+  clock_gettime(CLOCK_MONOTONIC, &rt0);
+  xw_app_restore_startup(app);
+  if (getenv("XW_DEBUG_DAEMON")) {
+    clock_gettime(CLOCK_MONOTONIC, &rt1);
+    fprintf(stderr, "xwallpaperd: restore startup done in %.3fs\n",
+            (double)(rt1.tv_sec - rt0.tv_sec) +
+                (double)(rt1.tv_nsec - rt0.tv_nsec) / 1e9);
   }
   xfd = ConnectionNumber(xw_app_display(app));
 
@@ -504,6 +539,7 @@ int xw_daemon_main(void) {
               clock_gettime(CLOCK_MONOTONIC, &t0);
               if (xw_app_set(cur, &cfg, &aerr) == 0) {
                 reply_n = snprintf(reply, sizeof(reply), "ok\n");
+                xw_app_save_state(cur);
               } else {
                 reply_n = reply_error(reply, sizeof(reply), aerr.msg);
               }
@@ -519,7 +555,19 @@ int xw_daemon_main(void) {
             decode_clear(msg, (size_t)r, &cfg);
             XWError aerr;
             memset(&aerr, 0, sizeof(aerr));
+            /* clear --keep: 先把目标窗口状态持久化为 keep=1 (保留 last),
+             * 再清窗口; restore 命令可将其恢复 */
+            if (cfg.keep) {
+              if (cfg.target == XW_TARGET_ALL)
+                xw_app_keep_all(cur);
+              else if (cfg.output[0])
+                xw_app_keep(cur, cfg.output);
+            }
             xw_app_clear(cur, &cfg, &aerr);
+            xw_app_save_state(cur);
+            reply_n = snprintf(reply, sizeof(reply), "ok\n");
+          } else if (strncmp(msg, "restore", 7) == 0) {
+            xw_app_restore_kept(cur);
             reply_n = snprintf(reply, sizeof(reply), "ok\n");
           } else if (strncmp(msg, "list", 4) == 0) {
             int nw = xw_app_window_count(cur);
@@ -544,8 +592,11 @@ int xw_daemon_main(void) {
                 }
                 /* identity: xrandr name for outputs, --name for -g windows */
                 const char *oname = win->output[0] ? win->output : "unnamed";
+                char rot[16];
+                snprintf(rot, sizeof(rot), "%d", win->rotation);
                 size_t olen = strlen(oname), tlen = strlen(type), plen = strlen(win->path);
-                size_t line_len = olen + 1 + tlen + 1 + plen + 1;
+                size_t rlen = strlen(rot);
+                size_t line_len = olen + 1 + tlen + 1 + plen + 1 + rlen + 1;
                 if (off + line_len < XW_REPLY_MAX) {
                   memcpy(out + off, oname, olen);
                   off += olen;
@@ -555,6 +606,9 @@ int xw_daemon_main(void) {
                   out[off++] = '\0';
                   memcpy(out + off, win->path, plen);
                   off += plen;
+                  out[off++] = '\0';
+                  memcpy(out + off, rot, rlen);
+                  off += rlen;
                   out[off++] = '\n';
                 }
               }

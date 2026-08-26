@@ -30,10 +30,12 @@ int main(int argc, char **argv) {
   char msg[XW_MSG_MAX];
   int n = -1;
   switch (cfg.command) {
-  case XW_CMD_SET:   n = xw_proto_encode_set(&cfg, msg, sizeof(msg)); break;
-  case XW_CMD_CLEAR: n = xw_proto_encode_clear(&cfg, msg, sizeof(msg)); break;
-  case XW_CMD_LIST:  n = xw_proto_encode_list(msg, sizeof(msg)); break;
-  case XW_CMD_EXIT:  n = xw_proto_encode_exit(msg, sizeof(msg)); break;
+  case XW_CMD_SET:     n = xw_proto_encode_set(&cfg, msg, sizeof(msg)); break;
+  case XW_CMD_CLEAR:   n = xw_proto_encode_clear(&cfg, msg, sizeof(msg)); break;
+  case XW_CMD_LIST:
+  case XW_CMD_STATE:   n = xw_proto_encode_list(msg, sizeof(msg)); break;
+  case XW_CMD_RESTORE: n = xw_proto_encode_restore(msg, sizeof(msg)); break;
+  case XW_CMD_EXIT:    n = xw_proto_encode_exit(msg, sizeof(msg)); break;
   default:
     fprintf(stderr, "xwallpaper: no command given\n");
     xw_cli_usage(stderr);
@@ -59,22 +61,31 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  /* print list output if this was a list command */
-  if (cfg.command == XW_CMD_LIST) {
-    /* reply starts "list\0N\n" then N window lines */
+  /* print the reply for list/state commands */
+  if (cfg.command == XW_CMD_LIST || cfg.command == XW_CMD_STATE) {
+    /* reply starts "list\0N\n" then N window lines: <name>\0<type>\0<path>\0<rot>\n */
+    /* --list prints the first field (name) only; --state prints all four TAB-separated */
+    int fields = (cfg.command == XW_CMD_LIST) ? 1 : 4;
     const char *p = reply;
     const char *nl = memchr(p, '\n', XW_REPLY_MAX);
     if (nl && strncmp(p, "list", 4) == 0) {
-      /* skip header, print remaining lines */
       const char *rest = nl + 1;
       while (*rest && rest < reply + XW_REPLY_MAX) {
         const char *line_end = memchr(rest, '\n', XW_REPLY_MAX - (size_t)(rest - reply));
         if (!line_end)
           break;
-        /* print the output name (first field) */
-        const char *field_end = memchr(rest, '\0', (size_t)(line_end - rest));
-        size_t name_len = field_end ? (size_t)(field_end - rest) : (size_t)(line_end - rest);
-        printf("%.*s\n", (int)name_len, rest);
+        const char *f = rest;
+        for (int field = 0; field < fields; field++) {
+          const char *fe = memchr(f, '\0', (size_t)(line_end - f));
+          size_t len = fe ? (size_t)(fe - f) : (size_t)(line_end - f);
+          if (field > 0)
+            putchar('\t');
+          fwrite(f, 1, len, stdout);
+          if (!fe)
+            break;
+          f = fe + 1;
+        }
+        putchar('\n');
         rest = line_end + 1;
       }
     } else {

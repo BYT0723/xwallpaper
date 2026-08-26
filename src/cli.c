@@ -96,8 +96,10 @@ void xw_cli_usage(FILE *f) {
   fprintf(f,
     "Usage:\n"
     "  xwallpaper set [--image|--video|--web] [target] [opts] <path>\n"
-    "  xwallpaper clear [-m <name|output>]\n"
+    "  xwallpaper clear [-m <name|output>] [--keep]\n"
+    "  xwallpaper restore\n"
     "  xwallpaper --list\n"
+    "  xwallpaper --state\n"
     "  xwallpaper exit\n"
     "  xwallpaper --daemon   (debug: run the daemon in the foreground)\n"
     "\n"
@@ -125,7 +127,9 @@ void xw_cli_usage(FILE *f) {
     "  xwallpaper set --all --video ~/clip.mp4 --mute\n"
     "  xwallpaper set -m HDMI-1 --web ~/page.html\n"
     "  xwallpaper set -g 3840x2160+0+0 --name dual --video ~/wide.mp4\n"
-    "  xwallpaper clear -m dual\n");
+    "  xwallpaper clear -m dual\n"
+    "  xwallpaper clear --keep -m eDP   # hide, keep last for `restore`\n"
+    "  xwallpaper restore               # bring kept last wallpapers back\n");
 }
 
 int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
@@ -150,10 +154,10 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
     exit(0);
   }
 
-  if (strcmp(cmd, "--list") == 0) {
-    cfg->command = XW_CMD_LIST;
+  if (strcmp(cmd, "--list") == 0 || strcmp(cmd, "--state") == 0) {
+    cfg->command = (strcmp(cmd, "--list") == 0) ? XW_CMD_LIST : XW_CMD_STATE;
     if (i < argc) {
-      XW_ERROR_SET(err, 1, "unexpected argument after --list");
+      XW_ERROR_SET(err, 1, "unexpected argument after %s", cmd);
       return -1;
     }
     return 0;
@@ -177,6 +181,15 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
     return 0;
   }
 
+  if (strcmp(cmd, "restore") == 0) {
+    cfg->command = XW_CMD_RESTORE;
+    if (i < argc) {
+      XW_ERROR_SET(err, 1, "unexpected argument after restore");
+      return -1;
+    }
+    return 0;
+  }
+
   if (strcmp(cmd, "set") == 0) {
     cfg->command = XW_CMD_SET;
     cfg->target = XW_TARGET_PRIMARY;
@@ -192,9 +205,11 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
     const char *a = argv[i];
 
     if (cfg->command == XW_CMD_CLEAR) {
-      /* clear accepts --all or -m <name/output> */
+      /* clear accepts --all or -m <name/output>, and --keep */
       if (strcmp(a, "--all") == 0) {
         cfg->target = XW_TARGET_ALL;
+      } else if (strcmp(a, "--keep") == 0) {
+        cfg->keep = 1;
       } else if (strcmp(a, "-m") == 0) {
         if (++i >= argc) {
           XW_ERROR_SET(err, 1, "-m requires an output name");

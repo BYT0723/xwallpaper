@@ -146,12 +146,46 @@ static void test_clear_output(void) {
   TEST_CHECK_EQ_STR(cfg.output, "DP-1");
 }
 
+static void test_clear_keep(void) {
+  TEST_BEGIN("clear --keep sets keep flag (retain last state)");
+  reset();
+  char *argv[] = {"xwallpaper", "clear", "-m", "HDMI-1", "--keep"};
+  TEST_CHECK_EQ_INT(parse(argv, 5), 0);
+  TEST_CHECK_EQ_INT(cfg.command, XW_CMD_CLEAR);
+  TEST_CHECK_EQ_INT(cfg.target, XW_TARGET_OUTPUT);
+  TEST_CHECK_EQ_STR(cfg.output, "HDMI-1");
+  TEST_CHECK_EQ_INT(cfg.keep, 1);
+}
+
+static void test_restore(void) {
+  TEST_BEGIN("restore selects restore command");
+  reset();
+  char *argv[] = {"xwallpaper", "restore"};
+  TEST_CHECK_EQ_INT(parse(argv, 2), 0);
+  TEST_CHECK_EQ_INT(cfg.command, XW_CMD_RESTORE);
+
+  reset();
+  char *argv2[] = {"xwallpaper", "restore", "extra"};
+  TEST_CHECK_EQ_INT(parse(argv2, 3), -1);
+}
+
 static void test_list(void) {
   TEST_BEGIN("--list selects list command");
   reset();
   char *argv[] = {"xwallpaper", "--list"};
   TEST_CHECK_EQ_INT(parse(argv, 2), 0);
   TEST_CHECK_EQ_INT(cfg.command, XW_CMD_LIST);
+}
+
+static void test_state(void) {
+  TEST_BEGIN("--state selects state command");
+  reset();
+  char *argv[] = {"xwallpaper", "--state"};
+  TEST_CHECK_EQ_INT(parse(argv, 2), 0);
+  TEST_CHECK_EQ_INT(cfg.command, XW_CMD_STATE);
+  reset();
+  char *argv2[] = {"xwallpaper", "--state", "extra"};
+  TEST_CHECK(parse(argv2, 3) != 0);
 }
 
 static void test_exit(void) {
@@ -313,7 +347,10 @@ int main(void) {
   test_window_flags();
   test_clear();
   test_clear_output();
+  test_clear_keep();
+  test_restore();
   test_list();
+  test_state();
   test_exit();
   test_missing_path();
   test_unknown_flag();

@@ -54,6 +54,12 @@ struct XWBackend {
   /* optional: receive X events (Expose, ConfigureNotify) for this window.
    * Return 1 if consumed. Called by app's event loop. May be NULL. */
   int (*on_event)(XWBackend *b, XEvent *ev);
+  /* optional: reuse this backend for a different file of the SAME type
+   * (video -> video etc) without tearing the window down. Switching wallpapers
+   * then only swaps the resource (mpv loadfile / image redraw / webkit load)
+   * instead of re-creating the backend, which can block the single-threaded
+   * daemon on GL/mpv context setup. May be NULL (falls back to destroy+init). */
+  int (*reload)(XWBackend *b, const XWBackendOpt *opt, XWError *err);
   /* optional: pause/resume rendering when the X display is in DPMS
    * power-off (standby/suspend/off). Rendering backends (e.g. mpv) keep
    * presenting frames while DPMS is off, which wakes the display back up.

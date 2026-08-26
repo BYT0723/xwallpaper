@@ -139,6 +139,22 @@ static void video_destroy(XWBackend *b) {
   b->priv = NULL;
 }
 
+/* 同类型复用: 只换播放文件 (mpv loadfile 异步, 不重建 GL/mpv 上下文)。
+ * rotation 总是下发 (含 0) 以便从旋转状态复位。 */
+static int video_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
+  (void)err;
+  VideoCtx *ctx = (VideoCtx *)b->priv;
+  if (!ctx)
+    return -1;
+  snprintf(ctx->path, sizeof(ctx->path), "%s", opt->path);
+  ctx->volume = opt->volume;
+  ctx->mute = opt->mute;
+  int64_t rot = opt->rotate;
+  mpv_set_property(ctx->mpv, "video-rotate", MPV_FORMAT_INT64, &rot);
+  load_file(ctx);
+  return 0;
+}
+
 XWBackend *xw_video_backend_new(void) {
   static XWBackend backend = {
     .name = "video",
@@ -148,6 +164,7 @@ XWBackend *xw_video_backend_new(void) {
     .destroy = video_destroy,
     .on_event = NULL,
     .set_paused = video_set_paused,
+    .reload = video_reload,
   };
   return &backend;
 }

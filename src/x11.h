@@ -28,6 +28,7 @@ typedef struct XWWindow {
   /* current backend info (for --list), filled by app */
   int type;               /* XW_BACKEND_* */
   char path[1024];
+  int rotation;           /* video rotation 0/90/180/270 (for --list & state) */
 
   /* callback: pointer events forwarded to root (installed by x11) */
   void *user_data;

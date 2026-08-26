@@ -102,6 +102,19 @@ static void web_stop(XWBackend *b) {
     webkit_web_view_stop_loading(WEBKIT_WEB_VIEW(ctx->view));
 }
 
+/* 同类型复用: 换 URL/页面后重新加载 webkit 视图。 */
+static int web_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
+  (void)err;
+  WebCtx *ctx = (WebCtx *)b->priv;
+  if (!ctx)
+    return -1;
+  free(ctx->path);
+  ctx->path = strdup(opt->path);
+  if (!ctx->path)
+    return -1;
+  return web_start(b);
+}
+
 static void web_destroy(XWBackend *b) {
   if (!b || !b->priv)
     return;
@@ -122,6 +135,7 @@ XWBackend *xw_web_backend_new(void) {
     .stop = web_stop,
     .destroy = web_destroy,
     .on_event = NULL,
+    .reload = web_reload,
   };
   return &backend;
 }

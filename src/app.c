@@ -10,6 +10,7 @@
 
 #include "app.h"
 #include "backends.h"
+#include "state.h"
 #include "x11.h"
 
 struct XWApp {
@@ -138,6 +139,7 @@ static int create_window(XWApp *app, const XWConfig *cfg,
     app->uses_gtk = 1;
   win->type = opt.type;
   snprintf(win->path, sizeof(win->path), "%s", opt.path ? opt.path : "");
+  win->rotation = cfg->rotate;
 
   app->wins = realloc(app->wins, sizeof(XWWindow *) * (app->nwins + 1));
   app->backends = realloc(app->backends, sizeof(XWBackend *) * (app->nwins + 1));
@@ -228,8 +230,23 @@ int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err) {
   int idx = find_window_by_key(app, lookup);
 
   if (idx >= 0) {
-    /* swap backend in place on the existing window */
+    /* 同类型切换: 复用 backend 只换资源 (mpv loadfile / 图片重绘 / webkit 加载),
+     * 避免 destroy+init 重建 GL/mpv 上下文 — 后者在单线程 daemon 里可能阻塞
+     * 整个事件循环 (表现为切换壁纸卡死)。 */
+    XWBackendOpt opt;
+    fill_backend_opt(&opt, cfg);
     XWBackend *old = app->backends[idx];
+    if (old && old->reload && app->wins[idx]->type == opt.type) {
+      if (old->reload(old, &opt, err) != 0)
+        return -1; /* 失败保留旧壁纸, 窗口元数据也保持旧值 */
+      app->wins[idx]->type = opt.type;
+      snprintf(app->wins[idx]->path, sizeof(app->wins[idx]->path), "%s",
+               opt.path ? opt.path : "");
+      app->wins[idx]->rotation = cfg->rotate;
+      apply_dpms_to_backend(app, old);
+      return 0;
+    }
+    /* 不同类型才销毁重建 */
     if (old)
       old->destroy(old);
 
@@ -243,7 +260,6 @@ int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err) {
     }
     *b = *tmpl;
     b->priv = NULL;
-    XWBackendOpt opt;
     fill_backend_opt(&opt, cfg);
     if (b->init(b, app->wins[idx], &opt, err) != 0) {
       free(b);
@@ -255,6 +271,7 @@ int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err) {
     app->wins[idx]->type = opt.type;
     snprintf(app->wins[idx]->path, sizeof(app->wins[idx]->path), "%s",
              opt.path ? opt.path : "");
+    app->wins[idx]->rotation = cfg->rotate;
     if (b->start(b) != 0) {
       b->destroy(b);
       app->backends[idx] = NULL;
@@ -443,3 +460,165 @@ void xw_app_destroy(XWApp *app) {
     the_app = NULL;
   free(app);
 }
+
+/* ------------------------------------------------------------------ *
+ *  Persistent per-name state
+ * ------------------------------------------------------------------ */
+
+static void entry_from_window(XWStateEntry *e, const XWWindow *win, int keep) {
+  memset(e, 0, sizeof(*e));
+  snprintf(e->name, sizeof(e->name), "%s",
+           win->output[0] ? win->output : "unnamed");
+  e->type = win->type;
+  snprintf(e->path, sizeof(e->path), "%s", win->path);
+  e->rotation = win->rotation;
+  /* 总是保存几何; 恢复时若 name 命中当前 xrandr output 则重解析 */
+  e->have_geom = 1;
+  e->x = win->x;
+  e->y = win->y;
+  e->w = win->width;
+  e->h = win->height;
+  e->keep = keep;
+}
+
+int xw_app_save_state(XWApp *app) {
+  char path[1024];
+  if (xw_state_path(path, sizeof(path)) != 0)
+    return -1;
+
+  /* keep=1 且无活跃窗口的旧条目 (clear --keep 保留的 last) 继续保留 */
+  XWStateEntry old[XW_STATE_MAX_ENTRIES];
+  int on = 0;
+  xw_state_load(path, old, XW_STATE_MAX_ENTRIES, &on);
+
+  XWStateEntry out[XW_STATE_MAX_ENTRIES];
+  int n = 0;
+  for (int i = 0; i < on && n < XW_STATE_MAX_ENTRIES; i++) {
+    if (old[i].keep && find_window_by_key(app, old[i].name) < 0)
+      out[n++] = old[i];
+  }
+  for (int i = 0; i < app->nwins && n < XW_STATE_MAX_ENTRIES; i++) {
+    entry_from_window(&out[n], app->wins[i], 0);
+    n++;
+  }
+  return xw_state_save(path, out, n);
+}
+
+int xw_app_keep(XWApp *app, const char *name) {
+  char path[1024];
+  if (xw_state_path(path, sizeof(path)) != 0)
+    return -1;
+  int idx = find_window_by_key(app, name);
+  if (idx < 0)
+    return 0; /* nothing to keep */
+  XWStateEntry e;
+  entry_from_window(&e, app->wins[idx], 1);
+  return xw_state_upsert(path, &e);
+}
+
+int xw_app_keep_all(XWApp *app) {
+  int r = 0;
+  for (int i = 0; i < app->nwins; i++) {
+    if (app->wins[i]->output[0] && xw_app_keep(app, app->wins[i]->output) != 0)
+      r = -1;
+  }
+  return r;
+}
+
+/* 重建一个状态条目为活跃窗口。
+ * 优先把 name 当作 xrandr output 解析 (几何实时), 失败再回退保存的 geom
+ * (grp_* / Screen 这类 -g 窗口)。返回 0 成功或跳过, -1 失败。 */
+static int restore_entry(XWApp *app, const XWStateEntry *e) {
+  if (getenv("XW_DEBUG_DAEMON"))
+    fprintf(stderr, "xwallpaperd: restore: %s type=%d path=%s\n", e->name,
+            e->type, e->path);
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.command = XW_CMD_SET;
+  cfg.backend_explicit = e->type;
+  /* 与 CLI set 默认一致: memset(0) 会漏掉 opacity/scale_mode/volume 等,
+   * 尤其 opacity=0 会让窗口被设 _NET_WM_WINDOW_OPACITY=0 → 合成器下全透明 */
+  cfg.scale_mode = XW_SCALE_FILL;
+  cfg.volume = 100.0;
+  cfg.opacity = 1.0;
+  snprintf(cfg.audio_client_name, sizeof(cfg.audio_client_name), "xwallpaper");
+  snprintf(cfg.path, sizeof(cfg.path), "%s", e->path);
+  cfg.rotate = e->rotation;
+  if (e->type == XW_BACKEND_VIDEO)
+    cfg.mute = 1; /* 壁纸视频恢复时不应出声 */
+
+  cfg.target = XW_TARGET_OUTPUT;
+  /* %.*s: 显式边界 (最多读 sizeof(e->name)-1), 避免 %s 触发
+   * -Wformat-truncation 保守告警 (目标 output[64] 恰好容纳) */
+  snprintf(cfg.output, sizeof(cfg.output), "%.*s", (int)sizeof(e->name) - 1,
+           e->name);
+  int x, y;
+  unsigned int w, h;
+  char oname[XW_OUTPUT_NAME_LEN];
+  const char *mode = "output";
+  if (xw_x11_resolve_geometry(app->dpy, &cfg, &x, &y, &w, &h, oname) != 0 ||
+      !oname[0]) {
+    if (!e->have_geom) {
+      if (getenv("XW_DEBUG_DAEMON"))
+        fprintf(stderr,
+                "xwallpaperd: restore: %s skip (not an output, no saved geom)\n",
+                e->name);
+      return 0; /* 既非 output 也无保存几何: 跳过 */
+    }
+    mode = "geom";
+    cfg.target = XW_TARGET_GEOM;
+    cfg.have_geom = 1;
+    cfg.geom_x = e->x;
+    cfg.geom_y = e->y;
+    cfg.geom_w = e->w;
+    cfg.geom_h = e->h;
+    snprintf(cfg.name, sizeof(cfg.name), "%.*s", (int)sizeof(e->name) - 1,
+             e->name);
+  }
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  int r = xw_app_set(app, &cfg, &err);
+  if (getenv("XW_DEBUG_DAEMON"))
+    fprintf(stderr, "xwallpaperd: restore: %s %s %s (%s)\n", e->name, mode,
+            r == 0 ? "ok" : "FAIL", r == 0 ? "" : err.msg);
+  return r == 0 ? 0 : -1;
+}
+
+/* keep_flag 为 0 时重建当前窗口 (启动恢复), 为 1 时重建 kept last (restore
+ * 命令)。两者共享同一恢复流程, 仅过滤条件与是否回写快照不同。 */
+static int restore_entries(XWApp *app, int keep_flag) {
+  char path[1024];
+  if (xw_state_path(path, sizeof(path)) != 0)
+    return -1;
+  XWStateEntry entries[XW_STATE_MAX_ENTRIES];
+  int count = 0;
+  if (xw_state_load(path, entries, XW_STATE_MAX_ENTRIES, &count) != 0) {
+    if (getenv("XW_DEBUG_DAEMON"))
+      fprintf(stderr, "xwallpaperd: restore: no usable state file (%s)\n",
+              path);
+    return 0; /* 无可用状态 */
+  }
+  if (getenv("XW_DEBUG_DAEMON"))
+    fprintf(stderr, "xwallpaperd: restore: keep=%d path=%s entries=%d\n",
+            keep_flag, path, count);
+  for (int i = 0; i < count; i++) {
+    if (entries[i].keep != keep_flag)
+      continue;
+    if (find_window_by_key(app, entries[i].name) >= 0) {
+      if (getenv("XW_DEBUG_DAEMON"))
+        fprintf(stderr,
+                "xwallpaperd: restore: %s skip (already an active window)\n",
+                entries[i].name);
+      continue; /* 已是活跃窗口 */
+    }
+    restore_entry(app, &entries[i]);
+  }
+  if (keep_flag)
+    return xw_app_save_state(
+        app); /* 活跃窗口变 keep=0, 未恢复的 keep 条目保持 keep=1 */
+  return 0;
+}
+
+int xw_app_restore_startup(XWApp *app) { return restore_entries(app, 0); }
+
+int xw_app_restore_kept(XWApp *app) { return restore_entries(app, 1); }

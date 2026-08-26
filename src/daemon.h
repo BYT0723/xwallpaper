@@ -17,13 +17,16 @@
  *      target: all | <output-name> | geom
  *      type:   image | video | web
  *    clear\0<target>\n       target: all | <output-name>
+ *      optional field keep=1: remove windows but retain their last state
+ *      (screen full-wallpaper clearing; `restore` brings them back)
  *    list\n
+ *    restore\n              rebuild windows kept by `clear --keep`
  *    exit\n
  *
  *  daemon -> client:
  *    ok\n
  *    error\0<msg>\n
- *    list\0<n>\n  then n lines: <output>\0<type>\0<path>\n
+ *    list\0<n>\n  then n lines: <output>\0<type>\0<path>\0<rotation>\n
  * ------------------------------------------------------------------ */
 
 #define XW_SOCKET_DIR_ENV   "XDG_RUNTIME_DIR"
@@ -41,6 +44,7 @@ void xw_daemon_socket_path(char *out, size_t n);
 int xw_proto_encode_set(const XWConfig *cfg, char *msg, size_t n);
 int xw_proto_encode_clear(const XWConfig *cfg, char *msg, size_t n);
 int xw_proto_encode_list(char *msg, size_t n);
+int xw_proto_encode_restore(char *msg, size_t n);
 int xw_proto_encode_exit(char *msg, size_t n);
 
 /* Daemon entry point (called by client-spawned child process). */

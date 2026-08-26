@@ -57,6 +57,33 @@ int xw_app_handle_event(XWApp *app, XEvent *ev);
  * any event loop iteration. */
 void xw_app_dpms_poll(XWApp *app);
 
+/* ------------------------------------------------------------------ *
+ *  Persistent state (per-name latest wallpaper)
+ * ------------------------------------------------------------------ */
+
+/* Snapshot current windows + retained last entries to the state file.
+ * The daemon calls this after every set/clear. Returns 0 or -1. */
+int xw_app_save_state(XWApp *app);
+
+/* Persist the window `name` as a kept (keep=1) entry so a later `restore`
+ * can bring it back. Does not touch the live window. Used by `clear --keep`
+ * (screen full-wallpaper clearing) to keep the last wallpaper of the cleared
+ * monitor/group. Returns 0 or -1. */
+int xw_app_keep(XWApp *app, const char *name);
+
+/* Persist every live window as a kept entry (for `clear --keep --all`).
+ * Returns 0 or -1. */
+int xw_app_keep_all(XWApp *app);
+
+/* Rebuild every non-kept entry from the state file as a live window.
+ * Called once at daemon startup to restore the previous session's
+ * wallpapers. Failures on individual entries are ignored. Returns 0. */
+int xw_app_restore_startup(XWApp *app);
+
+/* Rebuild every kept entry as a live window (the `restore` command:
+ * brings back last wallpapers after `clear --keep` hid them). Returns 0. */
+int xw_app_restore_kept(XWApp *app);
+
 /* Current app instance (for signal handlers). NULL before create / after destroy. */
 XWApp *xw_app_get(void);
 
