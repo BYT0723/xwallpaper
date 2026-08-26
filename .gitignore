@@ -11,3 +11,6 @@ xwallpaper
 /tests/integration/test_app_geom
 /tests/integration/test_app_all
 /tests/integration/test_fill
+
+# task docs (local only)
+tasks/
