@@ -2,7 +2,7 @@
 
 ## Objective
 
-A lightweight CLI tool that sets **image / video / web** wallpapers on bare X11, in one C binary. It replaces the author's previous `xwinwrap + external player` workflow with embedded backends — no forked children, one desktop-type wrapper window per wallpaper.
+A lightweight CLI tool that sets **image / video / web** wallpapers on bare X11. It replaces the author's previous `xwinwrap + external player` workflow with embedded backends — no forked children, one desktop-type wrapper window per wallpaper. Two binaries: `xwallpaperd` (resident daemon owning all windows) and a thin `xwallpaper` CLI that links only libc so every invocation starts in <1ms.
 
 **User stories:**
 - As an X11/WM user (i3, openbox, bspwm, …) I can `xwallpaper set photo.png` and get an image wallpaper.
@@ -21,11 +21,13 @@ A lightweight CLI tool that sets **image / video / web** wallpapers on bare X11,
 ## Commands
 
 ```
-Build:      make
+Build:      make                 # xwallpaper (thin CLI) + xwallpaperd (daemon)
 Run tests:  make test
+Check deps: make check-client-libs   # CLI must not link webkit/mpv/imlib2
 Clean:      make clean
 Debug build: make DEBUG=1
 Manual smoke:
+  ./xwallpaperd &                    # start daemon once (stays resident)
   ./xwallpaper set tests/data/pixel.png
   ./xwallpaper set tests/data/bounce.mp4 --mute
   ./xwallpaper set tests/data/page.html
@@ -37,9 +39,11 @@ Manual smoke:
 
 ```
 src/
-  main.c         → entry: decides client (connect/send) vs daemon (spawn) mode
+  main.c         → cli entry (xwallpaper): parse → encode → connect → print
+  dmain.c        → daemon entry (xwallpaperd): xw_daemon_main
   daemon.c/.h    → socket server, command dispatch, daemon lifecycle
-  client.c/.h    → socket connect, auto-spawn daemon, send command, print reply
+  proto.c/.h     → protocol encode + socket path, shared by cli and daemon
+  client.c/.h    → socket connect/send/print (no daemon spawning)
   x11.c/.h       → XWWindow, window creation, atoms, desktop-layer, monitor, geometry, mouse forward
   cli.c/.h       → arg parse → XWConfig (pure, no X11)
   app.c/.h       → event loop (poll), backend lifecycle, XWBackend interface
@@ -48,9 +52,9 @@ src/
   web.c          → webkit2gtk backend (GtkPlug)
   backend.h      → XWBackend struct + XWWindow struct forward decl
 tests/
-  test_cli.c     → parsing, backend detection
-  test_geom.c    → XParseGeometry-based monitor/geometry resolution
-  test_client.c  → protocol encode/decode (tmp socket, fake daemon)
+  test_cli.c     → parsing, backend detection (links cli.o only)
+  test_geom.c    → XParseGeometry-based monitor/geometry resolution (links cli.o only)
+  test_client.c  → protocol encode/decode (tmp socket, fake daemon) (links cli/proto/client)
   harness.h      → assert macros + main runner
 Makefile
 CAPABILITY.md
@@ -89,9 +93,9 @@ struct XWBackend {
 
 ## Boundaries
 
-- **Always:** run `make test` before landing; validate CLI input; free every X/backend resource on destroy; forward pointer events when overriding the desktop.
-- **Ask first:** adding a build dependency; changing the event-loop model; switching libmpv render from window to FBO; adding Wayland support; dlopen lazy-backend-loading (deferred to post-MVP).
-- **Never:** commit secrets; open a second X connection in a backend (must reuse `x11`'s); fork+exec external players; link webkit2gtk into the image/video path at runtime (single linked binary is fine for MVP).
+- **Always:** run `make test` before landing; validate CLI input; free every X/backend resource on destroy; forward pointer events when overriding the desktop; keep the CLI free of the heavy backend libs (`make check-client-libs`).
+- **Ask first:** adding a build dependency; changing the event-loop model; switching libmpv render from window to FBO; adding Wayland support; reintroducing daemon spawning from the CLI.
+- **Never:** commit secrets; open a second X connection in a backend (must reuse `x11`'s); fork+exec external players; link webkit2gtk/mpv/imlib2 into the `xwallpaper` CLI binary (that cost is exactly why it was split out).
 
 ## Key design decisions (carried from xwinwrap + ideation)
 
@@ -100,7 +104,7 @@ struct XWBackend {
 3. **Video**: libmpv with `--wid=<win>` set via `mpv_set_property("wid", ...)`. mpv creates its own GL rendering context and renders on an internal thread — no `mpv_render_context` plumbing needed. We control loop/volume/mute via mpv commands and stay out of the render path. Video backend also needs a window with a GL-capable visual (default visual is fine, opaque wallpaper so no ARGB needed).
 4. **Web**: webkit2gtk + GtkPlug embedding the foreign window XID. GDK opens its own X connection; `app` drives the GTK `GMainContext` from its own poll loop via `g_main_context_{prepare,query,check,dispatch}` (documented GLib pattern for embedding GLib in a foreign loop) — no `gtk_main()`. Each output window gets its own GtkPlug+WebView sharing one `WebKitWebContext`.
 5. **Event loop** (`app`): single `poll()` over: X connection fd (from `x11`), GTK context fds (web). Video needs no loop integration (mpv self-renders). Backends register fd sources through `app`'s loop API.
-6. **Daemon + client, single-process multi-window daemon**: a long-running `xwallpaper` daemon owns all wallpaper windows (one per output, or arbitrary via `-g`). A CLI client (`xwallpaper ...`) talks to it over a UNIX socket (`$XDG_RUNTIME_DIR/xwallpaper.sock`). The client auto-spawns the daemon if it is not running (fork + setsid), then sends a command and prints the daemon's reply.
+6. **Two binaries, thin CLI + resident daemon**: a long-running `xwallpaperd` daemon owns all wallpaper windows (one per output, or arbitrary via `-g`). A thin CLI (`xwallpaper ...`) links only libc and talks to the daemon over a UNIX socket (`$XDG_RUNTIME_DIR/xwallpaper.sock`), so every invocation starts in <1ms. The CLI does **not** spawn the daemon — the user starts `xwallpaperd` (session startup, systemd user service, or a script); if it is not running the CLI errors with `daemon not running, start xwallpaperd first`.
 
    - **Command flow**: `set -m DP-1 <path>`, `set --all <path>`, `set -g ...` all become one socket message; the daemon resolves geometry and swaps the target window's backend in place — no cross-process kill coordination, so no replace race.
    - **Daemon lifecycle**: stays resident across `clear` (so later `set` is instant). `xwallpaper exit` tears it down explicitly. `clear`/`--list` connect only.

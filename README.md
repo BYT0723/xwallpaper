@@ -1,17 +1,18 @@
 # xwallpaper
 
-> Lightweight X11 wallpaper daemon for image / video / web wallpapers in one C binary — libmpv, webkit2gtk, and imlib2 backends with a long-running resident daemon.
+> Lightweight X11 wallpaper daemon for image / video / web wallpapers — libmpv, webkit2gtk, and imlib2 backends with a long-running resident daemon and a thin CLI.
 
-`xwallpaper` sets **image, video, and live web wallpapers** on bare X11 (i3, dwm, openbox, bspwm, …) in a single binary. It replaces the classic `xwinwrap + external player` workflow with embedded backends — no forked children, one desktop-type wrapper window per wallpaper, managed by a resident daemon you control with a thin CLI.
+`xwallpaper` sets **image, video, and live web wallpapers** on bare X11 (i3, dwm, openbox, bspwm, …). It replaces the classic `xwinwrap + external player` workflow with embedded backends — no forked children, one desktop-type wrapper window per wallpaper, managed by a resident daemon you control with a thin CLI. Two binaries: `xwallpaperd` (the daemon, links the heavy backends) and `xwallpaper` (the CLI, links only libc so every invocation starts in <1ms).
 
 ```sh
-xwallpaper set ~/wall.png                # image wallpaper (primary output)
+xwallpaperd &                          # start the daemon once (stays resident)
+xwallpaper set ~/wall.png              # image wallpaper (primary output)
 xwallpaper set --video ~/clip.mp4 --mute # looping muted video wallpaper
-xwallpaper set --web ~/page.html         # live web wallpaper
+xwallpaper set --web ~/page.html       # live web wallpaper
 xwallpaper set -m HDMI-1 ~/portrait.mp4 --rotate 90   # per-output target
-xwallpaper --list                        # what's running
-xwallpaper clear                         # remove wallpapers (daemon stays)
-xwallpaper exit                          # shut the daemon down
+xwallpaper --list                      # what's running
+xwallpaper clear                       # remove wallpapers (daemon stays)
+xwallpaper exit                        # shut the daemon down
 ```
 
 ## Why
@@ -19,7 +20,7 @@ xwallpaper exit                          # shut the daemon down
 The previous setup — `xwinwrap` spawning a separate player per wallpaper — had two problems this project solves:
 
 - **No fork+exec.** `mpv`, `webkit2gtk`, and `imlib2` are linked directly. One process owns every wallpaper window, so replacing a wallpaper swaps it in place with no cross-process kill/race.
-- **Resident daemon.** A long-running `xwallpaper` daemon owns all windows; the CLI client talks to it over a UNIX socket. `clear` keeps the daemon alive so the next `set` is instant.
+- **Resident daemon.** A long-running `xwallpaperd` daemon owns all windows; the thin CLI client talks to it over a UNIX socket. `clear` keeps the daemon alive so the next `set` is instant. The CLI never spawns the daemon — start `xwallpaperd` yourself (from your session startup, a systemd user service, or a script).
 
 Desktop icons and conky stay clickable: pointer events on the wallpaper window are forwarded to the root window.
 
@@ -71,6 +72,14 @@ sudo make install PREFIX=/usr DESTDIR=...  # override locations
 
 ## Usage
 
+Start the daemon once (it stays resident until `xwallpaper exit`):
+
+```sh
+xwallpaperd &
+```
+
+Then control it from the CLI:
+
 ```
 xwallpaper set [--image|--video|--web] [target] [opts] <path>
 xwallpaper clear [-m <name|output>]
@@ -78,7 +87,7 @@ xwallpaper --list
 xwallpaper exit
 ```
 
-The backend is chosen by file extension unless forced with `--image`/`--video`/`--web`.
+If the daemon is not running, the CLI errors with `daemon not running, start xwallpaperd first`. The backend is chosen by file extension unless forced with `--image`/`--video`/`--web`.
 
 Target selection:
 
@@ -98,22 +107,23 @@ See `xwallpaper --help` for the full list.
 
 ## How it works
 
-- **Daemon + client, one process.** A resident daemon owns all wallpaper windows; the client connects over a UNIX socket at `$XDG_RUNTIME_DIR/xwallpaper.sock` and auto-spawns the daemon (fork + setsid) if absent.
+- **Two binaries, thin CLI.** `xwallpaperd` owns all wallpaper windows and links the heavy backends; `xwallpaper` (the CLI) links only libc and talks to the daemon over a UNIX socket at `$XDG_RUNTIME_DIR/xwallpaper.sock`. The daemon must be started separately; the CLI never spawns it, so every CLI invocation is instant.
 - **Desktop wrapper window.** Each wallpaper is an `override_redirect` window attached under the `_NET_WM_WINDOW_TYPE_DESKTOP` layer, lowered, made sticky and below — it behaves as a proper desktop backdrop.
 - **Single event loop.** `app` runs one `poll()` over the X connection fd and the GTK main-context fds; mpv self-renders via `--wid` on its own thread.
 - **Backend interface.** `image`/`video`/`web` implement a common `XWBackend` (`init/start/stop/destroy`); the app swaps backends per window in place.
 
 ```
-cli ──→ client ──→ daemon ──→ app ──→ x11
-                                   ↑
-               image / video / web ─┘
+xwallpaper (cli) ──→ client ──→ daemon (xwallpaperd) ──→ app ──→ x11
+                                     ↑
+                 image / video / web ─┘
 ```
 
 ## Testing
 
 ```sh
-make test        # unit: cli parsing, geometry, protocol encode/decode
-make test-xvfb   # integration: X11 window/desktop-layer, backend lifecycle under Xvfb
+make test               # unit: cli parsing, geometry, protocol encode/decode
+make test-xvfb          # integration: X11 window/desktop-layer, backend lifecycle under Xvfb
+make check-client-libs  # regression: CLI must not link the heavy backend libs
 ```
 
 Pure-logic modules are tested without an X server; integration tests run under `xvfb-run` (skipped when absent). No external test framework — plain C assert harness.
