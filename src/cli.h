@@ -1,6 +1,8 @@
 #ifndef XW_CLI_H
 #define XW_CLI_H
 
+#include <stdio.h>
+
 #include "xw_err.h"
 #include "backend.h"
 

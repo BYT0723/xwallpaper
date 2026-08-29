@@ -5,7 +5,7 @@
 
 #include "cli.h"
 #include "client.h"
-#include "daemon.h"
+#include "proto.h"
 
 int main(int argc, char **argv) {
   /* library code (mpv etc.) needs the C numeric locale to parse decimals */
@@ -23,7 +23,8 @@ int main(int argc, char **argv) {
   }
 
   if (cfg.command == XW_CMD_DAEMON) {
-    return xw_daemon_main();
+    fprintf(stderr, "xwallpaper: run 'xwallpaperd' instead (daemon is no longer a client command)\n");
+    return 1;
   }
 
   /* encode the command */
@@ -46,8 +47,8 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  /* connect (spawning the daemon on first use), send, print reply */
-  int fd = xw_client_connect(1, &err);
+  /* connect to the daemon (must be running as xwallpaperd), send, print reply */
+  int fd = xw_client_connect(&err);
   if (fd < 0) {
     fprintf(stderr, "xwallpaper: %s\n", err.msg);
     return 1;

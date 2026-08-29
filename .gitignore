@@ -1,6 +1,7 @@
 # build artifacts
 *.o
 xwallpaper
+xwallpaperd
 /tests/test_cli
 /tests/test_client
 /tests/test_geom

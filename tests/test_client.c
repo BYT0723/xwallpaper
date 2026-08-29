@@ -9,6 +9,7 @@
 #include "harness.h"
 #include "../src/daemon.h"
 #include "../src/client.h"
+#include "../src/proto.h"
 
 static XWConfig cfg;
 
@@ -203,7 +204,7 @@ static int fake_daemon(char *got_cmd, size_t got_n) {
   /* parent: run the client against the child's listener */
   XWError err;
   memset(&err, 0, sizeof(err));
-  int fd = xw_client_connect(0, &err);
+  int fd = xw_client_connect(&err);
   if (fd < 0) {
     TEST_FAIL("client connect failed: %s", err.msg);
   } else {
