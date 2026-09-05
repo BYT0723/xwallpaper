@@ -302,7 +302,15 @@ int xw_daemon_main(void) {
 
     /* Poll our X connection + the socket + the GTK/GDK main-context fds.
      * GDK has its own X connection; polling it lets webkit frame events
-     * wake us. Cap the timeout so animation frames aren't starved. */
+     * wake us.
+     *
+     * 自适应 poll 超时: 默认无限阻塞 (gtimeout=-1), 事件到达才醒 — 旧的固定
+     * 16ms 下限会让常驻 daemon 空转时每秒无谓醒来 ~60 次 (实测 ~0.2% CPU)。
+     * webkit 动画与 GDK frame clock 是 glib 定时器/可轮询 fd, 由 gtimeout/
+     * gfds 反映, 不会被饿死。 */
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    int64_t now_ms = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+
     gint gprio = G_PRIORITY_DEFAULT, gtimeout = -1;
     g_main_context_prepare(NULL, &gprio);
     GPollFD gfds[8];
@@ -325,7 +333,16 @@ int xw_daemon_main(void) {
       nfds++;
     }
 
-    int timeout = (gtimeout >= 0 && gtimeout < 32) ? gtimeout : 16;
+    int timeout = gtimeout; /* -1 = block until an fd/event arrives */
+    if (xw_app_dpms_watch_required(cur) || now_ms - startup_ms < 120000) {
+      /* 需要退化为 500ms 节拍: (a) 有持续出帧的渲染后端 (video) — 必须轮询
+       * DPMS, 熄屏时暂停它防止点亮显示器; (b) 启动自愈窗口 (前 2 分钟) — 原
+       * 逻辑窗口内本就每 500ms 检测 (restore_pending 读盘 + video retry),
+       * 保持该节拍避免自愈被无限阻塞饿死。窗口仅 2 分钟, 2Hz 唤醒成本可忽略;
+       * restore_pending 读盘只在该节拍触发时进行, 勿提前到每次迭代。 */
+      if (timeout < 0 || timeout > 500)
+        timeout = 500;
+    }
     int r = poll(fds, nfds, timeout);
     if (r < 0) {
       if (errno == EINTR)
@@ -337,9 +354,6 @@ int xw_daemon_main(void) {
      * (throttled internally; keeps video wallpapers from re-waking the
      * display after lock/screen-off) */
     xw_app_dpms_poll(cur);
-
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    int64_t now_ms = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
 
     if (now_ms - startup_ms < 120000) {
       if (now_ms - last_selfheal_ms >= 500) {

@@ -46,6 +46,11 @@ XWWindow *xw_app_window(XWApp *app, int i);
 /* The daemon's X display (for event polling). */
 Display *xw_app_display(XWApp *app);
 
+/* Whether any live backend presents frames continuously (has a set_paused
+ * hook, i.e. video). The daemon event loop must keep a periodic DPMS poll
+ * while this is true so a screen-off pauses the renderer. */
+int xw_app_dpms_watch_required(XWApp *app);
+
 /* Route an X event to the owning window: pointer forwarding + backend
  * on_event hook. Returns 1 if consumed. */
 int xw_app_handle_event(XWApp *app, XEvent *ev);

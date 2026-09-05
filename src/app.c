@@ -351,6 +351,15 @@ Display *xw_app_display(XWApp *app) {
   return app->dpy;
 }
 
+/* 是否存在会持续出帧的渲染后端 (实现了 set_paused, 如 video)。有则 daemon
+ * 事件循环必须保持 500ms 节拍轮询 DPMS, 才能在熄屏时暂停它防止点亮显示器。 */
+int xw_app_dpms_watch_required(XWApp *app) {
+  for (int i = 0; i < app->nwins; i++)
+    if (app->backends[i] && app->backends[i]->set_paused)
+      return 1;
+  return 0;
+}
+
 int xw_app_handle_event(XWApp *app, XEvent *ev) {
   for (int i = 0; i < app->nwins; i++) {
     XWWindow *win = app->wins[i];
