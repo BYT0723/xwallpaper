@@ -72,10 +72,14 @@ static void test_roundtrip_geom(void) {
   e.w = 1920;
   e.h = 1080;
   e.keep = 1;
+  e.volume = 100.0;
+  e.scale_mode = XW_SCALE_FILL;
+  e.opacity = 1.0;
 
-  char line[256];
+  char line[512];
   TEST_CHECK(xw_state_format_line(&e, line, sizeof(line)) > 0);
-  TEST_CHECK_EQ_STR(line, "grp_dual\tvideo\t/w/with space/clip.mp4\t90\t1920x1080+100+200\t1\n");
+  TEST_CHECK_EQ_STR(line, "grp_dual\tvideo\t/w/with space/clip.mp4\t90\t1920x1080+100+200\t1"
+                          "\t0\t100\t0\t2\t1\t0\t0\t0\t0\t0\t\t\n");
 
   XWStateEntry o;
   memset(&o, 0, sizeof(o));
@@ -102,10 +106,14 @@ static void test_roundtrip_output(void) {
   e.rotation = 0;
   e.have_geom = 0;
   e.keep = 0;
+  e.volume = 100.0;
+  e.scale_mode = XW_SCALE_FILL;
+  e.opacity = 1.0;
 
-  char line[256];
+  char line[512];
   TEST_CHECK(xw_state_format_line(&e, line, sizeof(line)) > 0);
-  TEST_CHECK_EQ_STR(line, "DP-1\timage\t/w/wall.png\t0\t-\t0\n");
+  TEST_CHECK_EQ_STR(line, "DP-1\timage\t/w/wall.png\t0\t-\t0"
+                          "\t0\t100\t0\t2\t1\t0\t0\t0\t0\t0\t\t\n");
 
   XWStateEntry o;
   memset(&o, 0, sizeof(o));
@@ -130,11 +138,15 @@ static void test_roundtrip_escape(void) {
   e.w = 100;
   e.h = 100;
   e.keep = 0;
+  e.volume = 100.0;
+  e.scale_mode = XW_SCALE_FILL;
+  e.opacity = 1.0;
 
-  char line[256];
+  char line[512];
   TEST_CHECK(xw_state_format_line(&e, line, sizeof(line)) > 0);
   TEST_CHECK_EQ_STR(line,
-                    "grp_a\\tb\timage\t/w/line\\nbreak\\\\and\\t tab.png\t0\t100x100+0+0\t0\n");
+                    "grp_a\\tb\timage\t/w/line\\nbreak\\\\and\\t tab.png\t0\t100x100+0+0\t0"
+                    "\t0\t100\t0\t2\t1\t0\t0\t0\t0\t0\t\t\n");
 
   XWStateEntry o;
   memset(&o, 0, sizeof(o));
@@ -142,6 +154,95 @@ static void test_roundtrip_escape(void) {
   TEST_CHECK_EQ_STR(o.name, "grp_a\tb");
   TEST_CHECK_EQ_STR(o.path, "/w/line\nbreak\\and\t tab.png");
   TEST_CHECK_EQ_INT(o.keep, 0);
+}
+
+static void test_roundtrip_flags(void) {
+  TEST_BEGIN("format/parse round-trips backend flags");
+  XWStateEntry e;
+  memset(&e, 0, sizeof(e));
+  snprintf(e.name, sizeof(e.name), "DP-1");
+  e.type = XW_BACKEND_VIDEO;
+  snprintf(e.path, sizeof(e.path), "/w/c.mp4");
+  e.have_geom = 0;
+  e.keep = 1;
+  e.mute = 1;
+  e.volume = 30.0;
+  e.fps = 10.0;
+  e.scale_mode = XW_SCALE_CONTAIN;
+  e.opacity = 0.7;
+  e.below = 1;
+  e.sticky = 1;
+  e.skip_pager = 1;
+  e.no_focus = 1;
+  snprintf(e.keybinds, sizeof(e.keybinds), "/in/p.conf");
+  snprintf(e.audio_client_name, sizeof(e.audio_client_name), "xw-custom");
+
+  char line[512];
+  TEST_CHECK(xw_state_format_line(&e, line, sizeof(line)) > 0);
+  TEST_CHECK_EQ_STR(line, "DP-1\tvideo\t/w/c.mp4\t0\t-\t1"
+                          "\t1\t30\t10\t1\t0.7\t1\t1\t0\t1\t1\t/in/p.conf\txw-custom\n");
+
+  XWStateEntry o;
+  memset(&o, 0, sizeof(o));
+  TEST_CHECK_EQ_INT(xw_state_parse_line(line, &o), 0);
+  TEST_CHECK_EQ_INT(o.mute, 1);
+  TEST_CHECK_EQ_INT((int)o.volume, 30);
+  TEST_CHECK_EQ_INT((int)o.fps, 10);
+  TEST_CHECK_EQ_INT(o.scale_mode, XW_SCALE_CONTAIN);
+  TEST_CHECK_EQ_INT((int)(o.opacity * 10), 7);
+  TEST_CHECK_EQ_INT(o.below, 1);
+  TEST_CHECK_EQ_INT(o.sticky, 1);
+  TEST_CHECK_EQ_INT(o.skip_taskbar, 0);
+  TEST_CHECK_EQ_INT(o.skip_pager, 1);
+  TEST_CHECK_EQ_INT(o.no_focus, 1);
+  TEST_CHECK_EQ_STR(o.keybinds, "/in/p.conf");
+  TEST_CHECK_EQ_STR(o.audio_client_name, "xw-custom");
+}
+
+static void test_parse_legacy_6field(void) {
+  TEST_BEGIN("legacy 6-field line parses to sentinel/default flags");
+  XWStateEntry o;
+  memset(&o, 0, sizeof(o));
+  TEST_CHECK_EQ_INT(xw_state_parse_line("DP-1\tvideo\t/w/c.mp4\t0\t-\t1\n", &o), 0);
+  TEST_CHECK_EQ_INT(o.mute, -1); /* 缺失哨兵 */
+  TEST_CHECK_EQ_INT((int)o.volume, 100);
+  TEST_CHECK_EQ_INT((int)o.fps, 0);
+  TEST_CHECK_EQ_INT(o.scale_mode, XW_SCALE_FILL);
+  TEST_CHECK_EQ_INT((int)(o.opacity * 10), 10);
+  TEST_CHECK_EQ_INT(o.below, 0);
+  TEST_CHECK_EQ_INT(o.sticky, 0);
+  TEST_CHECK_EQ_INT(o.skip_taskbar, 0);
+  TEST_CHECK_EQ_INT(o.skip_pager, 0);
+  TEST_CHECK_EQ_INT(o.no_focus, 0);
+  TEST_CHECK_EQ_STR(o.keybinds, "");
+  TEST_CHECK_EQ_STR(o.audio_client_name, "");
+}
+
+static void test_format_sentinel_mute(void) {
+  TEST_BEGIN("format never leaks the -1 mute sentinel");
+  XWStateEntry e;
+  memset(&e, 0, sizeof(e));
+  snprintf(e.name, sizeof(e.name), "DP-1");
+  e.have_geom = 0;
+  e.keep = 0;
+  e.mute = -1; /* 旧行解析出的哨兵 */
+  e.volume = 100.0;
+  e.scale_mode = XW_SCALE_FILL;
+  e.opacity = 1.0;
+
+  XWStateEntry o;
+  memset(&o, 0, sizeof(o));
+  e.type = XW_BACKEND_VIDEO;
+  char line[512];
+  TEST_CHECK(xw_state_format_line(&e, line, sizeof(line)) > 0);
+  TEST_CHECK(xw_state_parse_line(line, &o) == 0);
+  TEST_CHECK_EQ_INT(o.mute, 1); /* video 旧行 → 有效 mute 1 */
+
+  memset(&o, 0, sizeof(o));
+  e.type = XW_BACKEND_IMAGE;
+  TEST_CHECK(xw_state_format_line(&e, line, sizeof(line)) > 0);
+  TEST_CHECK(xw_state_parse_line(line, &o) == 0);
+  TEST_CHECK_EQ_INT(o.mute, 0); /* image 旧行 → 0 */
 }
 
 static void test_parse_bad(void) {
@@ -276,6 +377,9 @@ int main(void) {
   test_roundtrip_geom();
   test_roundtrip_output();
   test_roundtrip_escape();
+  test_roundtrip_flags();
+  test_parse_legacy_6field();
+  test_format_sentinel_mute();
   test_parse_bad();
   test_save_load_file();
   test_load_missing();

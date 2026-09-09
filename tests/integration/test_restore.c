@@ -72,6 +72,41 @@ int main(void) {
   xw_app_restore_startup(app);
   TEST_CHECK_EQ_INT(xw_app_restore_pending(app), 0);
 
+  TEST_BEGIN("set captures backend flags into the saved state");
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.command = XW_CMD_SET;
+  cfg.backend_explicit = XW_BACKEND_IMAGE;
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  cfg.geom_x = 200;
+  cfg.geom_y = 0;
+  cfg.geom_w = 64;
+  cfg.geom_h = 64;
+  snprintf(cfg.name, sizeof(cfg.name), "flgtest");
+  snprintf(cfg.path, sizeof(cfg.path), "tests/data/red.png");
+  cfg.scale_mode = XW_SCALE_TILE;
+  cfg.opacity = 0.5;
+  cfg.below = 1;
+  cfg.volume = 100.0;
+  snprintf(cfg.audio_client_name, sizeof(cfg.audio_client_name), "xwallpaper");
+  TEST_CHECK_EQ_INT(xw_app_set(app, &cfg, &err), 0);
+  TEST_CHECK_EQ_INT(xw_app_save_state(app), 0);
+
+  XWStateEntry out[XW_STATE_MAX_ENTRIES];
+  int count = 0;
+  xw_state_load(path, out, XW_STATE_MAX_ENTRIES, &count);
+  int found = 0;
+  for (int i = 0; i < count; i++) {
+    if (strcmp(out[i].name, "flgtest") == 0) {
+      found = 1;
+      TEST_CHECK_EQ_INT(out[i].scale_mode, XW_SCALE_TILE);
+      TEST_CHECK_EQ_INT((int)(out[i].opacity * 10), 5);
+      TEST_CHECK_EQ_INT(out[i].below, 1);
+    }
+  }
+  TEST_CHECK(found);
+
   xw_app_destroy(app);
   unlink(path);
   rmdir(dir);

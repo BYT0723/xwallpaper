@@ -30,6 +30,17 @@ typedef struct XWWindow {
   char path[1024];
   int rotation;           /* video rotation 0/90/180/270 (for --list & state) */
 
+  /* backend flags snapshot (from cfg at set), persisted to state so
+   * restore rebuilds the wallpaper exactly as it was set */
+  int mute;
+  double volume;          /* 0..100 */
+  double fps;             /* 0 = auto */
+  int scale_mode;         /* XW_SCALE_* */
+  double opacity;         /* 0..1 */
+  int below, sticky, skip_taskbar, skip_pager, no_focus;
+  char keybinds[1024];        /* mpv input.conf path, "" = none */
+  char audio_client_name[64]; /* audio API client name */
+
   /* callback: pointer events forwarded to root (installed by x11) */
   void *user_data;
 } XWWindow;

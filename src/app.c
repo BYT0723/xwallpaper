@@ -80,6 +80,40 @@ static void fill_backend_opt(XWBackendOpt *opt, const XWConfig *cfg) {
   }
 }
 
+static void capture_x11_flags(XWWindow *win, const XWConfig *cfg) {
+  win->mute = cfg->mute;
+  win->volume = cfg->volume;
+  win->fps = cfg->fps;
+  win->scale_mode = cfg->scale_mode;
+  win->opacity = cfg->opacity;
+  win->below = cfg->below;
+  win->sticky = cfg->sticky;
+  win->skip_taskbar = cfg->skip_taskbar;
+  win->skip_pager = cfg->skip_pager;
+  win->no_focus = cfg->no_focus;
+  snprintf(win->keybinds, sizeof(win->keybinds), "%s", cfg->keybinds);
+  snprintf(win->audio_client_name, sizeof(win->audio_client_name), "%s",
+           cfg->audio_client_name);
+}
+
+#ifdef XW_HAVE_WAYLAND
+static void capture_wl_flags(XWWlWindow *win, const XWConfig *cfg) {
+  win->mute = cfg->mute;
+  win->volume = cfg->volume;
+  win->fps = cfg->fps;
+  win->scale_mode = cfg->scale_mode;
+  win->opacity = cfg->opacity;
+  win->below = cfg->below;
+  win->sticky = cfg->sticky;
+  win->skip_taskbar = cfg->skip_taskbar;
+  win->skip_pager = cfg->skip_pager;
+  win->no_focus = cfg->no_focus;
+  snprintf(win->keybinds, sizeof(win->keybinds), "%s", cfg->keybinds);
+  snprintf(win->audio_client_name, sizeof(win->audio_client_name), "%s",
+           cfg->audio_client_name);
+}
+#endif
+
 /* Backend lifecycle dispatch: Wayland instances use the _wl slots.
  * stop/set_paused/retry need no dispatch (NULL-safe shared impls:
  * video touches only VideoBase, web/image ops are toolkit-level). */
@@ -243,6 +277,7 @@ static int attach_backend_wl(XWApp *app, const XWConfig *cfg, XWWlWindow *win,
   win->type = opt->type;
   snprintf(win->path, sizeof(win->path), "%s", opt->path ? opt->path : "");
   win->rotation = cfg->rotate;
+  capture_wl_flags(win, cfg);
 
   XWWlWindow **wlwins =
       realloc(app->wlwins, sizeof(XWWlWindow *) * (app->nwins + 1));
@@ -312,7 +347,7 @@ static int create_window(XWApp *app, const XWConfig *cfg,
 
   XWBackendOpt opt;
   fill_backend_opt(&opt, cfg);
-  if (b->init(b, win, &opt, err) != 0) {
+  if (backend_init(app, b, win, &opt, err) != 0) {
     free(b);
     xw_x11_destroy_window(win);
     return -1;
@@ -322,11 +357,12 @@ static int create_window(XWApp *app, const XWConfig *cfg,
   win->type = opt.type;
   snprintf(win->path, sizeof(win->path), "%s", opt.path ? opt.path : "");
   win->rotation = cfg->rotate;
+  capture_x11_flags(win, cfg);
 
   app->wins = realloc(app->wins, sizeof(XWWindow *) * (app->nwins + 1));
   app->backends = realloc(app->backends, sizeof(XWBackend *) * (app->nwins + 1));
   if (!app->wins || !app->backends) {
-    b->destroy(b);
+    backend_destroy(app, b);
     xw_x11_destroy_window(win);
     XW_ERROR_SET(err, 1, "out of memory");
     return -1;
@@ -503,6 +539,7 @@ static int app_set_wl(XWApp *app, const XWConfig *cfg, XWError *err) {
       snprintf(app->wlwins[idx]->path, sizeof(app->wlwins[idx]->path), "%s",
                opt.path ? opt.path : "");
       app->wlwins[idx]->rotation = cfg->rotate;
+      capture_wl_flags(app->wlwins[idx], cfg);
       apply_dpms_to_backend(app, old);
       return 0;
     }
@@ -530,6 +567,7 @@ static int app_set_wl(XWApp *app, const XWConfig *cfg, XWError *err) {
     snprintf(app->wlwins[idx]->path, sizeof(app->wlwins[idx]->path), "%s",
              opt.path ? opt.path : "");
     app->wlwins[idx]->rotation = cfg->rotate;
+    capture_wl_flags(app->wlwins[idx], cfg);
     if (backend_start(app, b) != 0) {
       backend_destroy(app, b);
       app->backends[idx] = NULL;
@@ -600,7 +638,7 @@ int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err) {
       return -1;
     }
     for (int i = 0; i < app->nwins; i++) {
-      if (app->backends[i]->start(app->backends[i]) != 0) {
+      if (backend_start(app, app->backends[i]) != 0) {
         XW_ERROR_SET(err, 1, "backend failed to start");
         return -1;
       }
@@ -630,19 +668,20 @@ int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err) {
     XWBackendOpt opt;
     fill_backend_opt(&opt, cfg);
     XWBackend *old = app->backends[idx];
-    if (old && old->reload && app->wins[idx]->type == opt.type) {
-      if (old->reload(old, &opt, err) != 0)
+    if (old && backend_has_reload(app, old) &&
+        app->wins[idx]->type == opt.type) {
+      if (backend_reload(app, old, &opt, err) != 0)
         return -1; /* 失败保留旧壁纸, 窗口元数据也保持旧值 */
       app->wins[idx]->type = opt.type;
       snprintf(app->wins[idx]->path, sizeof(app->wins[idx]->path), "%s",
                opt.path ? opt.path : "");
       app->wins[idx]->rotation = cfg->rotate;
+      capture_x11_flags(app->wins[idx], cfg);
       apply_dpms_to_backend(app, old);
       return 0;
     }
     /* 不同类型才销毁重建 */
-    if (old)
-      old->destroy(old);
+    backend_destroy(app, old);
 
     XWBackend *tmpl = make_backend(cfg, err);
     if (!tmpl)
@@ -655,7 +694,7 @@ int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err) {
     *b = *tmpl;
     b->priv = NULL;
     fill_backend_opt(&opt, cfg);
-    if (b->init(b, app->wins[idx], &opt, err) != 0) {
+    if (backend_init(app, b, app->wins[idx], &opt, err) != 0) {
       free(b);
       return -1;
     }
@@ -666,8 +705,9 @@ int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err) {
     snprintf(app->wins[idx]->path, sizeof(app->wins[idx]->path), "%s",
              opt.path ? opt.path : "");
     app->wins[idx]->rotation = cfg->rotate;
-    if (b->start(b) != 0) {
-      b->destroy(b);
+    capture_x11_flags(app->wins[idx], cfg);
+    if (backend_start(app, b) != 0) {
+      backend_destroy(app, b);
       app->backends[idx] = NULL;
       XW_ERROR_SET(err, 1, "backend failed to start");
       return -1;
@@ -685,7 +725,7 @@ int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err) {
     out = name[0] ? name : NULL;
   if (create_window(app, cfg, x, y, w, h, out, cfg->have_geom, err) != 0)
     return -1;
-  if (app->backends[app->nwins - 1]->start(app->backends[app->nwins - 1]) != 0) {
+  if (backend_start(app, app->backends[app->nwins - 1]) != 0) {
     remove_window(app, app->nwins - 1);
     XW_ERROR_SET(err, 1, "backend failed to start");
     return -1;
@@ -806,6 +846,18 @@ int xw_app_window_info(XWApp *app, int i, XWWindowInfo *info) {
     info->y = win->y;
     info->w = win->width;
     info->h = win->height;
+    info->mute = win->mute;
+    info->volume = win->volume;
+    info->fps = win->fps;
+    info->scale_mode = win->scale_mode;
+    info->opacity = win->opacity;
+    info->below = win->below;
+    info->sticky = win->sticky;
+    info->skip_taskbar = win->skip_taskbar;
+    info->skip_pager = win->skip_pager;
+    info->no_focus = win->no_focus;
+    info->keybinds = win->keybinds;
+    info->audio_client_name = win->audio_client_name;
     return 0;
   }
 #endif
@@ -820,6 +872,18 @@ int xw_app_window_info(XWApp *app, int i, XWWindowInfo *info) {
   info->y = win->y;
   info->w = win->width;
   info->h = win->height;
+  info->mute = win->mute;
+  info->volume = win->volume;
+  info->fps = win->fps;
+  info->scale_mode = win->scale_mode;
+  info->opacity = win->opacity;
+  info->below = win->below;
+  info->sticky = win->sticky;
+  info->skip_taskbar = win->skip_taskbar;
+  info->skip_pager = win->skip_pager;
+  info->no_focus = win->no_focus;
+  info->keybinds = win->keybinds;
+  info->audio_client_name = win->audio_client_name;
   return 0;
 }
 
@@ -996,6 +1060,20 @@ static void entry_from_index(XWApp *app, XWStateEntry *e, int i, int keep) {
   e->w = wi.w;
   e->h = wi.h;
   e->keep = keep;
+  e->mute = wi.mute;
+  e->volume = wi.volume;
+  e->fps = wi.fps;
+  e->scale_mode = wi.scale_mode;
+  e->opacity = wi.opacity;
+  e->below = wi.below;
+  e->sticky = wi.sticky;
+  e->skip_taskbar = wi.skip_taskbar;
+  e->skip_pager = wi.skip_pager;
+  e->no_focus = wi.no_focus;
+  snprintf(e->keybinds, sizeof(e->keybinds), "%s",
+           wi.keybinds ? wi.keybinds : "");
+  snprintf(e->audio_client_name, sizeof(e->audio_client_name), "%s",
+           wi.audio_client_name ? wi.audio_client_name : "");
 }
 
 /* 平台相关的状态文件: Wayland 用 state-wayland (monitor 命名空间与
@@ -1067,15 +1145,24 @@ static int restore_entry(XWApp *app, const XWStateEntry *e) {
   cfg.command = XW_CMD_SET;
   cfg.backend_explicit = e->type;
   /* 与 CLI set 默认一致: memset(0) 会漏掉 opacity/scale_mode/volume 等,
-   * 尤其 opacity=0 会让窗口被设 _NET_WM_WINDOW_OPACITY=0 → 合成器下全透明 */
-  cfg.scale_mode = XW_SCALE_FILL;
-  cfg.volume = 100.0;
-  cfg.opacity = 1.0;
-  snprintf(cfg.audio_client_name, sizeof(cfg.audio_client_name), "xwallpaper");
+   * 尤其 opacity=0 会让窗口被设 _NET_WM_WINDOW_OPACITY=0 → 合成器下全透明。
+   * 回填状态文件里保存的 flags; 旧 6 字段行缺失时 entry 已由 parse 端补
+   * 默认 (mute 经哨兵 -1 由 xw_state_effective_mute 规范为 video→1)。 */
+  cfg.scale_mode = e->scale_mode;
+  cfg.volume = e->volume;
+  cfg.opacity = e->opacity;
+  cfg.fps = e->fps;
+  cfg.mute = xw_state_effective_mute(e);
+  cfg.below = e->below;
+  cfg.sticky = e->sticky;
+  cfg.skip_taskbar = e->skip_taskbar;
+  cfg.skip_pager = e->skip_pager;
+  cfg.no_focus = e->no_focus;
+  snprintf(cfg.keybinds, sizeof(cfg.keybinds), "%s", e->keybinds);
+  snprintf(cfg.audio_client_name, sizeof(cfg.audio_client_name), "%s",
+           e->audio_client_name[0] ? e->audio_client_name : "xwallpaper");
   snprintf(cfg.path, sizeof(cfg.path), "%s", e->path);
   cfg.rotate = e->rotation;
-  if (e->type == XW_BACKEND_VIDEO)
-    cfg.mute = 1; /* 壁纸视频恢复时不应出声 */
 
   cfg.target = XW_TARGET_OUTPUT;
   /* %.*s: 显式边界 (最多读 sizeof(e->name)-1), 避免 %s 触发

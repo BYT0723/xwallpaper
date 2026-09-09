@@ -98,21 +98,35 @@ int xw_state_path(char *out, size_t n) {
   return xw_state_path_for(0, out, n);
 }
 
+int xw_state_effective_mute(const XWStateEntry *e) {
+  return e->mute < 0 ? (e->type == XW_BACKEND_VIDEO ? 1 : 0) : e->mute;
+}
+
 int xw_state_format_line(const XWStateEntry *e, char *out, size_t n) {
   /* 最坏情况 2x 转义后 + NUL */
   char name[2 * XW_STATE_NAME_LEN + 1];
   char path[2 * XW_STATE_PATH_LEN + 1];
+  char kb[2 * XW_STATE_KEYBINDS_LEN + 1];
+  char ac[2 * XW_STATE_NAME_LEN + 1];
   if (escape_field(name, sizeof(name), e->name) < 0 ||
-      escape_field(path, sizeof(path), e->path) < 0)
+      escape_field(path, sizeof(path), e->path) < 0 ||
+      escape_field(kb, sizeof(kb), e->keybinds) < 0 ||
+      escape_field(ac, sizeof(ac), e->audio_client_name) < 0)
     return -1;
+  /* 落盘永远写有效 0/1, 不泄漏内存哨兵 -1 */
+  int mute = xw_state_effective_mute(e);
   int r;
   if (e->have_geom)
-    r = snprintf(out, n, "%s\t%s\t%s\t%d\t%ux%u+%d+%d\t%d\n",
+    r = snprintf(out, n, "%s\t%s\t%s\t%d\t%ux%u+%d+%d\t%d\t%d\t%g\t%g\t%d\t%g\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
                  name, type_name(e->type), path, e->rotation,
-                 e->w, e->h, e->x, e->y, e->keep);
+                 e->w, e->h, e->x, e->y, e->keep, mute, e->volume, e->fps,
+                 e->scale_mode, e->opacity, e->below, e->sticky,
+                 e->skip_taskbar, e->skip_pager, e->no_focus, kb, ac);
   else
-    r = snprintf(out, n, "%s\t%s\t%s\t%d\t-\t%d\n",
-                 name, type_name(e->type), path, e->rotation, e->keep);
+    r = snprintf(out, n, "%s\t%s\t%s\t%d\t-\t%d\t%d\t%g\t%g\t%d\t%g\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+                 name, type_name(e->type), path, e->rotation, e->keep, mute,
+                 e->volume, e->fps, e->scale_mode, e->opacity, e->below,
+                 e->sticky, e->skip_taskbar, e->skip_pager, e->no_focus, kb, ac);
   return (r < 0 || r >= (int)n) ? -1 : r;
 }
 
@@ -142,8 +156,8 @@ int xw_state_parse_line(const char *line, XWStateEntry *e) {
   if (bl > 0 && (buf[bl - 1] == '\n' || buf[bl - 1] == '\r'))
     buf[bl - 1] = '\0';
 
-  char *f[6];
-  int nf = split_tabs(buf, f, 6);
+  char *f[18];
+  int nf = split_tabs(buf, f, 18);
   if (nf < 5)
     return -1;
 
@@ -167,6 +181,38 @@ int xw_state_parse_line(const char *line, XWStateEntry *e) {
   }
 
   e->keep = (nf >= 6) ? atoi(f[5]) : 0;
+
+  /* backend flags (第 7 列起)。旧 6 字段行缺失: mute 置哨兵 -1,
+   * volume/scale/opacity/hints 取默认 (memset 已给 0, 故只补非 0 默认)。 */
+  e->mute = -1;
+  e->volume = 100.0;
+  e->scale_mode = XW_SCALE_FILL;
+  e->opacity = 1.0;
+  if (nf >= 7)
+    e->mute = atoi(f[6]);
+  if (nf >= 8)
+    e->volume = atof(f[7]);
+  if (nf >= 9)
+    e->fps = atof(f[8]);
+  if (nf >= 10)
+    e->scale_mode = atoi(f[9]);
+  if (nf >= 11)
+    e->opacity = atof(f[10]);
+  if (nf >= 12)
+    e->below = atoi(f[11]);
+  if (nf >= 13)
+    e->sticky = atoi(f[12]);
+  if (nf >= 14)
+    e->skip_taskbar = atoi(f[13]);
+  if (nf >= 15)
+    e->skip_pager = atoi(f[14]);
+  if (nf >= 16)
+    e->no_focus = atoi(f[15]);
+  if (nf >= 17 && unescape_field(e->keybinds, sizeof(e->keybinds), f[16]) != 0)
+    return -1;
+  if (nf >= 18 &&
+      unescape_field(e->audio_client_name, sizeof(e->audio_client_name), f[17]) != 0)
+    return -1;
   return 0;
 }
 

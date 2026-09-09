@@ -10,6 +10,7 @@
  *
  * 状态文件行格式 (TAB 分隔, 一行一个窗口):
  *   name\ttype\tpath\trotation\tgeom\tkeep
+ *   \tmute\tvolume\tfps\tscale\topacity\tbelow\tsticky\tskip_taskbar\tskip_pager\tno_focus\tkeybinds\taudio
  *   - name:     窗口身份 (xrandr output 名, 或 -g 的 --name 如 grp_xxx / Screen)
  *   - type:     image | video | web
  *   - path:     壁纸文件路径
@@ -17,16 +18,22 @@
  *   - geom:     WxH+X+Y, 或 '-' 表示 name 是 xrandr output (恢复时重解析几何)
  *   - keep:     0 = 当前窗口 (daemon 启动时恢复);
  *               1 = last 保留 (clear --keep 后窗口已清, 由 restore 命令恢复)
+ *   - 之后是 backend flags (fps/mute/volume/scale/hints/keybinds/audio 等),
+ *     restore 时原样重建。旧 6 字段行 (无这些列) 仍可解析:
+ *     mute 置哨兵 -1 (恢复端按 video→1/其它→0 补默认), 其余取默认值。
  *
- * name / path 字段内的 '\t' '\n' '\r' '\\' 会被转义为 \\t \\n \\r \\\\,
- * 保证分隔符与换行不会被路径内容破坏。字段超长时该行拒绝 (不截断半截路径)。
+ * name / path / keybinds / audio 字段内的 '\t' '\n' '\r' '\\' 会被转义
+ * 为 \\t \\n \\r \\\\, 保证分隔符与换行不会被路径内容破坏。字段超长时
+ * 该行拒绝 (不截断半截路径)。
  */
 
 #define XW_STATE_NAME_LEN 64
 #define XW_STATE_PATH_LEN 1024
+#define XW_STATE_KEYBINDS_LEN 1024
 #define XW_STATE_MAX_ENTRIES 64
-/* 状态行缓冲区: 2x(name+path) 转义 + 其它字段 + NUL */
-#define XW_STATE_LINE_MAX (2 * (XW_STATE_PATH_LEN + XW_STATE_NAME_LEN) + 64)
+/* 状态行缓冲区: 2x(name+path+keybinds+audio) 转义 + 其它字段 + NUL */
+#define XW_STATE_LINE_MAX \
+  (2 * (XW_STATE_PATH_LEN + XW_STATE_KEYBINDS_LEN + 2 * XW_STATE_NAME_LEN) + 128)
 
 typedef struct {
   char name[XW_STATE_NAME_LEN];
@@ -37,6 +44,16 @@ typedef struct {
   int x, y;
   unsigned int w, h;
   int keep;          /* 1 = last 保留 (窗口已清, 待 restore) */
+
+  /* backend flags, restore 时回填 cfg (旧行缺失 → 哨兵/默认, 见 format) */
+  int mute;          /* 0/1; -1 = 旧行缺失 (恢复端: video→1, 其它→0) */
+  double volume;     /* 0..100, 默认 100 */
+  double fps;        /* 目标帧率, 0 = auto */
+  int scale_mode;    /* XW_SCALE_*, 默认 FILL */
+  double opacity;    /* 0..1, 默认 1.0 */
+  int below, sticky, skip_taskbar, skip_pager, no_focus;
+  char keybinds[XW_STATE_KEYBINDS_LEN];  /* mpv input.conf 路径, 空 = 无 */
+  char audio_client_name[XW_STATE_NAME_LEN]; /* 空 = 默认 "xwallpaper" */
 } XWStateEntry;
 
 /* 状态文件路径: $XDG_STATE_HOME/xwallpaper/state,
@@ -64,5 +81,9 @@ int xw_state_load(const char *path, XWStateEntry *entries, int max, int *count);
 
 /* 按 name upsert 一条状态 (替换同名或追加), 原子写。返回 0 成功, -1 失败。 */
 int xw_state_upsert(const char *path, const XWStateEntry *e);
+
+/* mute 的有效值: 哨兵 -1 (旧行缺失) 规范化为 video→1 / 其它→0, 否则原值。
+ * format 落盘与 restore 回填共用, 保证"旧行该怎样"只有一个定义。 */
+int xw_state_effective_mute(const XWStateEntry *e);
 
 #endif /* XW_STATE_H */

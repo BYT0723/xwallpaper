@@ -49,6 +49,18 @@ typedef struct XWWlWindow {
   int type;             /* XW_BACKEND_* */
   char path[1024];
   int rotation;
+
+  /* backend flags snapshot (from cfg at set), persisted to state so
+   * restore rebuilds the wallpaper exactly as it was set (X11/wayland
+   * windows share this shape; see XWWindow in x11.h) */
+  int mute;
+  double volume;
+  double fps;
+  int scale_mode;
+  double opacity;
+  int below, sticky, skip_taskbar, skip_pager, no_focus;
+  char keybinds[1024];
+  char audio_client_name[64];
 } XWWlWindow;
 
 /* Wayland connection + enumerated outputs. Opaque: build it with

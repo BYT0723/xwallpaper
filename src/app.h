@@ -53,6 +53,15 @@ typedef struct XWWindowInfo {
   int rotation;
   int x, y;
   unsigned int w, h;
+  /* backend flags (mirrors XWWlWindow/XWWindow; persisted to state) */
+  int mute;
+  double volume;
+  double fps;
+  int scale_mode;
+  double opacity;
+  int below, sticky, skip_taskbar, skip_pager, no_focus;
+  const char *keybinds;
+  const char *audio_client_name;
 } XWWindowInfo;
 int xw_app_window_info(XWApp *app, int i, XWWindowInfo *info);
 
