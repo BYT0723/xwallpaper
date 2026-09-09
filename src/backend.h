@@ -8,6 +8,10 @@
 /* Forward decl: x11 module owns the concrete struct (XWWindow defined in x11.h) */
 typedef struct XWWindow XWWindow;
 
+/* Forward decl: wl module owns the concrete struct (XWWlWindow in wl.h).
+ * Only pointers are used here, so no wayland headers leak into backends. */
+typedef struct XWWlWindow XWWlWindow;
+
 /* Backend kinds, matching --image/--video/--web */
 enum {
   XW_BACKEND_IMAGE = 0,
@@ -35,6 +39,12 @@ typedef struct XWBackendOpt {
   const char *keybinds; /* mpv input.conf path, may be NULL */
   double fps;           /* target frame rate, 0 = auto */
   const char *audio_client_name; /* audio API client name, may be NULL */
+  /* span piece (--span WxH+X+Y split per output, image only):
+   * scale the image against the whole span_w/h rect, then blit the piece
+   * at (span_ox, span_oy). Ignored when span == 0. */
+  int span;
+  unsigned int span_w, span_h;
+  int span_ox, span_oy;
 } XWBackendOpt;
 
 /* Backend lifecycle. app codes only against this interface.
@@ -60,6 +70,16 @@ struct XWBackend {
    * instead of re-creating the backend, which can block the single-threaded
    * daemon on GL/mpv context setup. May be NULL (falls back to destroy+init). */
   int (*reload)(XWBackend *b, const XWBackendOpt *opt, XWError *err);
+  /* optional Wayland entry points (parallel to init/reload, taking the
+   * layer-shell window). NULL = backend unavailable on Wayland; app then
+   * errors instead of silently falling back. Added for wlr-layer-shell;
+   * X11 path is untouched. */
+  int (*init_wl)(XWBackend *b, XWWlWindow *win, const XWBackendOpt *opt, XWError *err);
+  int (*reload_wl)(XWBackend *b, const XWBackendOpt *opt, XWError *err);
+  /* start/destroy parallel slots: init_wl instances must use these
+   * (X11 start/destroy reinterpret priv as the X11 ctx and touch X). */
+  int (*start_wl)(XWBackend *b);
+  void (*destroy_wl)(XWBackend *b);
   /* optional: pause/resume rendering when the X display is in DPMS
    * power-off (standby/suspend/off). Rendering backends (e.g. mpv) keep
    * presenting frames while DPMS is off, which wakes the display back up.

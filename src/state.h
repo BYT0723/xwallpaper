@@ -40,8 +40,13 @@ typedef struct {
 } XWStateEntry;
 
 /* 状态文件路径: $XDG_STATE_HOME/xwallpaper/state,
- * fallback $HOME/.local/state/xwallpaper/state */
+ * fallback $HOME/.local/state/xwallpaper/state.
+ * Wayland 用独立文件 (…/state-wayland): 两平台 monitor 命名空间不一致
+ * (xrandr 名 vs wlr 输出名)，共用会导致切平台恢复时贴错屏或回退旧几何。 */
 int xw_state_path(char *out, size_t n);
+
+/* 平台分发: use_wayland != 0 → …/state-wayland, 否则与 xw_state_path 同值 */
+int xw_state_path_for(int use_wayland, char *out, size_t n);
 
 /* 序列化一行 (含结尾 '\n', 不超 n 字节)。返回字节数, -1 溢出。 */
 int xw_state_format_line(const XWStateEntry *e, char *out, size_t n);

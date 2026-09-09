@@ -117,6 +117,26 @@ static void test_encode_set_geom(void) {
   TEST_CHECK(has_field(msg, n, "1920x1080+100+200"));
 }
 
+static void test_encode_set_span(void) {
+  TEST_BEGIN("set --span encodes span target and rect");
+  reset();
+  cfg.command = XW_CMD_SET;
+  cfg.target = XW_TARGET_SPAN;
+  cfg.have_span = 1;
+  cfg.span_x = 0;
+  cfg.span_y = 0;
+  cfg.span_w = 3000;
+  cfg.span_h = 1080;
+  snprintf(cfg.path, sizeof(cfg.path), "wide.png");
+
+  char msg[XW_MSG_MAX];
+  int n = xw_proto_encode_set(&cfg, msg, sizeof(msg));
+  TEST_CHECK(n > 0);
+  TEST_CHECK(strncmp(msg, "set\0", 4) == 0);
+  TEST_CHECK(has_field(msg, n, "span"));
+  TEST_CHECK(has_field(msg, n, "3000x1080+0+0"));
+}
+
 static void test_encode_clear(void) {
   TEST_BEGIN("clear encodes target (all vs output)");
   reset();
@@ -315,6 +335,7 @@ int main(void) {
   test_encode_set_basic();
   test_encode_set_output();
   test_encode_set_geom();
+  test_encode_set_span();
   test_encode_clear();
   test_encode_restore();
   test_encode_list_exit();

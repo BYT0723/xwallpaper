@@ -108,6 +108,7 @@ void xw_cli_usage(FILE *f) {
     "  -m <output>   xrandr output name (e.g. DP-1, HDMI-1)\n"
     "  --all         every output\n"
     "  -g WxH+X+Y --name <n>   explicit geometry window, named (required)\n"
+  "  --span WxH+X+Y          span one image across outputs (Wayland, image only)\n"
     "\n"
     "Options:\n"
     "  --image --video --web   force backend (default: by file extension)\n"
@@ -233,6 +234,10 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
       } else if (strcmp(a, "--web") == 0) {
         cfg->backend_explicit = XW_BACKEND_WEB;
       } else if (strcmp(a, "--all") == 0) {
+        if (cfg->have_span) {
+          XW_ERROR_SET(err, 1, "--span cannot be combined with --all");
+          return -1;
+        }
         cfg->target = XW_TARGET_ALL;
       } else if (strcmp(a, "--name") == 0) {
         if (++i >= argc) {
@@ -313,6 +318,23 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
         cfg->fps = f;
       } else if (strcmp(a, "--debug") == 0) {
         cfg->debug = 1;
+      } else if (strcmp(a, "--span") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "--span requires a geometry string");
+          return -1;
+        }
+        if (cfg->have_geom || cfg->output[0] ||
+            cfg->target == XW_TARGET_ALL) {
+          XW_ERROR_SET(err, 1, "--span cannot be combined with -g/-m/--all");
+          return -1;
+        }
+        if (!xw_geom_parse(argv[i], &cfg->span_x, &cfg->span_y,
+                           &cfg->span_w, &cfg->span_h)) {
+          XW_ERROR_SET(err, 1, "invalid geometry '%s' (want WxH[+X+Y])", argv[i]);
+          return -1;
+        }
+        cfg->have_span = 1;
+        cfg->target = XW_TARGET_SPAN;
       } else {
         XW_ERROR_SET(err, 1, "unknown option '%s'", a);
         return -1;
@@ -327,11 +349,19 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
           XW_ERROR_SET(err, 1, "-m requires an output name");
           return -1;
         }
+        if (cfg->have_span) {
+          XW_ERROR_SET(err, 1, "--span cannot be combined with -m");
+          return -1;
+        }
         snprintf(cfg->output, sizeof(cfg->output), "%s", argv[i]);
         cfg->target = XW_TARGET_OUTPUT;
       } else if (strcmp(a, "-g") == 0) {
         if (++i >= argc) {
           XW_ERROR_SET(err, 1, "-g requires a geometry string");
+          return -1;
+        }
+        if (cfg->have_span) {
+          XW_ERROR_SET(err, 1, "--span cannot be combined with -g");
           return -1;
         }
         if (!xw_geom_parse(argv[i], &cfg->geom_x, &cfg->geom_y,
@@ -393,6 +423,16 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
     XW_ERROR_SET(err, 1, "-g requires --name <name> so the window can be "
                  "addressed by clear/--list");
     return -1;
+  }
+
+  if (cfg->command == XW_CMD_SET && cfg->target == XW_TARGET_SPAN) {
+    int kind = cfg->backend_explicit >= 0
+                   ? cfg->backend_explicit
+                   : xw_cli_detect_backend(cfg->path);
+    if (kind != XW_BACKEND_IMAGE) {
+      XW_ERROR_SET(err, 1, "--span only supports image wallpapers");
+      return -1;
+    }
   }
 
   return 0;

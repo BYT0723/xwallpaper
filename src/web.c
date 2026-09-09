@@ -126,6 +126,11 @@ static void web_destroy(XWBackend *b) {
   b->priv = NULL;
 }
 
+#if defined(XW_HAVE_WAYLAND) && defined(XW_HAVE_GTK_LAYER_SHELL)
+static int web_init_wl(XWBackend *b, XWWlWindow *win,
+                       const XWBackendOpt *opt, XWError *err);
+#endif
+
 XWBackend *xw_web_backend_new(void) {
   static XWBackend backend = {
     .name = "web",
@@ -136,6 +141,98 @@ XWBackend *xw_web_backend_new(void) {
     .destroy = web_destroy,
     .on_event = NULL,
     .reload = web_reload,
+#if defined(XW_HAVE_WAYLAND) && defined(XW_HAVE_GTK_LAYER_SHELL)
+    /* start/stop/destroy/reload are pure WebKit/GTK ops on the shared
+     * WebCtx, so only init differs per platform. */
+    .init_wl = web_init_wl,
+    .start_wl = web_start,
+    .destroy_wl = web_destroy,
+    .reload_wl = web_reload,
+#else
+    .init_wl = NULL,
+    .start_wl = NULL,
+    .destroy_wl = NULL,
+    .reload_wl = NULL,
+#endif
   };
   return &backend;
 }
+
+#if defined(XW_HAVE_WAYLAND) && defined(XW_HAVE_GTK_LAYER_SHELL)
+#include <gtk-layer-shell/gtk-layer-shell.h>
+
+#include "wl.h"
+
+/* Wayland: the GtkWindow itself becomes the background layer surface via
+ * gtk-layer-shell (no XReparent — foreign-window embedding does not exist
+ * on Wayland). The output is picked by matching monitor geometry against
+ * the resolved rect; -g rects that match nothing stay on the default
+ * monitor. WebKit rendering/frame clock work natively on the Wayland
+ * GDK backend. */
+static int web_init_wl(XWBackend *b, XWWlWindow *win,
+                       const XWBackendOpt *opt, XWError *err) {
+  if (!gtk_initialized) {
+    if (!gtk_init_check(NULL, NULL)) {
+      XW_ERROR_SET(err, 1, "gtk_init_check failed");
+      return -1;
+    }
+    gtk_initialized = 1;
+  }
+
+  WebCtx *ctx = calloc(1, sizeof(*ctx));
+  if (!ctx) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
+  ctx->path = strdup(opt->path);
+  if (!ctx->path) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    free(ctx);
+    return -1;
+  }
+
+  ctx->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  gtk_window_set_default_size(GTK_WINDOW(ctx->window),
+                              (int)win->width, (int)win->height);
+  gtk_window_set_decorated(GTK_WINDOW(ctx->window), FALSE);
+  gtk_window_set_skip_taskbar_hint(GTK_WINDOW(ctx->window), TRUE);
+  gtk_window_set_skip_pager_hint(GTK_WINDOW(ctx->window), TRUE);
+  ctx->view = webkit_web_view_new();
+  gtk_container_add(GTK_CONTAINER(ctx->window), ctx->view);
+
+  gtk_layer_init_for_window(GTK_WINDOW(ctx->window));
+  gtk_layer_set_namespace(GTK_WINDOW(ctx->window), "xwallpaper");
+  gtk_layer_set_layer(GTK_WINDOW(ctx->window),
+                      GTK_LAYER_SHELL_LAYER_BACKGROUND);
+  gtk_layer_set_anchor(GTK_WINDOW(ctx->window),
+                       GTK_LAYER_SHELL_EDGE_LEFT, TRUE);
+  gtk_layer_set_anchor(GTK_WINDOW(ctx->window),
+                       GTK_LAYER_SHELL_EDGE_RIGHT, TRUE);
+  gtk_layer_set_anchor(GTK_WINDOW(ctx->window),
+                       GTK_LAYER_SHELL_EDGE_TOP, TRUE);
+  gtk_layer_set_anchor(GTK_WINDOW(ctx->window),
+                       GTK_LAYER_SHELL_EDGE_BOTTOM, TRUE);
+  gtk_layer_set_exclusive_zone(GTK_WINDOW(ctx->window), -1);
+  gtk_layer_set_keyboard_mode(GTK_WINDOW(ctx->window),
+                                GTK_LAYER_SHELL_KEYBOARD_MODE_NONE);
+
+  GdkDisplay *gdpy = gdk_display_get_default();
+  if (gdpy) {
+    int n = gdk_display_get_n_monitors(gdpy);
+    for (int i = 0; i < n; i++) {
+      GdkMonitor *mon = gdk_display_get_monitor(gdpy, i);
+      GdkRectangle g;
+      gdk_monitor_get_geometry(mon, &g);
+      if (g.x == win->x && g.y == win->y &&
+          g.width == (int)win->width && g.height == (int)win->height) {
+        gtk_layer_set_monitor(GTK_WINDOW(ctx->window), mon);
+        break;
+      }
+    }
+  }
+
+  gtk_widget_show_all(ctx->window);
+  b->priv = ctx;
+  return 0;
+}
+#endif /* XW_HAVE_WAYLAND && XW_HAVE_GTK_LAYER_SHELL */

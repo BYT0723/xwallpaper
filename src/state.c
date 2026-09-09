@@ -79,14 +79,23 @@ static int unescape_field(char *out, size_t cap, const char *s) {
   return 0;
 }
 
-int xw_state_path(char *out, size_t n) {
+int xw_state_path_for(int use_wayland, char *out, size_t n) {
+  const char *file = use_wayland ? "state-wayland" : "state";
+  int r;
   const char *xdg = getenv("XDG_STATE_HOME");
-  if (xdg && xdg[0])
-    return snprintf(out, n, "%s/xwallpaper/state", xdg) < (int)n ? 0 : -1;
-  const char *home = getenv("HOME");
-  if (!home || !home[0])
-    home = ".";
-  return snprintf(out, n, "%s/.local/state/xwallpaper/state", home) < (int)n ? 0 : -1;
+  if (xdg && xdg[0]) {
+    r = snprintf(out, n, "%s/xwallpaper/%s", xdg, file);
+  } else {
+    const char *home = getenv("HOME");
+    if (!home || !home[0])
+      home = ".";
+    r = snprintf(out, n, "%s/.local/state/xwallpaper/%s", home, file);
+  }
+  return r < (int)n ? 0 : -1;
+}
+
+int xw_state_path(char *out, size_t n) {
+  return xw_state_path_for(0, out, n);
 }
 
 int xw_state_format_line(const XWStateEntry *e, char *out, size_t n) {

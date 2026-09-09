@@ -332,6 +332,57 @@ static void test_fps_flag(void) {
   TEST_CHECK(err.code != 0);
 }
 
+static void test_set_span(void) {
+  TEST_BEGIN("set --span parses layout rect");
+  reset();
+  char *argv[] = {"xwallpaper", "set", "--span", "3000x1080+0+0", "wide.png"};
+  TEST_CHECK_EQ_INT(parse(argv, 5), 0);
+  TEST_CHECK_EQ_INT(cfg.target, XW_TARGET_SPAN);
+  TEST_CHECK_EQ_INT(cfg.have_span, 1);
+  TEST_CHECK_EQ_INT(cfg.span_w, 3000);
+  TEST_CHECK_EQ_INT(cfg.span_h, 1080);
+  TEST_CHECK_EQ_INT(cfg.span_x, 0);
+  TEST_CHECK_EQ_INT(cfg.span_y, 0);
+}
+
+static void test_set_span_bad_geom(void) {
+  TEST_BEGIN("set --span rejects malformed geometry");
+  reset();
+  char *argv[] = {"xwallpaper", "set", "--span", "abc", "wide.png"};
+  TEST_CHECK_EQ_INT(parse(argv, 5), -1);
+  TEST_CHECK(err.code != 0);
+}
+
+static void test_set_span_excludes(void) {
+  TEST_BEGIN("set --span conflicts with -g/-m/--all");
+  reset();
+  char *a1[] = {"xwallpaper", "set", "--span", "10x10+0+0",
+                "-g", "10x10+0+0", "--name", "n", "w.png"};
+  TEST_CHECK_EQ_INT(parse(a1, 9), -1);
+  reset();
+  char *a2[] = {"xwallpaper", "set", "--span", "10x10+0+0",
+                "-m", "DP-1", "w.png"};
+  TEST_CHECK_EQ_INT(parse(a2, 7), -1);
+  reset();
+  char *a3[] = {"xwallpaper", "set", "--span", "10x10+0+0", "--all", "w.png"};
+  TEST_CHECK_EQ_INT(parse(a3, 6), -1);
+}
+
+static void test_set_span_image_only(void) {
+  TEST_BEGIN("set --span rejects video/web backends");
+  reset();
+  char *a1[] = {"xwallpaper", "set", "--span", "10x10+0+0",
+                "--video", "c.mp4"};
+  TEST_CHECK_EQ_INT(parse(a1, 6), -1);
+  reset();
+  char *a2[] = {"xwallpaper", "set", "--span", "10x10+0+0", "c.mp4"};
+  TEST_CHECK_EQ_INT(parse(a2, 5), -1);
+  reset();
+  char *a3[] = {"xwallpaper", "set", "--span", "10x10+0+0",
+                "--web", "p.html"};
+  TEST_CHECK_EQ_INT(parse(a3, 6), -1);
+}
+
 int main(void) {
   TEST_SUITE("cli");
   test_detect_backend();
@@ -360,5 +411,9 @@ int main(void) {
   test_keybinds_flag();
   test_audio_client_name_flag();
   test_fps_flag();
+  test_set_span();
+  test_set_span_bad_geom();
+  test_set_span_excludes();
+  test_set_span_image_only();
   TEST_SUMMARY();
 }

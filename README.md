@@ -10,6 +10,7 @@ xwallpaper set ~/wall.png              # image wallpaper (primary output)
 xwallpaper set --video ~/clip.mp4 --mute # looping muted video wallpaper
 xwallpaper set --web ~/page.html       # live web wallpaper
 xwallpaper set -m HDMI-1 ~/portrait.mp4 --rotate 90   # per-output target
+xwallpaper set --span 3840x1080+0+0 ~/pano.png       # one image across outputs (Wayland)
 xwallpaper --list                      # what's running
 xwallpaper clear                       # remove wallpapers (daemon stays)
 xwallpaper exit                        # shut the daemon down
@@ -86,6 +87,18 @@ xwallpaper clear [-m <name|output>]
 xwallpaper --list
 xwallpaper exit
 ```
+
+Wayland sessions (wlr-layer-shell compositors: sway/Hyprland/labwc/niri/…)
+run the same commands; the daemon picks the Wayland path automatically
+when `WAYLAND_DISPLAY` is set. Two Wayland notes:
+
+- `-g` creates a single unbound surface (the compositor picks the output) —
+  it does not span outputs like on X11. For one image stretched across
+  outputs use `--span WxH+X+Y <image>` (image only; layout coordinates,
+  one window per intersected output, addressable by output name).
+- GNOME does not support wlr-layer-shell: the daemon exits with
+  `compositor does not support wlr-layer-shell`.
+- Default target is the largest output (Wayland has no primary designation).
 
 If the daemon is not running, the CLI errors with `daemon not running, start xwallpaperd first`. The backend is chosen by file extension unless forced with `--image`/`--video`/`--web`.
 

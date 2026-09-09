@@ -86,6 +86,8 @@ static int encode_common(const char *verb, const XWConfig *cfg,
     target = "all";
   else if (cfg->target == XW_TARGET_GEOM)
     target = "geom";
+  else if (cfg->target == XW_TARGET_SPAN)
+    target = "span";
   else
     target = cfg->output[0] ? cfg->output : "primary";
   if (append_field(msg, n, &off, target) < 0)
@@ -136,6 +138,13 @@ static int encode_common(const char *verb, const XWConfig *cfg,
     char g[64];
     snprintf(g, sizeof(g), "geom=%dx%d+%d+%d",
              cfg->geom_w, cfg->geom_h, cfg->geom_x, cfg->geom_y);
+    if (append_field(msg, n, &off, g) < 0)
+      return -1;
+  }
+  if (cfg->have_span) {
+    char g[64];
+    snprintf(g, sizeof(g), "span=%dx%d+%d+%d",
+             cfg->span_w, cfg->span_h, cfg->span_x, cfg->span_y);
     if (append_field(msg, n, &off, g) < 0)
       return -1;
   }

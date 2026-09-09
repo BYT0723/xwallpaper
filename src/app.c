@@ -11,15 +11,21 @@
 #include "app.h"
 #include "backends.h"
 #include "state.h"
+#include "wl.h"
 #include "x11.h"
 
 struct XWApp {
-  Display *dpy;
+  Display *dpy; /* X11 only (NULL on Wayland) */
   XWWindow **wins;
   XWBackend **backends;
   int nwins;
   int stop_requested;
   int uses_gtk;
+  int use_wayland;
+#ifdef XW_HAVE_WAYLAND
+  xw_wl_ctx *wl;
+  XWWlWindow **wlwins;
+#endif
   /* DPMS state (lazily probed; -1 power level = never polled yet) */
   int dpms_available;
   int dpms_queried;
@@ -64,17 +70,101 @@ static void fill_backend_opt(XWBackendOpt *opt, const XWConfig *cfg) {
   opt->keybinds = cfg->keybinds[0] ? cfg->keybinds : NULL;
   opt->fps = cfg->fps;
   opt->audio_client_name = cfg->audio_client_name[0] ? cfg->audio_client_name : NULL;
+  opt->span = 0;
+  opt->span_w = opt->span_h = 0;
+  opt->span_ox = opt->span_oy = 0;
+  if (cfg->target == XW_TARGET_SPAN && cfg->have_span) {
+    opt->span = 1;
+    opt->span_w = cfg->span_w;
+    opt->span_h = cfg->span_h;
+  }
 }
 
-/* Find a window by its identity key. Windows are identified by win->output:
- * real outputs use the xrandr name, -g windows use their --name.
+/* Backend lifecycle dispatch: Wayland instances use the _wl slots.
+ * stop/set_paused/retry need no dispatch (NULL-safe shared impls:
+ * video touches only VideoBase, web/image ops are toolkit-level). */
+static int backend_init(XWApp *app, XWBackend *b, void *win,
+                        const XWBackendOpt *opt, XWError *err) {
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland) {
+    if (!b->init_wl) {
+      XW_ERROR_SET(err, 1, "%s backend not supported on Wayland", b->name);
+      return -1;
+    }
+    return b->init_wl(b, (XWWlWindow *)win, opt, err);
+  }
+#else
+  (void)app;
+#endif
+  return b->init(b, (XWWindow *)win, opt, err);
+}
+
+static int backend_start(XWApp *app, XWBackend *b) {
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland) {
+    if (!b->start_wl)
+      return -1;
+    return b->start_wl(b);
+  }
+#else
+  (void)app;
+#endif
+  return b->start(b);
+}
+
+static void backend_destroy(XWApp *app, XWBackend *b) {
+  if (!b)
+    return;
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland) {
+    if (b->destroy_wl)
+      b->destroy_wl(b);
+    return;
+  }
+#else
+  (void)app;
+#endif
+  b->destroy(b);
+}
+
+static int backend_reload(XWApp *app, XWBackend *b, const XWBackendOpt *opt,
+                          XWError *err) {
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland)
+    return b->reload_wl ? b->reload_wl(b, opt, err) : -1;
+#else
+  (void)app;
+#endif
+  return b->reload ? b->reload(b, opt, err) : -1;
+}
+
+static int backend_has_reload(XWApp *app, XWBackend *b) {
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland)
+    return b->reload_wl != NULL;
+#else
+  (void)app;
+#endif
+  return b->reload != NULL;
+}
+
+/* Identity key of window i (output name or -g name). */
+static const char *window_key_at(XWApp *app, int i) {
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland)
+    return app->wlwins[i] ? app->wlwins[i]->output : "";
+#endif
+  return app->wins[i] ? app->wins[i]->output : "";
+}
+/* Find a window by its identity key. Windows are identified by output:
+ * real outputs use the output name, -g windows use their --name.
  * Returns index or -1. */
 static int find_window_by_key(XWApp *app, const char *key) {
   if (!key || !key[0])
     return -1;
   for (int i = 0; i < app->nwins; i++) {
-    XWWindow *win = app->wins[i];
-    if (win && win->output[0] && strcmp(win->output, key) == 0)
+    const char *output = window_key_at(app, i);
+    if (output && output[0] && strcmp(output, key) == 0)
       return i;
   }
   return -1;
@@ -94,14 +184,106 @@ static void window_key(const XWConfig *cfg, const char *resolved_output,
 
 /* remove window index i (destroy backend + window, compact arrays) */
 static void remove_window(XWApp *app, int i) {
-  if (app->backends[i])
-    app->backends[i]->destroy(app->backends[i]);
+  backend_destroy(app, app->backends[i]);
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland) {
+    if (app->wlwins[i])
+      xw_wl_destroy_window(app->wlwins[i]);
+    app->wlwins[i] = app->wlwins[app->nwins - 1];
+    app->backends[i] = app->backends[app->nwins - 1];
+    app->nwins--;
+    return;
+  }
+#endif
   if (app->wins[i])
     xw_x11_destroy_window(app->wins[i]);
   app->wins[i] = app->wins[app->nwins - 1];
   app->backends[i] = app->backends[app->nwins - 1];
   app->nwins--;
 }
+
+#ifdef XW_HAVE_WAYLAND
+/* resolve geometry on the active platform */
+static int resolve_geometry(XWApp *app, const XWConfig *cfg,
+                            int *x, int *y, unsigned int *w, unsigned int *h,
+                            char *out_name) {
+  if (app->use_wayland)
+    return xw_wl_resolve_geometry(xw_wl_outputs(app->wl),
+                                  xw_wl_output_count(app->wl), cfg,
+                                  x, y, w, h, out_name);
+  return xw_x11_resolve_geometry(app->dpy, cfg, x, y, w, h, out_name);
+}
+
+/* attach a backend to a fresh layer-shell window: make/init the backend,
+ * fill window metadata, append to the window list. Destroys the window
+ * on failure. Starting the backend is the caller's job. */
+static int attach_backend_wl(XWApp *app, const XWConfig *cfg, XWWlWindow *win,
+                             const XWBackendOpt *opt, XWError *err) {
+  XWBackend *tmpl = make_backend(cfg, err);
+  if (!tmpl) {
+    xw_wl_destroy_window(win);
+    return -1;
+  }
+  XWBackend *b = malloc(sizeof(*b));
+  if (!b) {
+    xw_wl_destroy_window(win);
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
+  *b = *tmpl;
+  b->priv = NULL;
+
+  if (backend_init(app, b, win, opt, err) != 0) {
+    free(b);
+    xw_wl_destroy_window(win);
+    return -1;
+  }
+  if (b->uses_gtk)
+    app->uses_gtk = 1;
+  win->type = opt->type;
+  snprintf(win->path, sizeof(win->path), "%s", opt->path ? opt->path : "");
+  win->rotation = cfg->rotate;
+
+  XWWlWindow **wlwins =
+      realloc(app->wlwins, sizeof(XWWlWindow *) * (app->nwins + 1));
+  XWBackend **backends =
+      realloc(app->backends, sizeof(XWBackend *) * (app->nwins + 1));
+  if (!wlwins || !backends) {
+    backend_destroy(app, b);
+    xw_wl_destroy_window(win);
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
+  app->wlwins = wlwins;
+  app->backends = backends;
+  app->wlwins[app->nwins] = win;
+  app->backends[app->nwins] = b;
+  app->nwins++;
+  return 0;
+}
+
+/* create a fresh layer-shell window + backend for the given rect/output */
+static int create_window_wl(XWApp *app, const XWConfig *cfg,
+                            int x, int y, unsigned int w, unsigned int h,
+                            const char *output, int is_geom, XWError *err) {
+  XWWlWindow *win = xw_wl_create_window(app->wl, cfg, x, y, w, h, err);
+  if (!win)
+    return -1;
+  if (output)
+    snprintf(win->output, sizeof(win->output), "%s", output);
+  win->is_geometry = is_geom;
+
+  XWBackendOpt opt;
+  fill_backend_opt(&opt, cfg);
+  return attach_backend_wl(app, cfg, win, &opt, err);
+}
+#else
+static int resolve_geometry(XWApp *app, const XWConfig *cfg,
+                            int *x, int *y, unsigned int *w, unsigned int *h,
+                            char *out_name) {
+  return xw_x11_resolve_geometry(app->dpy, cfg, x, y, w, h, out_name);
+}
+#endif
 
 /* create a fresh window + backend for the given rect/output */
 static int create_window(XWApp *app, const XWConfig *cfg,
@@ -156,6 +338,27 @@ static int create_window(XWApp *app, const XWConfig *cfg,
 }
 
 XWApp *xw_app_create(XWError *err) {
+#ifdef XW_HAVE_WAYLAND
+  /* WAYLAND_DISPLAY set means a Wayland session: commit to the layer-shell
+   * path. Failures are fatal readable errors — never silently fall back
+   * to X11 (an XWayland window would be invisible behind the compositor). */
+  if (getenv("WAYLAND_DISPLAY")) {
+    XWApp *app = calloc(1, sizeof(*app));
+    if (!app) {
+      XW_ERROR_SET(err, 1, "out of memory");
+      return NULL;
+    }
+    app->wl = xw_wl_connect(err);
+    if (!app->wl) {
+      free(app);
+      return NULL;
+    }
+    app->use_wayland = 1;
+    app->dpms_power_level = -1;
+    the_app = app;
+    return app;
+  }
+#endif
   Display *dpy = xw_x11_open_display(err);
   if (!dpy)
     return NULL;
@@ -171,7 +374,198 @@ XWApp *xw_app_create(XWError *err) {
   return app;
 }
 
+#ifdef XW_HAVE_WAYLAND
+/* one span piece: positioned surface + image backend rendering the crop.
+ * Pieces never reuse surfaces (a fullscreen surface can't become a crop). */
+static int create_span_piece(XWApp *app, const XWConfig *cfg,
+                             const char *output, int rx, int ry,
+                             unsigned int w, unsigned int h,
+                             int span_ox, int span_oy, XWError *err) {
+  int idx = find_window_by_key(app, output);
+  if (idx >= 0)
+    remove_window(app, idx);
+
+  XWWlWindow *win = xw_wl_create_window_at(app->wl, output, rx, ry, w, h, err);
+  if (!win)
+    return -1;
+
+  XWBackendOpt opt;
+  fill_backend_opt(&opt, cfg);
+  opt.span_ox = span_ox;
+  opt.span_oy = span_oy;
+  if (attach_backend_wl(app, cfg, win, &opt, err) != 0)
+    return -1;
+  XWBackend *b = app->backends[app->nwins - 1];
+  if (backend_start(app, b) != 0) {
+    remove_window(app, app->nwins - 1);
+    XW_ERROR_SET(err, 1, "backend failed to start");
+    return -1;
+  }
+  apply_dpms_to_backend(app, b);
+  return 0;
+}
+
+/* --span: intersect the layout rect with each output, one positioned
+ * image piece per intersection. Identity is the output name, so
+ * clear/-m/--list/state keep working unchanged. */
+static int app_set_span(XWApp *app, const XWConfig *cfg, XWError *err) {
+  XWBackendOpt probe;
+  fill_backend_opt(&probe, cfg);
+  if (probe.type != XW_BACKEND_IMAGE) {
+    XW_ERROR_SET(err, 1, "--span only supports image wallpapers");
+    return -1;
+  }
+  if (!cfg->have_span || cfg->span_w == 0 || cfg->span_h == 0) {
+    XW_ERROR_SET(err, 1, "--span requires a geometry (want WxH[+X+Y])");
+    return -1;
+  }
+  int sx0 = cfg->span_x, sy0 = cfg->span_y;
+  int sx1 = sx0 + (int)cfg->span_w, sy1 = sy0 + (int)cfg->span_h;
+  int n = xw_wl_output_count(app->wl);
+  const XWWlOutput *outs = xw_wl_outputs(app->wl);
+  int made = 0;
+  for (int i = 0; i < n; i++) {
+    int ix0 = sx0 > outs[i].x ? sx0 : outs[i].x;
+    int iy0 = sy0 > outs[i].y ? sy0 : outs[i].y;
+    int ix1 = sx1 < outs[i].x + (int)outs[i].width
+                  ? sx1
+                  : outs[i].x + (int)outs[i].width;
+    int iy1 = sy1 < outs[i].y + (int)outs[i].height
+                  ? sy1
+                  : outs[i].y + (int)outs[i].height;
+    if (ix1 <= ix0 || iy1 <= iy0)
+      continue;
+    if (create_span_piece(app, cfg, outs[i].name, ix0 - outs[i].x,
+                          iy0 - outs[i].y, (unsigned int)(ix1 - ix0),
+                          (unsigned int)(iy1 - iy0), ix0 - sx0, iy0 - sy0,
+                          err) != 0)
+      return -1;
+    made++;
+  }
+  if (made == 0) {
+    XW_ERROR_SET(err, 1, "--span rect intersects no output "
+                 "(use --list to see available outputs)");
+    return -1;
+  }
+  return 0;
+}
+
+/* Wayland set: one layer-shell surface per output (ALL) or a single
+ * target. Mirrors the X11 flow: same-type reload in place, else rebuild. */
+static int app_set_wl(XWApp *app, const XWConfig *cfg, XWError *err) {
+  if (cfg->target == XW_TARGET_SPAN)
+    return app_set_span(app, cfg, err);
+  if (cfg->target == XW_TARGET_ALL) {
+    xw_app_clear_all(app);
+    int n = xw_wl_output_count(app->wl);
+    for (int i = 0; i < n; i++) {
+      const XWWlOutput *o = &xw_wl_outputs(app->wl)[i];
+      if (create_window_wl(app, cfg, o->x, o->y, o->width, o->height,
+                           o->name, 0, err) != 0)
+        return -1;
+    }
+    if (app->nwins == 0) {
+      XW_ERROR_SET(err, 1, "no connected outputs found");
+      return -1;
+    }
+    for (int i = 0; i < app->nwins; i++) {
+      if (backend_start(app, app->backends[i]) != 0) {
+        XW_ERROR_SET(err, 1, "backend failed to start");
+        return -1;
+      }
+      apply_dpms_to_backend(app, app->backends[i]);
+    }
+    return 0;
+  }
+
+  int x, y;
+  unsigned int w, h;
+  char name[XW_WL_OUTPUT_NAME_LEN] = {0};
+  if (resolve_geometry(app, cfg, &x, &y, &w, &h, name) != 0) {
+    XW_ERROR_SET(err, 1, "cannot resolve output '%s' "
+                 "(use --list to see available outputs)", cfg->output);
+    return -1;
+  }
+
+  char lookup[XW_WL_OUTPUT_NAME_LEN] = {0};
+  window_key(cfg, name, lookup, sizeof(lookup));
+  int idx = find_window_by_key(app, lookup);
+
+  if (idx >= 0) {
+    XWBackendOpt opt;
+    fill_backend_opt(&opt, cfg);
+    XWBackend *old = app->backends[idx];
+    if (old && backend_has_reload(app, old) &&
+        app->wlwins[idx]->type == opt.type) {
+      if (backend_reload(app, old, &opt, err) != 0)
+        return -1;
+      app->wlwins[idx]->type = opt.type;
+      snprintf(app->wlwins[idx]->path, sizeof(app->wlwins[idx]->path), "%s",
+               opt.path ? opt.path : "");
+      app->wlwins[idx]->rotation = cfg->rotate;
+      apply_dpms_to_backend(app, old);
+      return 0;
+    }
+    backend_destroy(app, old);
+
+    XWBackend *tmpl = make_backend(cfg, err);
+    if (!tmpl)
+      return -1;
+    XWBackend *b = malloc(sizeof(*b));
+    if (!b) {
+      XW_ERROR_SET(err, 1, "out of memory");
+      return -1;
+    }
+    *b = *tmpl;
+    b->priv = NULL;
+    fill_backend_opt(&opt, cfg);
+    if (backend_init(app, b, app->wlwins[idx], &opt, err) != 0) {
+      free(b);
+      return -1;
+    }
+    if (b->uses_gtk)
+      app->uses_gtk = 1;
+    app->backends[idx] = b;
+    app->wlwins[idx]->type = opt.type;
+    snprintf(app->wlwins[idx]->path, sizeof(app->wlwins[idx]->path), "%s",
+             opt.path ? opt.path : "");
+    app->wlwins[idx]->rotation = cfg->rotate;
+    if (backend_start(app, b) != 0) {
+      backend_destroy(app, b);
+      app->backends[idx] = NULL;
+      XW_ERROR_SET(err, 1, "backend failed to start");
+      return -1;
+    }
+    apply_dpms_to_backend(app, b);
+    return 0;
+  }
+
+  const char *out;
+  if (cfg->have_geom)
+    out = cfg->name[0] ? cfg->name : NULL;
+  else
+    out = name[0] ? name : NULL;
+  if (create_window_wl(app, cfg, x, y, w, h, out, cfg->have_geom, err) != 0)
+    return -1;
+  if (backend_start(app, app->backends[app->nwins - 1]) != 0) {
+    remove_window(app, app->nwins - 1);
+    XW_ERROR_SET(err, 1, "backend failed to start");
+    return -1;
+  }
+  apply_dpms_to_backend(app, app->backends[app->nwins - 1]);
+  return 0;
+}
+#endif
+
 int xw_app_set(XWApp *app, const XWConfig *cfg, XWError *err) {
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland)
+    return app_set_wl(app, cfg, err);
+#endif
+  if (cfg->target == XW_TARGET_SPAN) {
+    XW_ERROR_SET(err, 1, "--span is only supported on Wayland");
+    return -1;
+  }
   if (cfg->target == XW_TARGET_ALL) {
     /* replace all windows: one per connected output */
     xw_app_clear_all(app);
@@ -314,7 +708,7 @@ int xw_app_clear(XWApp *app, const XWConfig *cfg, XWError *err) {
     int x, y;
     unsigned int w, h;
     char name[XW_OUTPUT_NAME_LEN] = {0};
-    if (xw_x11_resolve_geometry(app->dpy, cfg, &x, &y, &w, &h, name) == 0)
+    if (resolve_geometry(app, cfg, &x, &y, &w, &h, name) == 0)
       window_key(cfg, name, key, sizeof(key));
     else
       snprintf(key, sizeof(key), "%s", cfg->output);
@@ -344,11 +738,89 @@ int xw_app_window_count(XWApp *app) {
 }
 
 XWWindow *xw_app_window(XWApp *app, int i) {
+  if (!app || i < 0 || i >= app->nwins)
+    return NULL;
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland)
+    return NULL;
+#endif
   return app->wins[i];
+}
+
+int xw_app_use_wayland(XWApp *app) {
+  if (!app)
+    return 0;
+#ifdef XW_HAVE_WAYLAND
+  return app->use_wayland;
+#else
+  return 0;
+#endif
+}
+
+int xw_app_wayland_fd(XWApp *app) {
+  if (!app)
+    return -1;
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland)
+    return xw_wl_get_fd(app->wl);
+#endif
+  return -1;
+}
+
+void xw_app_wayland_dispatch(XWApp *app) {
+  if (!app)
+    return;
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland)
+    xw_wl_dispatch(app->wl);
+#endif
+}
+
+XWWlWindow *xw_app_wl_window(XWApp *app, int i) {
+  if (!app || i < 0 || i >= app->nwins)
+    return NULL;
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland)
+    return app->wlwins[i];
+#endif
+  return NULL;
 }
 
 Display *xw_app_display(XWApp *app) {
   return app->dpy;
+}
+
+int xw_app_window_info(XWApp *app, int i, XWWindowInfo *info) {
+  if (!app || !info || i < 0 || i >= app->nwins)
+    return -1;
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland) {
+    XWWlWindow *win = app->wlwins[i];
+    if (!win)
+      return -1;
+    info->type = win->type;
+    info->output = win->output;
+    info->path = win->path;
+    info->rotation = win->rotation;
+    info->x = win->x;
+    info->y = win->y;
+    info->w = win->width;
+    info->h = win->height;
+    return 0;
+  }
+#endif
+  XWWindow *win = app->wins[i];
+  if (!win)
+    return -1;
+  info->type = win->type;
+  info->output = win->output;
+  info->path = win->path;
+  info->rotation = win->rotation;
+  info->x = win->x;
+  info->y = win->y;
+  info->w = win->width;
+  info->h = win->height;
+  return 0;
 }
 
 /* 是否存在会持续出帧的渲染后端 (实现了 set_paused, 如 video)。有则 daemon
@@ -392,6 +864,12 @@ static void apply_dpms_to_backend(XWApp *app, XWBackend *b) {
 void xw_app_dpms_poll(XWApp *app) {
   if (!app)
     return;
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland)
+    return; /* no DPMS on Wayland (ext-idle-notify is future work) */
+#endif
+  if (!app->dpy)
+    return;
   if (!app->dpms_queried) {
     app->dpms_queried = 1;
     /* libXext's DPMSQueryExtension writes both bases unconditionally —
@@ -426,6 +904,27 @@ static void pump_gtk(void) {
 }
 
 int xw_app_run(XWApp *app) {
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland) {
+    int wfd = xw_wl_get_fd(app->wl);
+    while (!app->stop_requested) {
+      if (app->uses_gtk)
+        pump_gtk();
+
+      struct pollfd pfd = {wfd, POLLIN, 0};
+      int r = poll(&pfd, 1, 100);
+
+      if (r < 0) {
+        if (errno == EINTR)
+          continue;
+        break;
+      }
+      /* non-blocking: collects frame/configure events, flushes commits */
+      xw_wl_dispatch(app->wl);
+    }
+    return 0;
+  }
+#endif
   int xfd = ConnectionNumber(app->dpy);
 
   while (!app->stop_requested) {
@@ -463,6 +962,11 @@ void xw_app_destroy(XWApp *app) {
   xw_app_clear_all(app);
   free(app->backends);
   free(app->wins);
+#ifdef XW_HAVE_WAYLAND
+  free(app->wlwins);
+  if (app->wl)
+    xw_wl_disconnect(app->wl);
+#endif
   if (app->dpy)
     xw_x11_close_display(app->dpy);
   if (the_app == app)
@@ -474,25 +978,41 @@ void xw_app_destroy(XWApp *app) {
  *  Persistent per-name state
  * ------------------------------------------------------------------ */
 
-static void entry_from_window(XWStateEntry *e, const XWWindow *win, int keep) {
+/* snapshot entry i regardless of platform */
+static void entry_from_index(XWApp *app, XWStateEntry *e, int i, int keep) {
+  XWWindowInfo wi;
   memset(e, 0, sizeof(*e));
+  if (xw_app_window_info(app, i, &wi) != 0)
+    return;
   snprintf(e->name, sizeof(e->name), "%s",
-           win->output[0] ? win->output : "unnamed");
-  e->type = win->type;
-  snprintf(e->path, sizeof(e->path), "%s", win->path);
-  e->rotation = win->rotation;
-  /* 总是保存几何; 恢复时若 name 命中当前 xrandr output 则重解析 */
+           wi.output[0] ? wi.output : "unnamed");
+  e->type = wi.type;
+  snprintf(e->path, sizeof(e->path), "%s", wi.path);
+  e->rotation = wi.rotation;
+  /* 总是保存几何; 恢复时若 name 命中当前 output 则重解析 */
   e->have_geom = 1;
-  e->x = win->x;
-  e->y = win->y;
-  e->w = win->width;
-  e->h = win->height;
+  e->x = wi.x;
+  e->y = wi.y;
+  e->w = wi.w;
+  e->h = wi.h;
   e->keep = keep;
+}
+
+/* 平台相关的状态文件: Wayland 用 state-wayland (monitor 命名空间与
+ * xrandr 不一致，共用会贴错屏)。X11-only 构建下恒走旧路径。 */
+static int app_state_path(XWApp *app, char *out, size_t n) {
+#ifdef XW_HAVE_WAYLAND
+  if (app && app->use_wayland)
+    return xw_state_path_for(1, out, n);
+#else
+  (void)app;
+#endif
+  return xw_state_path(out, n);
 }
 
 int xw_app_save_state(XWApp *app) {
   char path[1024];
-  if (xw_state_path(path, sizeof(path)) != 0)
+  if (app_state_path(app, path, sizeof(path)) != 0)
     return -1;
 
   /* keep=1 且无活跃窗口的旧条目 (clear --keep 保留的 last) 继续保留 */
@@ -507,7 +1027,7 @@ int xw_app_save_state(XWApp *app) {
       out[n++] = old[i];
   }
   for (int i = 0; i < app->nwins && n < XW_STATE_MAX_ENTRIES; i++) {
-    entry_from_window(&out[n], app->wins[i], 0);
+    entry_from_index(app, &out[n], i, 0);
     n++;
   }
   return xw_state_save(path, out, n);
@@ -515,20 +1035,21 @@ int xw_app_save_state(XWApp *app) {
 
 int xw_app_keep(XWApp *app, const char *name) {
   char path[1024];
-  if (xw_state_path(path, sizeof(path)) != 0)
+  if (app_state_path(app, path, sizeof(path)) != 0)
     return -1;
   int idx = find_window_by_key(app, name);
   if (idx < 0)
     return 0; /* nothing to keep */
   XWStateEntry e;
-  entry_from_window(&e, app->wins[idx], 1);
+  entry_from_index(app, &e, idx, 1);
   return xw_state_upsert(path, &e);
 }
 
 int xw_app_keep_all(XWApp *app) {
   int r = 0;
   for (int i = 0; i < app->nwins; i++) {
-    if (app->wins[i]->output[0] && xw_app_keep(app, app->wins[i]->output) != 0)
+    const char *output = window_key_at(app, i);
+    if (output[0] && xw_app_keep(app, output) != 0)
       r = -1;
   }
   return r;
@@ -565,7 +1086,7 @@ static int restore_entry(XWApp *app, const XWStateEntry *e) {
   unsigned int w, h;
   char oname[XW_OUTPUT_NAME_LEN];
   const char *mode = "output";
-  if (xw_x11_resolve_geometry(app->dpy, &cfg, &x, &y, &w, &h, oname) != 0 ||
+  if (resolve_geometry(app, &cfg, &x, &y, &w, &h, oname) != 0 ||
       !oname[0]) {
     if (!e->have_geom) {
       if (getenv("XW_DEBUG_DAEMON"))
@@ -597,7 +1118,7 @@ static int restore_entry(XWApp *app, const XWStateEntry *e) {
  * 命令)。两者共享同一恢复流程, 仅过滤条件与是否回写快照不同。 */
 static int restore_entries(XWApp *app, int keep_flag) {
   char path[1024];
-  if (xw_state_path(path, sizeof(path)) != 0)
+  if (app_state_path(app, path, sizeof(path)) != 0)
     return -1;
   XWStateEntry entries[XW_STATE_MAX_ENTRIES];
   int count = 0;
@@ -632,7 +1153,7 @@ int xw_app_restore_startup(XWApp *app) { return restore_entries(app, 0); }
 
 int xw_app_restore_pending(XWApp *app) {
   char path[1024];
-  if (xw_state_path(path, sizeof(path)) != 0)
+  if (app_state_path(app, path, sizeof(path)) != 0)
     return 0;
   XWStateEntry entries[XW_STATE_MAX_ENTRIES];
   int count = 0;

@@ -25,6 +25,7 @@ enum {
   XW_TARGET_OUTPUT,  /* explicit -m <output> */
   XW_TARGET_ALL,     /* --all */
   XW_TARGET_GEOM,    /* -g <WxH+X+Y> overrides geometry */
+  XW_TARGET_SPAN,    /* --span <WxH+X+Y>: layout-space rect split per output */
 };
 
 typedef struct XWConfig {
@@ -35,6 +36,9 @@ typedef struct XWConfig {
   int geom_x, geom_y;
   unsigned int geom_w, geom_h;
   char name[64];      /* -n/--name: name for -g windows (used for clear/--list) */
+  int have_span;      /* --span given (Wayland image spanning) */
+  int span_x, span_y;
+  unsigned int span_w, span_h;
 
   /* backend opts */
   int backend_explicit; /* -1 = auto, else XW_BACKEND_* */

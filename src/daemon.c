@@ -119,6 +119,8 @@ static int decode_set(char *msg, size_t n, XWConfig *cfg, char *errbuf, size_t e
     cfg->target = XW_TARGET_ALL;
   } else if (strcmp(d.fields[1], "geom") == 0) {
     cfg->target = XW_TARGET_GEOM;
+  } else if (strcmp(d.fields[1], "span") == 0) {
+    cfg->target = XW_TARGET_SPAN;
   } else if (strcmp(d.fields[1], "primary") == 0) {
     cfg->target = XW_TARGET_PRIMARY;
   } else {
@@ -175,6 +177,11 @@ static int decode_set(char *msg, size_t n, XWConfig *cfg, char *errbuf, size_t e
   if (kv_str(&d, "geom", g, sizeof(g)) == 0) {
     if (xw_geom_parse(g, &cfg->geom_x, &cfg->geom_y, &cfg->geom_w, &cfg->geom_h))
       cfg->have_geom = 1;
+  }
+  char sp[64];
+  if (kv_str(&d, "span", sp, sizeof(sp)) == 0) {
+    if (xw_geom_parse(sp, &cfg->span_x, &cfg->span_y, &cfg->span_w, &cfg->span_h))
+      cfg->have_span = 1;
   }
   char nm[64];
   if (kv_str(&d, "name", nm, sizeof(nm)) == 0)
@@ -281,7 +288,8 @@ int xw_daemon_main(void) {
             (double)(rt1.tv_sec - rt0.tv_sec) +
                 (double)(rt1.tv_nsec - rt0.tv_nsec) / 1e9);
   }
-  xfd = ConnectionNumber(xw_app_display(app));
+  xfd = xw_app_use_wayland(app) ? xw_app_wayland_fd(app)
+                                : ConnectionNumber(xw_app_display(app));
 
   signal(SIGTERM, daemon_signal);
   signal(SIGINT, daemon_signal);
@@ -376,7 +384,14 @@ int xw_daemon_main(void) {
     while (g_main_context_pending(NULL))
       g_main_context_iteration(NULL, FALSE);
 
-    if (fds[1].revents & POLLIN) {
+    /* Wayland: dispatch every iteration, not only on POLLIN. The dispatch
+     * carries our only wl_display_flush; shm attaches (image) rely on it —
+     * gating on POLLIN deadlocks the first commit forever when no Wayland
+     * events arrive (EGL swap flushes implicitly, which is why video
+     * worked while image stayed gray). xw_wl_dispatch is non-blocking. */
+    if (xw_app_use_wayland(cur)) {
+      xw_app_wayland_dispatch(cur);
+    } else if (fds[1].revents & POLLIN) {
       Display *dpy = xw_app_display(cur);
       while (dpy && XPending(dpy) > 0) {
         XEvent ev;
@@ -462,19 +477,21 @@ int xw_daemon_main(void) {
               out[off++] = '\0';
               off += (size_t)snprintf(out + off, XW_REPLY_MAX - off, "%d\n", nw);
               for (int i = 0; i < nw; i++) {
-                XWWindow *win = xw_app_window(cur, i);
+                XWWindowInfo wi;
+                if (xw_app_window_info(cur, i, &wi) != 0)
+                  continue;
                 char type[16];
-                switch (win->type) {
+                switch (wi.type) {
                 case XW_BACKEND_IMAGE: strcpy(type, "image"); break;
                 case XW_BACKEND_VIDEO: strcpy(type, "video"); break;
                 case XW_BACKEND_WEB:   strcpy(type, "web"); break;
                 default: strcpy(type, "unknown"); break;
                 }
-                /* identity: xrandr name for outputs, --name for -g windows */
-                const char *oname = win->output[0] ? win->output : "unnamed";
+                /* identity: output name, --name for -g windows */
+                const char *oname = wi.output[0] ? wi.output : "unnamed";
                 char rot[16];
-                snprintf(rot, sizeof(rot), "%d", win->rotation);
-                size_t olen = strlen(oname), tlen = strlen(type), plen = strlen(win->path);
+                snprintf(rot, sizeof(rot), "%d", wi.rotation);
+                size_t olen = strlen(oname), tlen = strlen(type), plen = strlen(wi.path);
                 size_t rlen = strlen(rot);
                 size_t line_len = olen + 1 + tlen + 1 + plen + 1 + rlen + 1;
                 if (off + line_len < XW_REPLY_MAX) {
@@ -484,7 +501,7 @@ int xw_daemon_main(void) {
                   memcpy(out + off, type, tlen);
                   off += tlen;
                   out[off++] = '\0';
-                  memcpy(out + off, win->path, plen);
+                  memcpy(out + off, wi.path, plen);
                   off += plen;
                   out[off++] = '\0';
                   memcpy(out + off, rot, rlen);

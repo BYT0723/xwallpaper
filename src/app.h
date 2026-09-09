@@ -43,8 +43,37 @@ int xw_app_window_count(XWApp *app);
 /* Access window i (0..count-1). */
 XWWindow *xw_app_window(XWApp *app, int i);
 
-/* The daemon's X display (for event polling). */
+/* Platform-independent snapshot of window i for --list/state/IPC.
+ * String fields point into the window (valid until windows change).
+ * Returns 0 on success, -1 when i is out of range. */
+typedef struct XWWindowInfo {
+  int type;             /* XW_BACKEND_* */
+  const char *output;   /* output name, "" if geometry-only */
+  const char *path;
+  int rotation;
+  int x, y;
+  unsigned int w, h;
+} XWWindowInfo;
+int xw_app_window_info(XWApp *app, int i, XWWindowInfo *info);
+
+/* The daemon's X display (for event polling). NULL on Wayland. */
 Display *xw_app_display(XWApp *app);
+
+/* ------------------------------------------------------------------ *
+ *  Wayland (wlr-layer-shell) platform
+ * ------------------------------------------------------------------ */
+
+/* Whether the app runs on Wayland (1) or X11 (0). */
+int xw_app_use_wayland(XWApp *app);
+
+/* Wayland compositor fd for the daemon poll loop (-1 on X11). */
+int xw_app_wayland_fd(XWApp *app);
+
+/* Dispatch pending Wayland events (no-op on X11). */
+void xw_app_wayland_dispatch(XWApp *app);
+
+/* Access window i as a Wayland window (NULL on X11 / out of range). */
+XWWlWindow *xw_app_wl_window(XWApp *app, int i);
 
 /* Whether any live backend presents frames continuously (has a set_paused
  * hook, i.e. video). The daemon event loop must keep a periodic DPMS poll

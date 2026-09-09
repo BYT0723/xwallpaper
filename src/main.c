@@ -61,6 +61,18 @@ int main(int argc, char **argv) {
     close(fd);
     return 1;
   }
+  if (r > 0) {
+    /* daemon error reply: xw_client_talk already extracted the message
+     * text into err — surface it instead of silently exiting 0 (errors
+     * like bad --span usage must be visible) */
+    size_t len = strlen(err.msg);
+    while (len > 0 && err.msg[len - 1] == '\n')
+      err.msg[--len] = '\0';
+    fprintf(stderr, "xwallpaper: %s\n",
+            err.msg[0] ? err.msg : "unknown daemon error");
+    close(fd);
+    return 1;
+  }
 
   /* print the reply for list/state commands */
   if (cfg.command == XW_CMD_LIST || cfg.command == XW_CMD_STATE) {

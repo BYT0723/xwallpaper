@@ -23,6 +23,41 @@ static void test_path_home_fallback(void) {
   TEST_CHECK_EQ_STR(p, "/home/u/.local/state/xwallpaper/state");
 }
 
+static void test_path_for_wayland(void) {
+  TEST_BEGIN("state path for wayland uses the state-wayland file");
+  setenv("XDG_STATE_HOME", "/tmp/xstate", 1);
+  char p[256];
+  TEST_CHECK_EQ_INT(xw_state_path_for(1, p, sizeof(p)), 0);
+  TEST_CHECK_EQ_STR(p, "/tmp/xstate/xwallpaper/state-wayland");
+}
+
+static void test_path_for_x11_matches_legacy(void) {
+  TEST_BEGIN("state path for x11 matches the legacy path");
+  setenv("XDG_STATE_HOME", "/tmp/xstate", 1);
+  char a[256], b[256];
+  TEST_CHECK_EQ_INT(xw_state_path_for(0, a, sizeof(a)), 0);
+  TEST_CHECK_EQ_INT(xw_state_path(b, sizeof(b)), 0);
+  TEST_CHECK_EQ_STR(a, b);
+  TEST_CHECK_EQ_STR(a, "/tmp/xstate/xwallpaper/state");
+}
+
+static void test_path_for_wayland_fallback(void) {
+  TEST_BEGIN("state-wayland falls back to HOME/.local/state too");
+  unsetenv("XDG_STATE_HOME");
+  setenv("HOME", "/home/u", 1);
+  char p[256];
+  TEST_CHECK_EQ_INT(xw_state_path_for(1, p, sizeof(p)), 0);
+  TEST_CHECK_EQ_STR(p, "/home/u/.local/state/xwallpaper/state-wayland");
+}
+
+static void test_path_for_truncation(void) {
+  TEST_BEGIN("state path reports truncation on a tiny buffer");
+  setenv("XDG_STATE_HOME", "/tmp/xstate", 1);
+  char p[10];
+  TEST_CHECK_EQ_INT(xw_state_path_for(1, p, sizeof(p)), -1);
+  TEST_CHECK_EQ_INT(xw_state_path_for(0, p, sizeof(p)), -1);
+}
+
 static void test_roundtrip_geom(void) {
   TEST_BEGIN("format/parse round-trips a geom entry");
   XWStateEntry e;
@@ -234,6 +269,10 @@ int main(void) {
   TEST_SUITE("state");
   test_path_xdg();
   test_path_home_fallback();
+  test_path_for_wayland();
+  test_path_for_x11_matches_legacy();
+  test_path_for_wayland_fallback();
+  test_path_for_truncation();
   test_roundtrip_geom();
   test_roundtrip_output();
   test_roundtrip_escape();
