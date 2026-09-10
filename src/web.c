@@ -15,11 +15,41 @@ typedef struct {
   XWWindow *win;
   GtkWidget *window;  /* top-level GtkWindow holding the webview */
   GtkWidget *view;
+  WebKitWebContext *wctx; /* per-wallpaper isolated context (ephemeral) */
   char *path;
 } WebCtx;
 
 /* gtk_init runs at first web backend init (process-wide, idempotent) */
 static int gtk_initialized = 0;
+
+/* Per-wallpaper ephemeral context: its Web/Network processes die with the
+ * wallpaper instead of lingering in the shared default context pool
+ * (GPU/DMA-BUF held until process exit). Ephemeral also avoids disk
+ * cache/cookie sharing between wallpapers. */
+static int web_attach_view(WebCtx *ctx, XWError *err) {
+  ctx->wctx = webkit_web_context_new_ephemeral();
+  if (!ctx->wctx) {
+    XW_ERROR_SET(err, 1, "webkit_web_context_new_ephemeral failed");
+    return -1;
+  }
+  ctx->view = webkit_web_view_new_with_context(ctx->wctx);
+  if (!ctx->view) {
+    XW_ERROR_SET(err, 1, "webkit_web_view_new_with_context failed");
+    g_object_unref(ctx->wctx);
+    ctx->wctx = NULL;
+    return -1;
+  }
+  return 0;
+}
+
+static void web_terminate(WebCtx *ctx) {
+  if (!ctx || !ctx->view)
+    return;
+  webkit_web_view_stop_loading(WEBKIT_WEB_VIEW(ctx->view));
+#if WEBKIT_CHECK_VERSION(2, 34, 0)
+  webkit_web_view_terminate_web_process(WEBKIT_WEB_VIEW(ctx->view));
+#endif
+}
 
 static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWError *err) {
   if (!gtk_initialized) {
@@ -37,6 +67,16 @@ static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWErro
   }
   ctx->win = win;
   ctx->path = strdup(opt->path);
+  if (!ctx->path) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    free(ctx);
+    return -1;
+  }
+  if (web_attach_view(ctx, err) != 0) {
+    free(ctx->path);
+    free(ctx);
+    return -1;
+  }
 
   /* A plain GtkWindow + WebKitWebView renders reliably. We then reparent the
    * window onto the wallpaper X window at the X protocol level (NOT via
@@ -46,7 +86,6 @@ static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWErro
   ctx->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
   gtk_window_set_default_size(GTK_WINDOW(ctx->window), win->width, win->height);
   gtk_window_set_decorated(GTK_WINDOW(ctx->window), FALSE);
-  ctx->view = webkit_web_view_new();
   gtk_container_add(GTK_CONTAINER(ctx->window), ctx->view);
 
   /* Realize the window WITHOUT showing it, so we can reparent it onto the
@@ -119,11 +158,21 @@ static void web_destroy(XWBackend *b) {
   if (!b || !b->priv)
     return;
   WebCtx *ctx = (WebCtx *)b->priv;
+  b->priv = NULL;
+  web_terminate(ctx);
   if (ctx->window)
     gtk_widget_destroy(ctx->window);
+  ctx->window = NULL;
+  ctx->view = NULL;
+  /* Let the destroy finalize promptly so the reparented X child and the
+   * WebView release their GPU/DMA-BUF handles without waiting for the
+   * next daemon poll tick. */
+  for (int i = 0; i < 5; i++)
+    g_main_context_iteration(NULL, FALSE);
+  if (ctx->wctx)
+    g_object_unref(ctx->wctx);
   free(ctx->path);
   free(ctx);
-  b->priv = NULL;
 }
 
 #if defined(XW_HAVE_WAYLAND) && defined(XW_HAVE_GTK_LAYER_SHELL)
@@ -142,7 +191,7 @@ XWBackend *xw_web_backend_new(void) {
     .on_event = NULL,
     .reload = web_reload,
 #if defined(XW_HAVE_WAYLAND) && defined(XW_HAVE_GTK_LAYER_SHELL)
-    /* start/stop/destroy/reload are pure WebKit/GTK ops on the shared
+    /* start/stop/destroy/reload are pure WebKit/GTK ops on the isolated
      * WebCtx, so only init differs per platform. */
     .init_wl = web_init_wl,
     .start_wl = web_start,
@@ -190,6 +239,11 @@ static int web_init_wl(XWBackend *b, XWWlWindow *win,
     free(ctx);
     return -1;
   }
+  if (web_attach_view(ctx, err) != 0) {
+    free(ctx->path);
+    free(ctx);
+    return -1;
+  }
 
   ctx->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
   gtk_window_set_default_size(GTK_WINDOW(ctx->window),
@@ -197,7 +251,6 @@ static int web_init_wl(XWBackend *b, XWWlWindow *win,
   gtk_window_set_decorated(GTK_WINDOW(ctx->window), FALSE);
   gtk_window_set_skip_taskbar_hint(GTK_WINDOW(ctx->window), TRUE);
   gtk_window_set_skip_pager_hint(GTK_WINDOW(ctx->window), TRUE);
-  ctx->view = webkit_web_view_new();
   gtk_container_add(GTK_CONTAINER(ctx->window), ctx->view);
 
   gtk_layer_init_for_window(GTK_WINDOW(ctx->window));
