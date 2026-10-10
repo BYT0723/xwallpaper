@@ -61,6 +61,12 @@ typedef struct XWWlWindow {
   int below, sticky, skip_taskbar, skip_pager, no_focus;
   char keybinds[1024];
   char audio_client_name[64];
+
+  /* layer-shell configure state: the configure listener stays registered
+   * for the window lifetime (compositor may re-configure on resize), so
+   * it must live in the window, never on window_new's stack. */
+  int configured;
+  int closed;
 } XWWlWindow;
 
 /* Wayland connection + enumerated outputs. Opaque: build it with

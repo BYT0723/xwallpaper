@@ -331,29 +331,22 @@ const XWWlOutput *xw_wl_outputs(xw_wl_ctx *ctx) {
   return ctx ? ctx->outs : NULL;
 }
 
-struct XWWlWinCb {
-  XWWlWindow *win;
-  int configured;
-  int closed;
-};
-
 static void layer_handle_configure(void *data, struct zwlr_layer_surface_v1 *l,
                                    uint32_t serial, uint32_t w, uint32_t h) {
-  struct XWWlWinCb *cb = data;
-  (void)l;
+  XWWlWindow *win = data;
   if (w > 0 && h > 0) {
-    cb->win->width = w;
-    cb->win->height = h;
+    win->width = w;
+    win->height = h;
   }
   zwlr_layer_surface_v1_ack_configure(l, serial);
-  wl_surface_commit((struct wl_surface *)cb->win->surface);
-  cb->configured = 1;
+  wl_surface_commit((struct wl_surface *)win->surface);
+  win->configured = 1;
 }
 
 static void layer_handle_closed(void *data, struct zwlr_layer_surface_v1 *l) {
-  struct XWWlWinCb *cb = data;
+  XWWlWindow *win = data;
   (void)l;
-  cb->closed = 1;
+  win->closed = 1;
 }
 
 static const struct zwlr_layer_surface_v1_listener layer_listener = {
@@ -417,16 +410,15 @@ static XWWlWindow *window_new(xw_wl_ctx *ctx, const struct XWWlPlace *pl,
   zwlr_layer_surface_v1_set_keyboard_interactivity(
       layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
 
-  struct XWWlWinCb cb = {.win = win, .configured = 0, .closed = 0};
-  zwlr_layer_surface_v1_add_listener(layer, &layer_listener, &cb);
+  zwlr_layer_surface_v1_add_listener(layer, &layer_listener, win);
   wl_surface_commit(surf);
 
-  for (int i = 0; i < 200 && !cb.configured && !cb.closed; i++) {
+  for (int i = 0; i < 200 && !win->configured && !win->closed; i++) {
     if (wl_display_dispatch(ctx->display) < 0)
       break;
   }
-  if (!cb.configured) {
-    XW_ERROR_SET(err, 1, cb.closed ? "compositor closed the layer surface"
+  if (!win->configured) {
+    XW_ERROR_SET(err, 1, win->closed ? "compositor closed the layer surface"
                                    : "no configure from compositor");
     zwlr_layer_surface_v1_destroy(layer);
     wl_surface_destroy(surf);
