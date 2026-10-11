@@ -64,7 +64,10 @@ int xw_client_talk(int fd, const char *msg, size_t len, char *reply, size_t rn, 
   if (strncmp(reply, "ok", 2) == 0 && (reply[2] == '\n' || reply[2] == '\0'))
     return 0;
   if (strncmp(reply, "error", 5) == 0) {
+    /* daemon format is "error" NUL <msg> LF: skip the separator */
     const char *m = reply + 5;
+    if (*m == '\0')
+      m++;
     if (*m == '\0' || *m == '\n')
       m = "unknown daemon error";
     XW_ERROR_SET(err, 1, "%s", m);

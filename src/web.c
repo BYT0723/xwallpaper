@@ -53,6 +53,11 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
    * while root_dir is empty (URL/file modes), and reload only swaps
    * root_dir without re-registering. */
   webkit_web_context_register_uri_scheme(ctx->wctx, "xw", xw_scheme_cb, ctx, NULL);
+  /* fetch()/XHR from xw:// pages needs the scheme CORS-enabled,
+   * otherwise subresource loads are blocked like file:// */
+  WebKitSecurityManager *sm = webkit_web_context_get_security_manager(ctx->wctx);
+  if (sm)
+    webkit_security_manager_register_uri_scheme_as_cors_enabled(sm, "xw");
   return 0;
 }
 

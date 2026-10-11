@@ -330,6 +330,60 @@ static void test_encode_set_audio_client_name(void) {
   TEST_CHECK(!has_field(msg, n, "audio_client_name="));
 }
 
+/* fake daemon replying a daemon-style error ("error" NUL msg LF):
+ * the client must surface the message text, not "unknown daemon error". */
+static void test_client_error_text(void) {
+  TEST_BEGIN("daemon error text reaches the caller");
+  setenv("XDG_RUNTIME_DIR", "/tmp", 1);
+  char path[256];
+  xw_daemon_socket_path(path, sizeof(path));
+  unlink(path);
+
+  int srv = socket(AF_UNIX, SOCK_STREAM, 0);
+  TEST_CHECK(srv >= 0);
+  if (srv < 0)
+    return;
+  struct sockaddr_un addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sun_family = AF_UNIX;
+  snprintf(addr.sun_path, sizeof(addr.sun_path), "%.107s", path);
+  TEST_CHECK(bind(srv, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  listen(srv, 1);
+
+  pid_t pid = fork();
+  TEST_CHECK(pid >= 0);
+  if (pid == 0) {
+    int c = accept(srv, NULL, NULL);
+    if (c >= 0) {
+      char tmp[64];
+      ssize_t r = read(c, tmp, sizeof(tmp));
+      (void)r;
+      const char rep[] = "error\0wrap it in a dir with index.html\n";
+      ssize_t w = write(c, rep, sizeof(rep) - 1);
+      (void)w;
+      close(c);
+    }
+    close(srv);
+    unlink(path);
+    _exit(0);
+  }
+  close(srv);
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  int fd = xw_client_connect(&err);
+  if (fd < 0) {
+    TEST_FAIL("client connect failed: %s", err.msg);
+  } else {
+    char reply[512];
+    int r = xw_client_talk(fd, "exit\n", 5, reply, sizeof(reply), &err);
+    TEST_CHECK_EQ_INT(r, 1);
+    TEST_CHECK(strstr(err.msg, "wrap it in a dir") != NULL);
+    close(fd);
+  }
+  int status;
+  waitpid(pid, &status, 0);
+}
+
 int main(void) {
   TEST_SUITE("client/protocol");
   test_encode_set_basic();
@@ -344,5 +398,6 @@ int main(void) {
   test_encode_set_video_fps();
   test_encode_set_audio_client_name();
   test_client_roundtrip();
+  test_client_error_text();
   TEST_SUMMARY();
 }
