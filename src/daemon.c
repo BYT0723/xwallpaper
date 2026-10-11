@@ -16,6 +16,7 @@
 #include "app.h"
 #include "daemon.h"
 #include "proto.h"
+#include "web.h"
 #include "x11.h"
 
 static void daemon_sigsegv(int sig) {
@@ -342,7 +343,11 @@ int xw_daemon_main(void) {
     }
 
     int timeout = gtimeout; /* -1 = block until an fd/event arrives */
-    if (xw_app_dpms_watch_required(cur) || now_ms - startup_ms < 120000) {
+    if (xw_web_we_want()) {
+      /* WE audio wallpapers need a 20Hz fan-out tick; never block past it. */
+      if (timeout < 0 || timeout > 50)
+        timeout = 50;
+    } else if (xw_app_dpms_watch_required(cur) || now_ms - startup_ms < 120000) {
       /* 需要退化为 500ms 节拍: (a) 有持续出帧的渲染后端 (video) — 必须轮询
        * DPMS, 熄屏时暂停它防止点亮显示器; (b) 启动自愈窗口 (前 2 分钟) — 原
        * 逻辑窗口内本就每 500ms 检测 (restore_pending 读盘 + video retry),
@@ -362,6 +367,10 @@ int xw_daemon_main(void) {
      * (throttled internally; keeps video wallpapers from re-waking the
      * display after lock/screen-off) */
     xw_app_dpms_poll(cur);
+
+    /* WE audio fan-out to web wallpapers (50ms internally throttled;
+     * starts/stops the Pulse capture by want-refcount) */
+    xw_web_we_tick();
 
     if (now_ms - startup_ms < 120000) {
       if (now_ms - last_selfheal_ms >= 500) {

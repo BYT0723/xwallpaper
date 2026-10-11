@@ -20,8 +20,22 @@ CLI_OBJ := $(CLI_SRC:.c=.o)
 # daemon: owns all wallpaper windows, links the full backend stack.
 DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/x11.c src/app.c src/image.c src/video.c src/web.c \
-              src/web_dir.c src/wl.c
+              src/web_dir.c src/wl.c src/we_audio.c src/we_pulse.c
 DAEMON_OBJ := $(DAEMON_SRC:.c=.o)
+
+# ---- PulseAudio monitor capture (WE audio listener): daemon-only ----
+# libpulse works via pipewire-pulse with no new daemon process.
+# The thin CLI never sees these flags or libs (check-client-libs guards that).
+PULSE_PKGS := libpulse
+HAVE_PULSE := $(shell pkg-config --exists $(PULSE_PKGS) && echo 1 || echo 0)
+ifeq ($(HAVE_PULSE),1)
+PULSE_CFLAGS := $(shell pkg-config --cflags $(PULSE_PKGS)) -DXW_HAVE_PULSE=1
+PULSE_LIBS := $(shell pkg-config --libs $(PULSE_PKGS))
+else
+PULSE_CFLAGS :=
+PULSE_LIBS :=
+$(info xwallpaper: PulseAudio capture OFF (need: $(PULSE_PKGS) dev package))
+endif
 
 WAYLAND_SCANNER ?= wayland-scanner
 WLR_XML := src/proto/wlr-layer-shell-unstable-v1.xml
@@ -72,7 +86,7 @@ $(info xwallpaper: Wayland layer-shell support OFF (need: $(WL_PKGS) libs + 'mak
 endif
 
 # wayland flags reach daemon objects only (protocol obj included above).
-$(DAEMON_OBJ): CFLAGS += $(WL_CFLAGS)
+$(DAEMON_OBJ): CFLAGS += $(WL_CFLAGS) $(PULSE_CFLAGS)
 
 BINS := xwallpaper xwallpaperd
 
@@ -81,6 +95,7 @@ TEST_BIN := $(TEST_SRC:.c=)
 
 INTEG_BIN := tests/integration/test_x11 tests/integration/test_image \
              tests/integration/test_video tests/integration/test_web \
+             tests/integration/test_web_audio \
              tests/integration/test_app_geom tests/integration/test_app_all \
              tests/integration/test_fill tests/integration/test_restore
 
@@ -98,7 +113,7 @@ xwallpaper: $(CLI_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(CLI_OBJ) $(SANITIZE)
 
 xwallpaperd: $(DAEMON_OBJ)
-	$(CC) $(LDFLAGS) -o $@ $(DAEMON_OBJ) $(LDLIBS) $(WL_LIBS)
+	$(CC) $(LDFLAGS) -o $@ $(DAEMON_OBJ) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) -lm
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -107,7 +122,7 @@ xwallpaperd: $(DAEMON_OBJ)
 # layout change relinks stale objects against new ones (mixed ABI).
 HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/client.h src/state.h src/x11.h src/app.h src/backends.h \
-  src/wl.h src/daemon.h src/web_dir.h $(wildcard src/proto/*-client-protocol.h)
+  src/wl.h src/daemon.h src/web_dir.h src/we_audio.h src/we_pulse.h $(wildcard src/proto/*-client-protocol.h)
 $(CLI_OBJ) $(DAEMON_OBJ) $(TEST_BIN) $(INTEG_BIN) $(WL_INTEG_BIN): $(HEADER_DEPS)
 
 # thin unit tests: only the client-side objects, no heavy libs
@@ -136,7 +151,7 @@ test: $(TEST_BIN)
 	@for t in $(TEST_BIN); do echo "== $$t =="; ./$$t || exit 1; done
 
 tests/integration/%: tests/integration/%.c $(filter-out src/dmain.o,$(DAEMON_OBJ))
-	$(CC) $(CFLAGS) $(WL_CFLAGS) -o $@ $< $(filter-out src/dmain.o,$(DAEMON_OBJ)) $(LDLIBS) $(WL_LIBS)
+	$(CC) $(CFLAGS) $(WL_CFLAGS) $(PULSE_CFLAGS) -o $@ $< $(filter-out src/dmain.o,$(DAEMON_OBJ)) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) -lm
 
 test-xvfb: $(BINS) $(INTEG_BIN)
 	@for t in $(INTEG_BIN); do \
@@ -165,7 +180,7 @@ proto-wayland: $(WLR_XML)
 	$(WAYLAND_SCANNER) private-code $(XDGOUT_XML) $(XDGOUT_GEN_C)
 
 check-client-libs: xwallpaper
-	@! ldd ./xwallpaper | grep -qE 'webkit|mpv|Imlib2|javascriptcore' \
+	@! ldd ./xwallpaper | grep -qE 'webkit|mpv|Imlib2|javascriptcore|libpulse' \
 	  && echo "OK: xwallpaper (cli) is free of heavy backend libs" \
 	  || (echo "FAIL: cli links heavy backend libs"; exit 1)
 

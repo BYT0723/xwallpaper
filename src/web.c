@@ -3,6 +3,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <gtk/gtk.h>
@@ -11,6 +12,9 @@
 #include <webkit2/webkit2.h>
 
 #include "backend.h"
+#include "we_audio.h"
+#include "we_pulse.h"
+#include "web.h"
 #include "web_dir.h"
 #include "x11.h"
 
@@ -22,7 +26,75 @@ typedef struct {
   char *path;
   char root_dir[1024]; /* dir mode: absolute wallpaper root ("" when unused) */
   char entry[256];     /* dir mode: entry file, always index.html */
+  int want_audio;      /* page called wallpaperRegisterAudioListener */
 } WebCtx;
+
+/* Process-wide registry of live web wallpapers (main thread only:
+ * attach/destroy/message-handler/push all run on the GTK main thread). */
+static WebCtx **g_views = NULL;
+static int g_nviews = 0;
+
+static void web_reg_add(WebCtx *ctx) {
+  WebCtx **v = realloc(g_views, sizeof(*v) * (g_nviews + 1));
+  if (!v)
+    return;
+  g_views = v;
+  g_views[g_nviews++] = ctx;
+}
+
+static void web_reg_remove(WebCtx *ctx) {
+  for (int i = 0; i < g_nviews; i++) {
+    if (g_views[i] == ctx) {
+      g_views[i] = g_views[g_nviews - 1];
+      g_nviews--;
+      return;
+    }
+  }
+}
+
+int xw_web_we_want(void) {
+  for (int i = 0; i < g_nviews; i++)
+    if (g_views[i]->want_audio)
+      return 1;
+  return 0;
+}
+
+void xw_web_we_push(const float bins[128]) {
+  if (!bins || !xw_web_we_want())
+    return;
+  char json[2048];
+  if (xw_we_audio_format(bins, json, sizeof(json)) != 0)
+    return;
+  char *js = g_strdup_printf("__xwAudioPush(%s)", json);
+  if (!js)
+    return;
+  for (int i = 0; i < g_nviews; i++) {
+    if (g_views[i]->want_audio && g_views[i]->view)
+      webkit_web_view_evaluate_javascript(WEBKIT_WEB_VIEW(g_views[i]->view),
+                                           js, -1, NULL, NULL, NULL, NULL, NULL);
+  }
+  g_free(js);
+}
+
+void xw_web_we_tick(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  uint64_t now = (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+  static uint64_t last = 0;
+  if (now - last < 50)
+    return;
+  last = now;
+  if (!xw_web_we_want()) {
+    if (xw_we_pulse_running())
+      xw_we_pulse_stop();
+    return;
+  }
+  if (!xw_we_pulse_running())
+    xw_we_pulse_start(); /* may fail without Pulse; get() still yields zeros */
+  float bins[128];
+  if (xw_we_pulse_get(bins) == 0)
+    xw_web_we_push(bins);
+}
 
 /* gtk_init runs at first web backend init (process-wide, idempotent) */
 static int gtk_initialized = 0;
@@ -57,7 +129,36 @@ static const char *kWallpaperJS =
     "e.preventDefault();e.stopPropagation();},true);"
     "})();";
 
-static void web_apply_wallpaper_policy(WebKitWebView *view) {
+/* Wallpaper Engine audio shim: pages call
+ * window.wallpaperRegisterAudioListener(cb) once (outside onload);
+ * native pushes 128 floats via __xwAudioPush at ~20Hz. First registration
+ * notifies native through the xwAudio message handler so silent/static
+ * pages never start the Pulse capture. */
+static const char *kAudioJS =
+    "(function(){"
+    "window.__xwAudioCBs=[];"
+    "window.wallpaperRegisterAudioListener=function(cb){"
+    "if(typeof cb!=='function')return;"
+    "window.__xwAudioCBs.push(cb);"
+    "try{window.webkit.messageHandlers.xwAudio.postMessage('on');}catch(e){}"
+    "};"
+    "window.__xwAudioPush=function(arr){"
+    "var c=window.__xwAudioCBs;"
+    "for(var i=0;i<c.length;i++){try{c[i](arr);}catch(e){}}"
+    "};"
+    "})();";
+
+static void web_audio_message_cb(WebKitUserContentManager *ucm,
+                                 WebKitJavascriptResult *res, gpointer ud) {
+  (void)ucm;
+  WebCtx *ctx = (WebCtx *)ud;
+  if (res)
+    webkit_javascript_result_unref(res);
+  if (ctx)
+    ctx->want_audio = 1;
+}
+
+static void web_apply_wallpaper_policy(WebKitWebView *view, WebCtx *ctx) {
   WebKitUserContentManager *ucm =
       webkit_web_view_get_user_content_manager(view);
   if (!ucm)
@@ -76,6 +177,16 @@ static void web_apply_wallpaper_policy(WebKitWebView *view) {
     webkit_user_content_manager_add_script(ucm, script);
     webkit_user_script_unref(script);
   }
+  WebKitUserScript *audio = webkit_user_script_new(
+      kAudioJS, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES,
+      WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL, NULL);
+  if (audio) {
+    webkit_user_content_manager_add_script(ucm, audio);
+    webkit_user_script_unref(audio);
+  }
+  webkit_user_content_manager_register_script_message_handler(ucm, "xwAudio");
+  g_signal_connect(ucm, "script-message-received::xwAudio",
+                   G_CALLBACK(web_audio_message_cb), ctx);
 }
 
 /* Per-wallpaper WebsiteDataManager: storage/cookies/cache land under
@@ -175,7 +286,8 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
                    G_CALLBACK(web_block_context_menu), NULL);
   g_signal_connect(ctx->view, "load-changed",
                    G_CALLBACK(web_load_changed_cb), ctx);
-  web_apply_wallpaper_policy(WEBKIT_WEB_VIEW(ctx->view));
+  web_apply_wallpaper_policy(WEBKIT_WEB_VIEW(ctx->view), ctx);
+  web_reg_add(ctx);
   return 0;
 }
 
@@ -352,6 +464,7 @@ static void web_destroy(XWBackend *b) {
     return;
   WebCtx *ctx = (WebCtx *)b->priv;
   b->priv = NULL;
+  web_reg_remove(ctx);
   web_terminate(ctx);
   if (ctx->window)
     gtk_widget_destroy(ctx->window);

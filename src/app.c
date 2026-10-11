@@ -11,6 +11,7 @@
 #include "app.h"
 #include "backends.h"
 #include "state.h"
+#include "web.h"
 #include "wl.h"
 #include "x11.h"
 
@@ -967,6 +968,12 @@ static void pump_gtk(void) {
   g_main_context_iteration(NULL, FALSE);
 }
 
+/* WE audio wallpapers need their 20Hz fan-out tick; idle loops poll at
+ * 100ms to stay signal-responsive. */
+static int app_poll_timeout_ms(void) {
+  return xw_web_we_want() ? 50 : 100;
+}
+
 int xw_app_run(XWApp *app) {
 #ifdef XW_HAVE_WAYLAND
   if (app->use_wayland) {
@@ -974,9 +981,10 @@ int xw_app_run(XWApp *app) {
     while (!app->stop_requested) {
       if (app->uses_gtk)
         pump_gtk();
+      xw_web_we_tick();
 
       struct pollfd pfd = {wfd, POLLIN, 0};
-      int r = poll(&pfd, 1, 100);
+      int r = poll(&pfd, 1, app_poll_timeout_ms());
 
       if (r < 0) {
         if (errno == EINTR)
@@ -995,9 +1003,10 @@ int xw_app_run(XWApp *app) {
     if (app->uses_gtk)
       pump_gtk();
     xw_app_dpms_poll(app);
+    xw_web_we_tick();
 
     struct pollfd pfd = {xfd, POLLIN, 0};
-    int r = poll(&pfd, 1, 100); /* 100ms timeout keeps signals responsive */
+    int r = poll(&pfd, 1, app_poll_timeout_ms());
 
     if (r < 0) {
       if (errno == EINTR)

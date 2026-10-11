@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head><title>weaudio</title></head>
+<body>
+<script>
+window.__got = null;
+if (window.wallpaperRegisterAudioListener) {
+  window.wallpaperRegisterAudioListener(function (a) {
+    window.__got = a;
+    var bass = 0, treb = 0, i;
+    for (i = 8; i < 16; i++)
+      bass += a[i];
+    bass /= 8;
+    for (i = 48; i < 64; i++)
+      treb += a[i];
+    treb /= 16;
+    document.title = 'WEAUDIO:' + a.length + ':' + bass.toFixed(4) + ':' + treb.toFixed(4);
+  });
+} else {
+  document.title = 'WEAUDIO:NOAPI';
+}
+</script>
+</body>
+</html>
