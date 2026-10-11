@@ -125,7 +125,8 @@ static void web_deliver_we_properties(WebKitWebView *view) {
       "}"
       "attempt();"
       "})();";
-  webkit_web_view_run_javascript(view, kScript, NULL, NULL, NULL);
+  webkit_web_view_evaluate_javascript(view, kScript, -1, NULL, NULL, NULL,
+                                       NULL, NULL);
 }
 
 static void web_load_changed_cb(WebKitWebView *view,

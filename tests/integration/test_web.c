@@ -155,18 +155,15 @@ typedef struct {
 static void js_done_cb(GObject *o, GAsyncResult *r, gpointer ud) {
   JsOut *out = (JsOut *)ud;
   GError *e = NULL;
-  WebKitJavascriptResult *res =
-      webkit_web_view_run_javascript_finish(WEBKIT_WEB_VIEW(o), r, &e);
-  if (res) {
-    JSCValue *v = webkit_javascript_result_get_js_value(res);
-    if (v) {
-      char *s = jsc_value_to_string(v);
-      if (s) {
-        out->value = g_strdup(s);
-        g_free(s);
-      }
+  JSCValue *v =
+      webkit_web_view_evaluate_javascript_finish(WEBKIT_WEB_VIEW(o), r, &e);
+  if (v) {
+    char *s = jsc_value_to_string(v);
+    if (s) {
+      out->value = g_strdup(s);
+      g_free(s);
     }
-    webkit_javascript_result_unref(res);
+    g_object_unref(v);
   }
   if (e)
     g_error_free(e);
@@ -176,8 +173,8 @@ static void js_done_cb(GObject *o, GAsyncResult *r, gpointer ud) {
 static char *run_js_sync(GtkWidget *view, const char *script) {
   JsOut out;
   memset(&out, 0, sizeof(out));
-  webkit_web_view_run_javascript(WEBKIT_WEB_VIEW(view), script,
-                                 NULL, js_done_cb, &out);
+  webkit_web_view_evaluate_javascript(WEBKIT_WEB_VIEW(view), script, -1,
+                                       NULL, NULL, NULL, js_done_cb, &out);
   gint64 deadline = g_get_monotonic_time() + 5 * 1000 * 1000;
   while (!out.done && g_get_monotonic_time() < deadline) {
     g_main_context_iteration(NULL, FALSE);
