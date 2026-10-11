@@ -32,6 +32,20 @@ static int gtk_initialized = 0;
  * wallpaper instead of lingering in the shared default context pool
  * (GPU/DMA-BUF held until process exit). Ephemeral also avoids disk
  * cache/cookie sharing between wallpapers. */
+static gboolean web_block_context_menu(WebKitWebView *view,
+                                       WebKitContextMenu *menu,
+                                       GdkEvent *event,
+                                       WebKitHitTestResult *hit,
+                                       gpointer ud) {
+  /* A wallpaper is not a browser: never pop the default context menu. */
+  (void)view;
+  (void)menu;
+  (void)event;
+  (void)hit;
+  (void)ud;
+  return TRUE;
+}
+
 static int web_attach_view(WebCtx *ctx, XWError *err) {
   ctx->wctx = webkit_web_context_new_ephemeral();
   if (!ctx->wctx) {
@@ -54,6 +68,8 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
     webkit_settings_set_allow_file_access_from_file_urls(st, TRUE);
     webkit_settings_set_allow_universal_access_from_file_urls(st, TRUE);
   }
+  g_signal_connect(ctx->view, "context-menu",
+                   G_CALLBACK(web_block_context_menu), NULL);
   return 0;
 }
 

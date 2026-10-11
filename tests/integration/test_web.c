@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <glib.h>
+#include <gtk/gtk.h>
+#include <webkit2/webkit2.h>
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -16,6 +18,71 @@
 #include "../../src/backends.h"
 #include "../../src/x11.h"
 #include "../../src/cli.h"
+
+static GtkWidget *find_web_view(void) {
+  GList *tops = gtk_window_list_toplevels();
+  GtkWidget *found = NULL;
+  for (GList *l = tops; l; l = l->next) {
+    GList *ch = gtk_container_get_children(GTK_CONTAINER(l->data));
+    for (GList *c = ch; c; c = c->next) {
+      if (WEBKIT_IS_WEB_VIEW(c->data)) {
+        found = GTK_WIDGET(c->data);
+        break;
+      }
+    }
+    g_list_free(ch);
+    if (found)
+      break;
+  }
+  g_list_free(tops);
+  return found;
+}
+
+static void test_context_menu_blocked(void) {
+  TEST_BEGIN("right-click context menu is suppressed");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "webmenu");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/webdir";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    guint sig = g_signal_lookup("context-menu", WEBKIT_TYPE_WEB_VIEW);
+    TEST_CHECK(sig != 0);
+    if (sig) {
+      gulong h = g_signal_handler_find(view, G_SIGNAL_MATCH_ID, sig,
+                                       0, NULL, NULL, NULL);
+      TEST_CHECK(h != 0); /* our blocker must be wired */
+    }
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
 
 static void test_web_paints(void) {
   TEST_BEGIN("web backend paints non-black pixels");
@@ -76,5 +143,6 @@ static void test_web_paints(void) {
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_paints();
+  test_context_menu_blocked();
   TEST_SUMMARY();
 }
