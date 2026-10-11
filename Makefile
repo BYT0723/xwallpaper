@@ -14,13 +14,13 @@ LDLIBS  := $(shell pkg-config --libs $(PKGS))
 
 # thin client: interacts over the socket, must never link the heavy backend
 # libs (webkit/mpv/imlib2) or every invocation pays their load time.
-CLI_SRC := src/main.c src/cli.c src/proto.c src/client.c
+CLI_SRC := src/main.c src/cli.c src/proto.c src/client.c src/web_dir.c
 CLI_OBJ := $(CLI_SRC:.c=.o)
 
 # daemon: owns all wallpaper windows, links the full backend stack.
 DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/x11.c src/app.c src/image.c src/video.c src/web.c \
-              src/wl.c
+              src/web_dir.c src/wl.c
 DAEMON_OBJ := $(DAEMON_SRC:.c=.o)
 
 WAYLAND_SCANNER ?= wayland-scanner
@@ -111,14 +111,14 @@ HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
 $(CLI_OBJ) $(DAEMON_OBJ) $(TEST_BIN) $(INTEG_BIN) $(WL_INTEG_BIN): $(HEADER_DEPS)
 
 # thin unit tests: only the client-side objects, no heavy libs
-tests/test_cli tests/test_geom: tests/%: tests/%.c src/cli.o
-	$(CC) $(CFLAGS) -o $@ $< src/cli.o
+tests/test_cli tests/test_geom: tests/%: tests/%.c src/cli.o src/web_dir.o
+	$(CC) $(CFLAGS) -o $@ $< src/cli.o src/web_dir.o
 
-tests/test_client: tests/test_client.c src/cli.o src/proto.o src/client.o
-	$(CC) $(CFLAGS) -o $@ $< src/cli.o src/proto.o src/client.o
+tests/test_client: tests/test_client.c src/cli.o src/proto.o src/client.o src/web_dir.o
+	$(CC) $(CFLAGS) -o $@ $< src/cli.o src/proto.o src/client.o src/web_dir.o
 
-tests/test_state: tests/test_state.c src/state.o src/cli.o
-	$(CC) $(CFLAGS) -o $@ $< src/state.o src/cli.o
+tests/test_state: tests/test_state.c src/state.o src/cli.o src/web_dir.o
+	$(CC) $(CFLAGS) -o $@ $< src/state.o src/cli.o src/web_dir.o
 
 tests/test_web_dir: tests/test_web_dir.c src/web_dir.o
 	$(CC) $(CFLAGS) -o $@ $< src/web_dir.o
@@ -126,8 +126,8 @@ tests/test_web_dir: tests/test_web_dir.c src/web_dir.o
 # test_wl compiles wl.c sources directly (without XW_HAVE_WAYLAND, so only
 # the pure-logic part builds): keeps the unit test free of wayland headers
 # and avoids sharing src/wl.o flag state with the daemon build.
-tests/test_wl: tests/test_wl.c src/wl.c src/cli.c
-	$(CC) $(CFLAGS) -o $@ tests/test_wl.c src/wl.c src/cli.c
+tests/test_wl: tests/test_wl.c src/wl.c src/cli.c src/web_dir.c
+	$(CC) $(CFLAGS) -o $@ tests/test_wl.c src/wl.c src/cli.c src/web_dir.c
 
 test: $(TEST_BIN)
 	@for t in $(TEST_BIN); do echo "== $$t =="; ./$$t || exit 1; done

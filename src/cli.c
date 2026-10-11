@@ -2,8 +2,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "cli.h"
+#include "web_dir.h"
 
 /* Parse an X11 geometry string "WxH+X+Y" or "WxH". Returns 1 on success.
  * Offset defaults to 0,0. Negative offsets ("-X-Y") are accepted. */
@@ -68,10 +70,23 @@ static int is_video_ext(const char *ext) {
 }
 
 static int is_web_ext(const char *ext) {
-  return strcmp(ext, "html") == 0 || strcmp(ext, "htm") == 0 || strcmp(ext, "svg") == 0;
+  /* single html pages are no longer set directly (wrap them in a dir
+   * with index.html); svg stays as a self-contained image-like format */
+  return strcmp(ext, "svg") == 0;
 }
 
 int xw_cli_detect_backend(const char *path) {
+  if (!path || !*path)
+    return -1;
+  if (xw_web_is_http_url(path))
+    return XW_BACKEND_WEB;
+
+  /* an existing directory is unambiguously a web wallpaper (checked
+   * before extension so "foo.png/" dirs aren't mistaken for images) */
+  struct stat st;
+  if (stat(path, &st) == 0 && S_ISDIR(st.st_mode))
+    return XW_BACKEND_WEB;
+
   const char *dot = strrchr(path, '.');
   if (!dot || dot == path || dot[1] == '\0')
     return -1;

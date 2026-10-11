@@ -1,4 +1,8 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "harness.h"
 #include "../src/cli.h"
 
@@ -33,10 +37,23 @@ static void test_detect_video(void) {
 }
 
 static void test_detect_web(void) {
-  TEST_BEGIN("detects web by extension");
-  TEST_CHECK_EQ_INT(xw_cli_detect_backend("page.html"), XW_BACKEND_WEB);
-  TEST_CHECK_EQ_INT(xw_cli_detect_backend("page.htm"), XW_BACKEND_WEB);
+  TEST_BEGIN("only svg detects as web; html needs a directory");
   TEST_CHECK_EQ_INT(xw_cli_detect_backend("g.svg"), XW_BACKEND_WEB);
+  TEST_CHECK_EQ_INT(xw_cli_detect_backend("page.html"), -1);
+  TEST_CHECK_EQ_INT(xw_cli_detect_backend("page.htm"), -1);
+}
+
+static void test_detect_dir_and_url(void) {
+  TEST_BEGIN("existing dir and http(s) url detect as web");
+  char *t = strdup("/tmp/xw-cli-dir-XXXXXX");
+  TEST_CHECK(t != NULL && mkdtemp(t) != NULL);
+  if (t) {
+    TEST_CHECK_EQ_INT(xw_cli_detect_backend(t), XW_BACKEND_WEB);
+    rmdir(t);
+    free(t);
+  }
+  TEST_CHECK_EQ_INT(xw_cli_detect_backend("https://example.com/"), XW_BACKEND_WEB);
+  TEST_CHECK_EQ_INT(xw_cli_detect_backend("http://localhost:8000/"), XW_BACKEND_WEB);
 }
 
 static void test_detect_unknown(void) {
@@ -388,6 +405,7 @@ int main(void) {
   test_detect_backend();
   test_detect_video();
   test_detect_web();
+  test_detect_dir_and_url();
   test_detect_unknown();
   test_set_default();
   test_set_output();
