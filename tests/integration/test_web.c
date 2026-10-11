@@ -1,8 +1,8 @@
 /* Integration test: web backend under Xvfb.
  * Verifies webkit actually paints into the wallpaper window: creates the
- * app window, loads a wallpaper *directory* (served via the xw:// scheme,
- * exercising module + fetch + css subresources), pumps the GTK context
- * (the pattern the daemon uses), then samples a pixel. */
+ * app window, loads a wallpaper *directory* (file:// index.html with the
+ * file-access switches on, exercising module + fetch + css subresources),
+ * pumps the GTK context (the pattern the daemon uses), then samples a pixel. */
 
 #include <stdio.h>
 #include <string.h>

@@ -117,7 +117,7 @@ struct XWBackend {
 - `xwallpaper set <png>` shows a correct image wallpaper on a live X session (scaled to monitor rect, desktop layer).
 - `xwallpaper set <mp4> --mute` loops a muted video smoothly (no tearing, mouse still forwarded).
 - `xwallpaper set <html>` renders the page as wallpaper and GTK loop coexists with X loop (no deadlock, page is live).
-- `xwallpaper set --web <dir>` serves the directory (must contain `index.html`) via the internal `xw://` scheme with http-like subresource loading (no external server, no TCP port); plain local files are rejected with a hint.
+- `xwallpaper set --web <dir>` serves the directory (must contain `index.html`) as `file://` with file-access switches on for http-like subresource loading (no external server, no TCP port); plain local files are rejected with a hint. Media (`<video>`) uses the native file path (custom URI schemes are not supported by the WebKit media stack).
 - `-m`/`-g` place the window on the right output/rectangle; unknown `-m` errors and lists monitors.
 - `xwallpaper clear` removes wallpapers but the daemon stays alive; `xwallpaper exit` terminates it; `--list` shows windows.
 - Replacing a monitor's wallpaper (`set -m DP-1` twice) swaps it in place without duplicate windows or stale processes.

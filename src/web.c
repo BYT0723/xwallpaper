@@ -20,15 +20,13 @@ typedef struct {
   GtkWidget *view;
   WebKitWebContext *wctx; /* per-wallpaper isolated context (ephemeral) */
   char *path;
-  char root_dir[1024]; /* dir mode: absolute serve root ("" when unused) */
+  char root_dir[1024]; /* dir mode: absolute wallpaper root ("" when unused) */
   char entry[256];     /* dir mode: entry file, always index.html */
   int file_fallback;   /* single self-contained .svg via file:// (compat) */
 } WebCtx;
 
 /* gtk_init runs at first web backend init (process-wide, idempotent) */
 static int gtk_initialized = 0;
-
-static void xw_scheme_cb(WebKitURISchemeRequest *req, gpointer ud);
 
 /* Per-wallpaper ephemeral context: its Web/Network processes die with the
  * wallpaper instead of lingering in the shared default context pool
@@ -47,69 +45,22 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
     ctx->wctx = NULL;
     return -1;
   }
-  /* Local directories are served through the xw:// scheme (same-origin
-   * subresource loading like an http server, but with no TCP port and no
-   * external process). Registered unconditionally: the callback 404s
-   * while root_dir is empty (URL/file modes), and reload only swaps
-   * root_dir without re-registering. */
-  webkit_web_context_register_uri_scheme(ctx->wctx, "xw", xw_scheme_cb, ctx, NULL);
-  /* fetch()/XHR from xw:// pages needs the scheme CORS-enabled,
-   * otherwise subresource loads are blocked like file:// */
-  WebKitSecurityManager *sm = webkit_web_context_get_security_manager(ctx->wctx);
-  if (sm)
-    webkit_security_manager_register_uri_scheme_as_cors_enabled(sm, "xw");
+  /* Local wallpapers load via file:// (native media seeking works, unlike
+   * custom schemes). The two file-access switches give static pages
+   * http-like subresource loading (fetch/ES modules); each wallpaper keeps
+   * its own ephemeral context, so nothing is shared across wallpapers. */
+  WebKitSettings *st = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(ctx->view));
+  if (st) {
+    webkit_settings_set_allow_file_access_from_file_urls(st, TRUE);
+    webkit_settings_set_allow_universal_access_from_file_urls(st, TRUE);
+  }
   return 0;
 }
 
-/* Serve one file from the wallpaper's root_dir. No directory listings;
- * any path escaping root is rejected. */
-static void xw_scheme_cb(WebKitURISchemeRequest *req, gpointer ud) {
-  WebCtx *ctx = (WebCtx *)ud;
-  GError *err = NULL;
-  char rel[1024];
-  if (!ctx || !ctx->root_dir[0] ||
-      xw_web_req_to_rel(webkit_uri_scheme_request_get_path(req), rel, sizeof(rel)) != 0) {
-    err = g_error_new(G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "not found");
-    webkit_uri_scheme_request_finish_error(req, err);
-    g_error_free(err);
-    return;
-  }
-  char full[2048];
-  snprintf(full, sizeof(full), "%s/%s", ctx->root_dir, rel);
-  char *real = realpath(full, NULL);
-  if (!real || strncmp(real, ctx->root_dir, strlen(ctx->root_dir)) != 0) {
-    free(real);
-    err = g_error_new(G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "not found");
-    webkit_uri_scheme_request_finish_error(req, err);
-    g_error_free(err);
-    return;
-  }
-  /* root itself (trailing-slash entry) must not escape as a directory */
-  int is_root = strcmp(real, ctx->root_dir) == 0;
-  free(real);
-  if (is_root) {
-    err = g_error_new(G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "not found");
-    webkit_uri_scheme_request_finish_error(req, err);
-    g_error_free(err);
-    return;
-  }
-  gchar *data = NULL;
-  gsize len = 0;
-  if (!g_file_get_contents(full, &data, &len, NULL) || len > (gsize)(32 << 20)) {
-    g_free(data);
-    err = g_error_new(G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "not found");
-    webkit_uri_scheme_request_finish_error(req, err);
-    g_error_free(err);
-    return;
-  }
-  GInputStream *s = g_memory_input_stream_new_from_data(data, (gssize)len, g_free);
-  webkit_uri_scheme_request_finish(req, s, (gssize)len, xw_web_mime_for(rel));
-  g_object_unref(s);
-}
-
 /* Classify a --web input: 0 = inapplicable here. Modes: 1 = http(s) URL
- * (load directly), 2 = local dir (serve via xw://), 3 = single .svg file
- * (legacy file://, self-contained). Anything else is an error. */
+ * (load directly), 2 = local dir (load <root>/index.html via file://),
+ * 3 = single .svg file (legacy file://, self-contained). Anything else
+ * is an error. */
 static int web_classify(const char *path, char *root, size_t rn,
                         char *entry, size_t en, XWError *err) {
   if (xw_web_is_http_url(path))
@@ -223,7 +174,13 @@ static int web_start(XWBackend *b) {
 
   char *uri;
   if (ctx->root_dir[0]) {
-    uri = g_strdup_printf("xw://local/%s", ctx->entry);
+    /* dir mode: file:// URI of <root>/<entry>; subresources resolve
+     * relatively and media seeks natively (custom schemes break media) */
+    char full[2048];
+    snprintf(full, sizeof(full), "%s/%s", ctx->root_dir, ctx->entry);
+    uri = g_filename_to_uri(full, NULL, NULL);
+    if (!uri)
+      return -1;
   } else if (strncmp(ctx->path, "http://", 7) == 0 || strncmp(ctx->path, "https://", 8) == 0) {
     uri = strdup(ctx->path);
   } else {

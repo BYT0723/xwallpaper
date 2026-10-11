@@ -12,7 +12,7 @@ static void test_is_http_url(void) {
   TEST_CHECK_EQ_INT(xw_web_is_http_url("http://localhost:8000/"), 1);
   TEST_CHECK_EQ_INT(xw_web_is_http_url("https://example.com/page"), 1);
   TEST_CHECK_EQ_INT(xw_web_is_http_url("/home/u/wall"), 0);
-  TEST_CHECK_EQ_INT(xw_web_is_http_url("xw://local/index.html"), 0);
+  TEST_CHECK_EQ_INT(xw_web_is_http_url("file:///x/index.html"), 0);
   TEST_CHECK_EQ_INT(xw_web_is_http_url(""), 0);
   TEST_CHECK_EQ_INT(xw_web_is_http_url(NULL), 0);
 }
@@ -86,37 +86,6 @@ static void test_resolve_file_rejected(void) {
   TEST_CHECK_EQ_INT(xw_web_resolve(NULL, root, sizeof(root), entry, sizeof(entry)), -1);
 }
 
-static void test_mime(void) {
-  TEST_BEGIN("mime table covers wallpaper assets");
-  TEST_CHECK_EQ_STR(xw_web_mime_for("index.html"), "text/html");
-  TEST_CHECK_EQ_STR(xw_web_mime_for("a.CSS"), "text/css");
-  TEST_CHECK_EQ_STR(xw_web_mime_for("app.js"), "text/javascript");
-  TEST_CHECK_EQ_STR(xw_web_mime_for("m.mjs"), "text/javascript");
-  TEST_CHECK_EQ_STR(xw_web_mime_for("data.json"), "application/json");
-  TEST_CHECK_EQ_STR(xw_web_mime_for("p.png"), "image/png");
-  TEST_CHECK_EQ_STR(xw_web_mime_for("p.svg"), "image/svg+xml");
-  TEST_CHECK_EQ_STR(xw_web_mime_for("f.woff2"), "font/woff2");
-  TEST_CHECK_EQ_STR(xw_web_mime_for("m.wasm"), "application/wasm");
-  TEST_CHECK_EQ_STR(xw_web_mime_for("noext"), "application/octet-stream");
-  TEST_CHECK_EQ_STR(xw_web_mime_for(NULL), "application/octet-stream");
-}
-
-static void test_req_to_rel(void) {
-  TEST_BEGIN("request path maps to relative file");
-  char rel[1024];
-  TEST_CHECK_EQ_INT(xw_web_req_to_rel("/index.html", rel, sizeof(rel)), 0);
-  TEST_CHECK_EQ_STR(rel, "index.html");
-  TEST_CHECK_EQ_INT(xw_web_req_to_rel("/", rel, sizeof(rel)), 0);
-  TEST_CHECK_EQ_STR(rel, "index.html");
-  TEST_CHECK_EQ_INT(xw_web_req_to_rel("/sub/app.js", rel, sizeof(rel)), 0);
-  TEST_CHECK_EQ_STR(rel, "sub/app.js");
-  TEST_CHECK_EQ_INT(xw_web_req_to_rel("/%73tyle.css", rel, sizeof(rel)), 0);
-  TEST_CHECK_EQ_STR(rel, "style.css");
-  TEST_CHECK_EQ_INT(xw_web_req_to_rel("/a/../b", rel, sizeof(rel)), -1);
-  TEST_CHECK_EQ_INT(xw_web_req_to_rel("/..", rel, sizeof(rel)), -1);
-  TEST_CHECK_EQ_INT(xw_web_req_to_rel(NULL, rel, sizeof(rel)), -1);
-}
-
 int main(void) {
   TEST_SUITE("web_dir");
   test_is_http_url();
@@ -124,7 +93,5 @@ int main(void) {
   test_resolve_dir_ok();
   test_resolve_dir_no_index();
   test_resolve_file_rejected();
-  test_mime();
-  test_req_to_rel();
   TEST_SUMMARY();
 }
