@@ -173,6 +173,19 @@ static void js_done_cb(GObject *o, GAsyncResult *r, gpointer ud) {
   out->done = 1;
 }
 
+static char *run_js_sync(GtkWidget *view, const char *script) {
+  JsOut out;
+  memset(&out, 0, sizeof(out));
+  webkit_web_view_run_javascript(WEBKIT_WEB_VIEW(view), script,
+                                 NULL, js_done_cb, &out);
+  gint64 deadline = g_get_monotonic_time() + 5 * 1000 * 1000;
+  while (!out.done && g_get_monotonic_time() < deadline) {
+    g_main_context_iteration(NULL, FALSE);
+    g_usleep(10000);
+  }
+  return out.value; /* caller g_frees, may be NULL on timeout */
+}
+
 static void test_storage_persistent(void) {
   TEST_BEGIN("web storage is persistent and per-wallpaper isolated");
   XWError err;
@@ -221,23 +234,100 @@ static void test_storage_persistent(void) {
     /* per-wallpaper isolation: must not be the shared default location */
     TEST_CHECK(datadir != NULL && strstr(datadir, "xwallpaper") != NULL);
 
-    JsOut out;
-    memset(&out, 0, sizeof(out));
-    webkit_web_view_run_javascript(
-        WEBKIT_WEB_VIEW(view),
+    char *stored = run_js_sync(view,
         "try{localStorage.setItem('xw-test','42');"
-        "localStorage.getItem('xw-test');}catch(e){'JSERR:'+e}",
-        NULL, js_done_cb, &out);
-    gint64 deadline = g_get_monotonic_time() + 5 * 1000 * 1000;
-    while (!out.done && g_get_monotonic_time() < deadline) {
-      g_main_context_iteration(NULL, FALSE);
-      g_usleep(10000);
-    }
-    TEST_CHECK(out.done);
-    if (out.done)
-      TEST_CHECK_EQ_STR(out.value ? out.value : "(null)", "42");
-    g_free(out.value);
+        "localStorage.getItem('xw-test');}catch(e){'JSERR:'+e}");
+    TEST_CHECK_EQ_STR(stored ? stored : "(null)", "42");
+    g_free(stored);
   }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
+/* Wallpaper de-interaction: author grab cursors / draggable nodes must not
+ * leak browser affordances into the desktop. Passive input (mousemove,
+ * clicks, rAF) stays alive. */
+static void test_wallpaper_noninteractive(void) {
+  TEST_BEGIN("web wallpaper suppresses drag/select/grab cursor");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "webnointeract");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/webdir";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (!view) {
+    backend.destroy(&backend);
+    xw_x11_destroy_window(win);
+    return;
+  }
+  webkit_web_view_load_html(
+      WEBKIT_WEB_VIEW(view),
+      "<html><body>"
+      "<div id=\"t\" draggable=\"true\" style=\"cursor:grab\">drag me</div>"
+      "</body></html>",
+      NULL);
+  pump_gtk(dpy, 3);
+
+  char *style = run_js_sync(view,
+      "(function(){var el=document.getElementById('t');"
+      "if(!el)return 'NOEL';"
+      "var cs=getComputedStyle(el);"
+      "return cs.getPropertyValue('-webkit-user-select')+'|'"
+      "+cs.getPropertyValue('user-select')+'|'+cs.userSelect+'|'"
+      "+cs.getPropertyValue('cursor');"
+      "})()");
+  TEST_CHECK(style != NULL && strstr(style, "none") != NULL);
+  TEST_CHECK(style != NULL && strstr(style, "default") != NULL);
+  TEST_CHECK(style == NULL || strstr(style, "grab") == NULL);
+  g_free(style);
+
+  char *drag = run_js_sync(view,
+      "(function(){var el=document.getElementById('t');"
+      "var e=new Event('dragstart',{bubbles:true,cancelable:true});"
+      "el.dispatchEvent(e);return e.defaultPrevented?'1':'0';})()");
+  TEST_CHECK_EQ_STR(drag ? drag : "(null)", "1");
+  g_free(drag);
+
+  char *sel = run_js_sync(view,
+      "(function(){"
+      "var e=new Event('selectstart',{bubbles:true,cancelable:true});"
+      "document.dispatchEvent(e);return e.defaultPrevented?'1':'0';})()");
+  TEST_CHECK_EQ_STR(sel ? sel : "(null)", "1");
+  g_free(sel);
+
+  /* passive input must survive: mousemove listeners still fire */
+  char *move = run_js_sync(view,
+      "(function(){window.__moved='0';"
+      "document.addEventListener('mousemove',function(){window.__moved='1';});"
+      "document.dispatchEvent(new Event('mousemove',{bubbles:true}));"
+      "return window.__moved;})()");
+  TEST_CHECK_EQ_STR(move ? move : "(null)", "1");
+  g_free(move);
 
   backend.destroy(&backend);
   xw_x11_destroy_window(win);
@@ -295,6 +385,7 @@ int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_paints();
   test_context_menu_blocked();
+  test_wallpaper_noninteractive();
   test_storage_persistent();
   test_we_properties_delivered();
   TEST_SUMMARY();

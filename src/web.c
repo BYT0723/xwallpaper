@@ -41,6 +41,43 @@ static gboolean web_block_context_menu(WebKitWebView *view,
   return TRUE;
 }
 
+/* Wallpaper pages are not browsers: no text selection, no HTML5 drag,
+ * no grab cursors. Injected as USER-level stylesheet + document-start
+ * script so author styles cannot override it and every navigation gets it.
+ * Clicks, wheel and mousemove still reach the page (parallax / click
+ * effects keep working); only the browser affordances are suppressed. */
+static const char *kWallpaperCSS =
+    "* { -webkit-user-select: none !important; user-select: none !important; "
+    "-webkit-user-drag: none !important; cursor: default !important; }";
+static const char *kWallpaperJS =
+    "(function(){"
+    "document.addEventListener('dragstart',function(e){"
+    "e.preventDefault();e.stopPropagation();},true);"
+    "document.addEventListener('selectstart',function(e){"
+    "e.preventDefault();e.stopPropagation();},true);"
+    "})();";
+
+static void web_apply_wallpaper_policy(WebKitWebView *view) {
+  WebKitUserContentManager *ucm =
+      webkit_web_view_get_user_content_manager(view);
+  if (!ucm)
+    return;
+  WebKitUserStyleSheet *sheet = webkit_user_style_sheet_new(
+      kWallpaperCSS, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES,
+      WEBKIT_USER_STYLE_LEVEL_USER, NULL, NULL);
+  if (sheet) {
+    webkit_user_content_manager_add_style_sheet(ucm, sheet);
+    webkit_user_style_sheet_unref(sheet);
+  }
+  WebKitUserScript *script = webkit_user_script_new(
+      kWallpaperJS, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES,
+      WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL, NULL);
+  if (script) {
+    webkit_user_content_manager_add_script(ucm, script);
+    webkit_user_script_unref(script);
+  }
+}
+
 /* Per-wallpaper WebsiteDataManager: storage/cookies/cache land under
  * ~/.local/share|cache/xwallpaper/web/<sha256 of wallpaper root or URL>.
  * Same-wallpaper runs share settings (localStorage/IndexedDB survive daemon
@@ -137,6 +174,7 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
                    G_CALLBACK(web_block_context_menu), NULL);
   g_signal_connect(ctx->view, "load-changed",
                    G_CALLBACK(web_load_changed_cb), ctx);
+  web_apply_wallpaper_policy(WEBKIT_WEB_VIEW(ctx->view));
   return 0;
 }
 
