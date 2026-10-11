@@ -22,16 +22,11 @@ typedef struct {
   char *path;
   char root_dir[1024]; /* dir mode: absolute wallpaper root ("" when unused) */
   char entry[256];     /* dir mode: entry file, always index.html */
-  int file_fallback;   /* single self-contained .svg via file:// (compat) */
 } WebCtx;
 
 /* gtk_init runs at first web backend init (process-wide, idempotent) */
 static int gtk_initialized = 0;
 
-/* Per-wallpaper ephemeral context: its Web/Network processes die with the
- * wallpaper instead of lingering in the shared default context pool
- * (GPU/DMA-BUF held until process exit). Ephemeral also avoids disk
- * cache/cookie sharing between wallpapers. */
 static gboolean web_block_context_menu(WebKitWebView *view,
                                        WebKitContextMenu *menu,
                                        GdkEvent *event,
@@ -46,6 +41,10 @@ static gboolean web_block_context_menu(WebKitWebView *view,
   return TRUE;
 }
 
+/* Per-wallpaper ephemeral context: its Web/Network processes die with the
+ * wallpaper instead of lingering in the shared default context pool
+ * (GPU/DMA-BUF held until process exit). Ephemeral also avoids disk
+ * cache/cookie sharing between wallpapers. */
 static int web_attach_view(WebCtx *ctx, XWError *err) {
   ctx->wctx = webkit_web_context_new_ephemeral();
   if (!ctx->wctx) {
@@ -73,10 +72,10 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
   return 0;
 }
 
-/* Classify a --web input: 0 = inapplicable here. Modes: 1 = http(s) URL
- * (load directly), 2 = local dir (load <root>/index.html via file://),
- * 3 = single .svg file (legacy file://, self-contained). Anything else
- * is an error. */
+/* Classify a --web input. Returns 1 = http(s) URL (load directly),
+ * 2 = local dir (load <root>/<entry> via file://),
+ * 3 = single .svg file (legacy file://, self-contained),
+ * 0 = invalid input (err set). */
 static int web_classify(const char *path, char *root, size_t rn,
                         char *entry, size_t en, XWError *err) {
   if (xw_web_is_http_url(path))
@@ -96,6 +95,23 @@ static int web_classify(const char *path, char *root, size_t rn,
   XW_ERROR_SET(err, 1, "'%.100s' is not a wallpaper directory "
                "(need index.html inside) or http(s) URL", path);
   return 0;
+}
+
+/* Validate path and record the resolved form in ctx. Returns the
+ * web_classify mode, or 0 on failure (err set). On failure ctx's resolved
+ * fields are left cleared so reload() can bail without side effects. */
+static int web_store_input(WebCtx *ctx, const char *path, XWError *err) {
+  char root[sizeof(ctx->root_dir)], entry[sizeof(ctx->entry)];
+  int mode = web_classify(path, root, sizeof(root), entry, sizeof(entry), err);
+  if (mode == 0)
+    return 0;
+  ctx->root_dir[0] = '\0';
+  ctx->entry[0] = '\0';
+  if (mode == 2) {
+    snprintf(ctx->root_dir, sizeof(ctx->root_dir), "%s", root);
+    snprintf(ctx->entry, sizeof(ctx->entry), "%s", entry);
+  }
+  return mode;
 }
 
 static void web_terminate(WebCtx *ctx) {
@@ -128,21 +144,10 @@ static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWErro
     free(ctx);
     return -1;
   }
-  ctx->root_dir[0] = '\0';
-  ctx->entry[0] = '\0';
-  ctx->file_fallback = 0;
-  char root[sizeof(ctx->root_dir)], entry[sizeof(ctx->entry)];
-  int mode = web_classify(ctx->path, root, sizeof(root), entry, sizeof(entry), err);
-  if (mode == 0) {
+  if (web_store_input(ctx, ctx->path, err) == 0) {
     free(ctx->path);
     free(ctx);
     return -1;
-  }
-  if (mode == 2) {
-    snprintf(ctx->root_dir, sizeof(ctx->root_dir), "%s", root);
-    snprintf(ctx->entry, sizeof(ctx->entry), "%s", entry);
-  } else if (mode == 3) {
-    ctx->file_fallback = 1;
   }
   if (web_attach_view(ctx, err) != 0) {
     free(ctx->path);
@@ -197,7 +202,7 @@ static int web_start(XWBackend *b) {
     uri = g_filename_to_uri(full, NULL, NULL);
     if (!uri)
       return -1;
-  } else if (strncmp(ctx->path, "http://", 7) == 0 || strncmp(ctx->path, "https://", 8) == 0) {
+  } else if (xw_web_is_http_url(ctx->path)) {
     uri = strdup(ctx->path);
   } else {
     char *abs = realpath(ctx->path, NULL);
@@ -226,23 +231,12 @@ static int web_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   WebCtx *ctx = (WebCtx *)b->priv;
   if (!ctx)
     return -1;
-  char root[sizeof(ctx->root_dir)], entry[sizeof(ctx->entry)];
-  int mode = web_classify(opt->path, root, sizeof(root), entry, sizeof(entry), err);
-  if (mode == 0)
+  if (web_store_input(ctx, opt->path, err) == 0)
     return -1;
   free(ctx->path);
   ctx->path = strdup(opt->path);
   if (!ctx->path)
     return -1;
-  ctx->root_dir[0] = '\0';
-  ctx->entry[0] = '\0';
-  ctx->file_fallback = 0;
-  if (mode == 2) {
-    snprintf(ctx->root_dir, sizeof(ctx->root_dir), "%s", root);
-    snprintf(ctx->entry, sizeof(ctx->entry), "%s", entry);
-  } else if (mode == 3) {
-    ctx->file_fallback = 1;
-  }
   return web_start(b);
 }
 

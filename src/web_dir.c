@@ -28,8 +28,7 @@ int xw_web_resolve(const char *in, char *root, size_t rn, char *entry, size_t en
     return -1;
   }
   struct stat ist;
-  int ok = stat(idx, &ist) == 0 && S_ISREG(ist.st_mode);
-  if (!ok) {
+  if (stat(idx, &ist) != 0 || !S_ISREG(ist.st_mode)) {
     free(abs);
     return -1;
   }

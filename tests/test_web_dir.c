@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include "harness.h"
@@ -50,7 +49,7 @@ static void test_resolve_dir_ok(void) {
   char root[1024], entry[256];
   TEST_CHECK_EQ_INT(xw_web_resolve(d, root, sizeof(root), entry, sizeof(entry)), 0);
   TEST_CHECK_EQ_STR(entry, "index.html");
-  TEST_CHECK(strncmp(root, "/", 1) == 0);
+  TEST_CHECK(root[0] == '/'); /* resolved to an absolute path */
   char idx[1100];
   snprintf(idx, sizeof(idx), "%s/index.html", d);
   unlink(idx);
