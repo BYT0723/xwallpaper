@@ -63,6 +63,44 @@ static WebKitWebsiteDataManager *web_new_data_manager(WebCtx *ctx) {
   return man;
 }
 
+/* Wallpaper Engine emulation: WE calls
+ * window.wallpaperPropertyListener.applyUserProperties(all properties) on
+ * load, and many wallpapers only apply their project.json defaults
+ * (background, sizes, colors) inside that callback. Without it such pages
+ * render with transparent/missing backgrounds. After load, fetch the
+ * sibling project.json (dir mode only) and deliver general.properties,
+ * retrying briefly while the page script is still defining the listener. */
+static void web_deliver_we_properties(WebKitWebView *view) {
+  static const char *kScript =
+      "(function(){"
+      "var tries=0;"
+      "function attempt(){"
+      "tries++;"
+      "var L=window.wallpaperPropertyListener;"
+      "if(!L||typeof L.applyUserProperties!=='function'){"
+      "if(tries<50)setTimeout(attempt,200);"
+      "return;}"
+      "fetch('project.json').then(function(r){return r.json();})"
+      ".then(function(p){"
+      "if(!p||!p.general||!p.general.properties)return;"
+      "try{L.applyUserProperties(p.general.properties);}catch(e){}"
+      "}).catch(function(){});"
+      "}"
+      "attempt();"
+      "})();";
+  webkit_web_view_run_javascript(view, kScript, NULL, NULL, NULL);
+}
+
+static void web_load_changed_cb(WebKitWebView *view,
+                                WebKitLoadEvent load_event, gpointer ud) {
+  WebCtx *ctx = (WebCtx *)ud;
+  if (load_event != WEBKIT_LOAD_FINISHED)
+    return;
+  if (!ctx->root_dir[0])
+    return; /* only local dirs have a sibling project.json */
+  web_deliver_we_properties(view);
+}
+
 /* Per-wallpaper isolated context: each wallpaper gets its own WebKitWebContext
  * (own Web/Network processes, which die with the wallpaper instead of
  * lingering in the shared default pool holding GPU/DMA-BUF) backed by the
@@ -97,6 +135,8 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
   }
   g_signal_connect(ctx->view, "context-menu",
                    G_CALLBACK(web_block_context_menu), NULL);
+  g_signal_connect(ctx->view, "load-changed",
+                   G_CALLBACK(web_load_changed_cb), ctx);
   return 0;
 }
 

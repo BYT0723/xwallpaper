@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head><title>weprops</title></head>
+<body>
+<script>
+window.wallpaperPropertyListener = {
+  applyUserProperties: function (p) {
+    document.title = 'WE:' + (p && p.bg && p.bg.value);
+  }
+};
+</script>
+</body>
+</html>

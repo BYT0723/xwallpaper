@@ -79,6 +79,11 @@ int xw_web_resolve(const char *in, char *root, size_t rn, char *entry, size_t en
 - 存储说明：每个壁纸的 context 由该壁纸独占的 WebsiteDataManager 落盘
   （`~/.local/share|cache/xwallpaper/web/<sha256>`，按壁纸 root/URL 哈希隔离），
   `localStorage`/IndexedDB 跨 daemon 重启保留——壁纸设置不再复原。
+- WE 兼容：目录壁纸加载完成后，把同目录 `project.json` 的 `general.properties`
+  投递给 `window.wallpaperPropertyListener.applyUserProperties`（模拟 Wallpaper
+  Engine 的首回调；带短暂重试等页面脚本定义监听器）。很多 WE 壁纸只在这个回调里
+  应用背景/尺寸/颜色，不投递则背景透明缺失。注意 `file://` 下 fetch 的
+  Response.status 为 0（`ok=false`），投递时直接 `r.json()`，不得以 `r.ok` 门控。
 
 ## Testing Strategy
 
