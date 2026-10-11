@@ -107,7 +107,7 @@ xwallpaperd: $(DAEMON_OBJ)
 # layout change relinks stale objects against new ones (mixed ABI).
 HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/client.h src/state.h src/x11.h src/app.h src/backends.h \
-  src/wl.h src/daemon.h $(wildcard src/proto/*-client-protocol.h)
+  src/wl.h src/daemon.h src/web_dir.h $(wildcard src/proto/*-client-protocol.h)
 $(CLI_OBJ) $(DAEMON_OBJ) $(TEST_BIN) $(INTEG_BIN) $(WL_INTEG_BIN): $(HEADER_DEPS)
 
 # thin unit tests: only the client-side objects, no heavy libs
@@ -119,6 +119,9 @@ tests/test_client: tests/test_client.c src/cli.o src/proto.o src/client.o
 
 tests/test_state: tests/test_state.c src/state.o src/cli.o
 	$(CC) $(CFLAGS) -o $@ $< src/state.o src/cli.o
+
+tests/test_web_dir: tests/test_web_dir.c src/web_dir.o
+	$(CC) $(CFLAGS) -o $@ $< src/web_dir.o
 
 # test_wl compiles wl.c sources directly (without XW_HAVE_WAYLAND, so only
 # the pure-logic part builds): keeps the unit test free of wayland headers

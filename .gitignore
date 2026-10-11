@@ -6,6 +6,7 @@ xwallpaperd
 /tests/test_client
 /tests/test_geom
 /tests/test_state
+/tests/test_web_dir
 /tests/test_wl
 /tests/integration/test_x11
 /tests/integration/test_image
