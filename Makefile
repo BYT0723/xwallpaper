@@ -123,6 +123,9 @@ tests/test_state: tests/test_state.c src/state.o src/cli.o src/web_dir.o
 tests/test_web_dir: tests/test_web_dir.c src/web_dir.o
 	$(CC) $(CFLAGS) -o $@ $< src/web_dir.o
 
+tests/test_we_audio: tests/test_we_audio.c src/we_audio.o
+	$(CC) $(CFLAGS) -o $@ $< src/we_audio.o -lm
+
 # test_wl compiles wl.c sources directly (without XW_HAVE_WAYLAND, so only
 # the pure-logic part builds): keeps the unit test free of wayland headers
 # and avoids sharing src/wl.o flag state with the daemon build.
