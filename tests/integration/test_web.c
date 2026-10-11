@@ -39,6 +39,17 @@ static GtkWidget *find_web_view(void) {
   return found;
 }
 
+/* Pump the GTK main context (the pattern the daemon uses) for up to secs. */
+static void pump_gtk(Display *dpy, int secs) {
+  gint64 deadline = g_get_monotonic_time() + (gint64)secs * 1000 * 1000;
+  while (g_get_monotonic_time() < deadline) {
+    g_main_context_iteration(NULL, FALSE);
+    if (dpy)
+      XSync(dpy, False);
+    g_usleep(10000);
+  }
+}
+
 static void test_context_menu_blocked(void) {
   TEST_BEGIN("right-click context menu is suppressed");
   XWError err;
@@ -117,12 +128,7 @@ static void test_web_paints(void) {
   TEST_CHECK_EQ_INT(backend.start(&backend), 0);
 
   /* pump GTK + let webkit render for up to ~3s */
-  gint64 deadline = g_get_monotonic_time() + 3 * 1000 * 1000;
-  while (g_get_monotonic_time() < deadline) {
-    g_main_context_iteration(NULL, FALSE);
-    XSync(dpy, False);
-    g_usleep(10000);
-  }
+  pump_gtk(dpy, 3);
   XSync(dpy, False);
 
   /* sample the center pixel; page bg is #006699 so blue should dominate */
@@ -198,12 +204,7 @@ static void test_storage_persistent(void) {
   TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
   TEST_CHECK_EQ_INT(backend.start(&backend), 0);
 
-  gint64 deadline = g_get_monotonic_time() + 3 * 1000 * 1000;
-  while (g_get_monotonic_time() < deadline) {
-    g_main_context_iteration(NULL, FALSE);
-    XSync(dpy, False);
-    g_usleep(10000);
-  }
+  pump_gtk(dpy, 3);
 
   GtkWidget *view = find_web_view();
   TEST_CHECK(view != NULL);
@@ -227,7 +228,7 @@ static void test_storage_persistent(void) {
         "try{localStorage.setItem('xw-test','42');"
         "localStorage.getItem('xw-test');}catch(e){'JSERR:'+e}",
         NULL, js_done_cb, &out);
-    deadline = g_get_monotonic_time() + 5 * 1000 * 1000;
+    gint64 deadline = g_get_monotonic_time() + 5 * 1000 * 1000;
     while (!out.done && g_get_monotonic_time() < deadline) {
       g_main_context_iteration(NULL, FALSE);
       g_usleep(10000);

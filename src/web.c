@@ -41,14 +41,11 @@ static gboolean web_block_context_menu(WebKitWebView *view,
   return TRUE;
 }
 
-/* Per-wallpaper isolated context: each wallpaper gets its own WebKitWebContext
- * (own Web/Network processes, which die with the wallpaper instead of
- * lingering in the shared default pool holding GPU/DMA-BUF) backed by a
- * per-wallpaper WebsiteDataManager under ~/.local/share|cache/xwallpaper.
- * Isolation avoids cookie/cache sharing between wallpapers; disk backing
- * (unlike ephemeral) keeps localStorage/IndexedDB — wallpaper settings —
- * across daemon restarts. Keyed by wallpaper root (dir) or full input. */
-static int web_attach_view(WebCtx *ctx, XWError *err) {
+/* Per-wallpaper WebsiteDataManager: storage/cookies/cache land under
+ * ~/.local/share|cache/xwallpaper/web/<sha256 of wallpaper root or URL>.
+ * Same-wallpaper runs share settings (localStorage/IndexedDB survive daemon
+ * restarts); different wallpapers never share. */
+static WebKitWebsiteDataManager *web_new_data_manager(WebCtx *ctx) {
   const char *key = ctx->root_dir[0] ? ctx->root_dir : ctx->path;
   char *sum = g_compute_checksum_for_string(G_CHECKSUM_SHA256,
                                             key ? key : "", -1);
@@ -63,6 +60,16 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
       "base-data-directory", data, "base-cache-directory", cache, NULL);
   g_free(data);
   g_free(cache);
+  return man;
+}
+
+/* Per-wallpaper isolated context: each wallpaper gets its own WebKitWebContext
+ * (own Web/Network processes, which die with the wallpaper instead of
+ * lingering in the shared default pool holding GPU/DMA-BUF) backed by the
+ * per-wallpaper data manager above. Disk backing (unlike ephemeral) keeps
+ * wallpaper settings across daemon restarts. */
+static int web_attach_view(WebCtx *ctx, XWError *err) {
+  WebKitWebsiteDataManager *man = web_new_data_manager(ctx);
   if (!man) {
     XW_ERROR_SET(err, 1, "webkit_website_data_manager_new failed");
     return -1;
