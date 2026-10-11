@@ -41,14 +41,36 @@ static gboolean web_block_context_menu(WebKitWebView *view,
   return TRUE;
 }
 
-/* Per-wallpaper ephemeral context: its Web/Network processes die with the
- * wallpaper instead of lingering in the shared default context pool
- * (GPU/DMA-BUF held until process exit). Ephemeral also avoids disk
- * cache/cookie sharing between wallpapers. */
+/* Per-wallpaper isolated context: each wallpaper gets its own WebKitWebContext
+ * (own Web/Network processes, which die with the wallpaper instead of
+ * lingering in the shared default pool holding GPU/DMA-BUF) backed by a
+ * per-wallpaper WebsiteDataManager under ~/.local/share|cache/xwallpaper.
+ * Isolation avoids cookie/cache sharing between wallpapers; disk backing
+ * (unlike ephemeral) keeps localStorage/IndexedDB — wallpaper settings —
+ * across daemon restarts. Keyed by wallpaper root (dir) or full input. */
 static int web_attach_view(WebCtx *ctx, XWError *err) {
-  ctx->wctx = webkit_web_context_new_ephemeral();
+  const char *key = ctx->root_dir[0] ? ctx->root_dir : ctx->path;
+  char *sum = g_compute_checksum_for_string(G_CHECKSUM_SHA256,
+                                            key ? key : "", -1);
+  char *data = g_build_filename(g_get_user_data_dir(), "xwallpaper",
+                                "web", sum, NULL);
+  char *cache = g_build_filename(g_get_user_cache_dir(), "xwallpaper",
+                                 "web", sum, NULL);
+  g_free(sum);
+  g_mkdir_with_parents(data, 0700);
+  g_mkdir_with_parents(cache, 0700);
+  WebKitWebsiteDataManager *man = webkit_website_data_manager_new(
+      "base-data-directory", data, "base-cache-directory", cache, NULL);
+  g_free(data);
+  g_free(cache);
+  if (!man) {
+    XW_ERROR_SET(err, 1, "webkit_website_data_manager_new failed");
+    return -1;
+  }
+  ctx->wctx = webkit_web_context_new_with_website_data_manager(man);
+  g_object_unref(man);
   if (!ctx->wctx) {
-    XW_ERROR_SET(err, 1, "webkit_web_context_new_ephemeral failed");
+    XW_ERROR_SET(err, 1, "webkit_web_context_new_with_website_data_manager failed");
     return -1;
   }
   ctx->view = webkit_web_view_new_with_context(ctx->wctx);
@@ -60,8 +82,7 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
   }
   /* Local wallpapers load via file:// (native media seeking works, unlike
    * custom schemes). The two file-access switches give static pages
-   * http-like subresource loading (fetch/ES modules); each wallpaper keeps
-   * its own ephemeral context, so nothing is shared across wallpapers. */
+   * http-like subresource loading (fetch/ES modules). */
   WebKitSettings *st = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(ctx->view));
   if (st) {
     webkit_settings_set_allow_file_access_from_file_urls(st, TRUE);
@@ -322,6 +343,11 @@ static int web_init_wl(XWBackend *b, XWWlWindow *win,
   ctx->path = strdup(opt->path);
   if (!ctx->path) {
     XW_ERROR_SET(err, 1, "out of memory");
+    free(ctx);
+    return -1;
+  }
+  if (web_store_input(ctx, ctx->path, err) == 0) {
+    free(ctx->path);
     free(ctx);
     return -1;
   }

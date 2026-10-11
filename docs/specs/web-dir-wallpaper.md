@@ -19,7 +19,7 @@ User stories:
 
 - C11，现有 `webkit2gtk-4.1 + GTK3`，不新增构建依赖（不要 libsoup，不要 python 运行时依赖）。
 - 关键 API：`WebKitSettings` 的 `allow-file-access-from-file-urls` +
-  `allow-universal-access-from-file-urls`（每个壁纸独立 ephemeral context 上设置，
+  `allow-universal-access-from-file-urls`（每个壁纸独立 WebKitWebContext 上设置，
   见 `src/web.c:web_attach_view`）。
 - 曾评估自定义 scheme（`xw://`）方案并已废弃：实测 WebKit 媒体栈不支持自定义
   scheme（`<video>` 必 `MEDIA_ERR_SRC_NOT_SUPPORTED`，range/206 也救不了），
@@ -75,7 +75,10 @@ int xw_web_resolve(const char *in, char *root, size_t rn, char *entry, size_t en
 
 - 命名沿用 `xw_<module>_<action>`；错误沿用 `XWError`（`{code,msg}`，返回 int）。
 - 安全说明：`allow-universal-access-from-file-urls` 让壁纸 JS 可 `fetch` 任意本地文件；
-  作用域限于该壁纸的 ephemeral context（随窗口销毁），不共享 cookie/缓存，视为运行本地页面的正常代价。
+  作用域限于该壁纸的独立 context（随窗口销毁，不共享 cookie/缓存），视为运行本地页面的正常代价。
+- 存储说明：每个壁纸的 context 由该壁纸独占的 WebsiteDataManager 落盘
+  （`~/.local/share|cache/xwallpaper/web/<sha256>`，按壁纸 root/URL 哈希隔离），
+  `localStorage`/IndexedDB 跨 daemon 重启保留——壁纸设置不再复原。
 
 ## Testing Strategy
 
