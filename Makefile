@@ -17,6 +17,16 @@ LDLIBS  := $(shell pkg-config --libs $(PKGS))
 CLI_SRC := src/main.c src/cli.c src/proto.c src/client.c src/web_dir.c
 CLI_OBJ := $(CLI_SRC:.c=.o)
 
+# ---- Scene scripting (vendored QuickJS, MIT): daemon-only ----
+# No system dependency: engine sources build straight in.
+QJS_SRC := vendor/quickjs/quickjs.c vendor/quickjs/cutils.c \
+           vendor/quickjs/libregexp.c vendor/quickjs/libunicode.c \
+           vendor/quickjs/libbf.c
+QJS_OBJ := $(QJS_SRC:.c=.o)
+# vendor warnings are not ours; version macro comes from upstream's Makefile
+$(QJS_OBJ): CFLAGS += -w -DCONFIG_VERSION='"2024-01-13"'
+src/scene_script.o: CFLAGS += -Ivendor/quickjs
+
 # daemon: owns all wallpaper windows, links the full backend stack.
 DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/x11.c src/app.c src/image.c src/video.c src/web.c \
@@ -27,6 +37,7 @@ DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/scene_particle.c src/scene_particle_gl.c src/scene_text.c \
               src/scene_sound.c \
               src/scene_script.c src/scene.c
+DAEMON_SRC += $(QJS_SRC)
 DAEMON_OBJ := $(DAEMON_SRC:.c=.o)
 
 # ---- Scene (WE scene wallpapers): daemon-only ----
@@ -188,6 +199,7 @@ HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/scene_pkg.h src/scene_tex.h src/scene_shader.h src/scene_parse.h \
   src/scene_model.h src/scene_core.h src/scene_gl.h src/scene_image.h \
   src/scene_text_gl.h src/scene_particle_gl.h \
+  src/scene_sound.h src/scene_script.h \
   src/scene.h $(wildcard src/proto/*-client-protocol.h)
 $(CLI_OBJ) $(DAEMON_OBJ) $(TEST_BIN) $(INTEG_BIN) $(WL_INTEG_BIN): $(HEADER_DEPS)
 
@@ -230,6 +242,9 @@ tests/test_scene_text: tests/test_scene_text.c src/scene_text.o
 
 tests/test_scene_sound: tests/test_scene_sound.c src/scene_sound.o
 	$(CC) $(CFLAGS) $(SND_CFLAGS) -o $@ $< src/scene_sound.o $(SND_LIBS)
+
+tests/test_scene_script: tests/test_scene_script.c src/scene_script.o $(QJS_OBJ)
+	$(CC) $(CFLAGS) -o $@ $< src/scene_script.o $(QJS_OBJ) -lm
 
 # test_wl compiles wl.c sources directly (without XW_HAVE_WAYLAND, so only
 # the pure-logic part builds): keeps the unit test free of wayland headers
