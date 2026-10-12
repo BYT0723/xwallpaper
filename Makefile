@@ -231,7 +231,7 @@ tests/test_scene_shader: tests/test_scene_shader.c src/scene_shader.o
 	$(CC) $(CFLAGS) -o $@ $< src/scene_shader.o
 
 tests/test_scene_parse: tests/test_scene_parse.c src/scene_parse.o
-	$(CC) $(CFLAGS) $(SCENE_CFLAGS) -o $@ $< src/scene_parse.o $(SCENE_LIBS)
+	$(CC) $(CFLAGS) $(SCENE_CFLAGS) -o $@ $< src/scene_parse.o $(SCENE_LIBS) -lm
 
 tests/test_scene_core: tests/test_scene_core.c src/scene_core.o
 	$(CC) $(CFLAGS) -o $@ $< src/scene_core.o

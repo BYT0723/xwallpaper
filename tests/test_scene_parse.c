@@ -188,6 +188,46 @@ static void test_realrain(void) {
   }
   /* project.json props incl. user defaults */
   TEST_CHECK(s.n_props >= 3);
+  /* night blue effect: constants + textures parsed, shader resolved
+   * through effect.json -> material */
+  {
+    const XWSceneEffect *fx = NULL;
+    if (s.objects[0].n_effects >= 1)
+      fx = &s.objects[0].effects[0];
+    TEST_CHECK(fx != NULL && fx->n_passes >= 1);
+    if (fx && fx->n_passes >= 1) {
+      const XWScenePass *p = &fx->passes[0];
+      TEST_CHECK_EQ_STR(p->shader, "effects/waterripple");
+      TEST_CHECK(p->n_consts >= 3);
+      TEST_CHECK_EQ_INT(p->n_textures, 2);
+      TEST_CHECK_EQ_STR(p->textures[0],
+                        "masks/waterripple_mask_14baecd88cd86197979e9592a3614e57bbd01235");
+    }
+  }
+  /* rain particle config + instanceoverride multipliers */
+  {
+    const XWSceneObject *rain = NULL;
+    for (int i = 0; i < s.n_objects; i++) {
+      if (strcmp(s.objects[i].id, "Rain Downfall light") == 0)
+        rain = &s.objects[i];
+    }
+    TEST_CHECK(rain != NULL);
+    if (rain) {
+      TEST_CHECK_EQ_INT((int)rain->particle.rate, 5000);
+      TEST_CHECK_EQ_INT(rain->particle.max_count, 1000);
+      TEST_CHECK(rain->particle.life > 0.19 && rain->particle.life < 0.21);
+      TEST_CHECK(rain->particle.speed > 9999.0 &&
+                 rain->particle.speed < 10001.0);
+      TEST_CHECK(rain->particle.gravity > 49.0 &&
+                 rain->particle.gravity < 51.0);
+      TEST_CHECK_EQ_INT(rain->alpha.kind, XW_DYN_USER);
+      TEST_CHECK_EQ_STR(rain->alpha.ref, "opacity");
+      TEST_CHECK_EQ_INT(rain->particle.count_mult.kind, XW_DYN_USER);
+      TEST_CHECK_EQ_STR(rain->particle.count_mult.ref, "rain_intensity");
+      TEST_CHECK_EQ_STR(rain->particle.speed_mult.ref, "rain_speed");
+      TEST_CHECK(rain->particle.sprite[0] != '\0');
+    }
+  }
   xw_scene_free(&s);
 }
 

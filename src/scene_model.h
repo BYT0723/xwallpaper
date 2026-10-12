@@ -5,6 +5,13 @@
 #define XW_SCENE_PATH_MAX 256
 #define XW_SCENE_COMBOS_MAX 8
 #define XW_SCENE_BINDS_MAX 8
+#define XW_SCENE_CONSTS_MAX 12
+#define XW_SCENE_PASS_TEX_MAX 4
+
+typedef struct XWSceneConst {
+  char key[32];
+  char value[64];
+} XWSceneConst;
 
 typedef enum {
   XW_BLEND_NORMAL = 0,
@@ -28,6 +35,12 @@ typedef struct XWScenePass {
   int n_combos;
   XWSceneBind binds[XW_SCENE_BINDS_MAX];
   int n_binds;
+  /* real workshop passes: constants + texture refs from the scene doc,
+   * shader file resolved through the effect.json/material chain */
+  XWSceneConst consts[XW_SCENE_CONSTS_MAX];
+  int n_consts;
+  char textures[XW_SCENE_PASS_TEX_MAX][XW_SCENE_PATH_MAX];
+  int n_textures;
 } XWScenePass;
 
 typedef struct XWSceneEffect {
@@ -70,6 +83,10 @@ typedef struct XWParticleCfg {
   float size_max;
   float color[4];
   float gravity;
+  /* real workshop instanceoverride multipliers (default constant 1) */
+  XWDynFloat count_mult;
+  XWDynFloat life_mult;
+  XWDynFloat speed_mult;
 } XWParticleCfg;
 
 typedef struct XWTextCfg {

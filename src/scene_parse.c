@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +16,7 @@ static void copy_str(char *dst, size_t n, const char *src) {
 }
 
 static int parse_project_props(const char *dir, XWScene *out, XWError *err);
+static struct json_object *slurp_json(const char *dir, const char *rel);
 
 #ifdef XW_HAVE_JSONC
 static int parse_vec_str(const char *s, float *v, int n) {
@@ -182,7 +184,90 @@ static int parse_pass(struct json_object *jo, XWScenePass *p, XWError *err) {
       p->n_binds++;
     }
   }
+  /* real workshop extras: constant uniforms + texture refs */
+  if (json_object_object_get_ex(jo, "constantshadervalues", &v) && v) {
+    if (json_object_get_type(v) != json_type_object) {
+      XW_ERROR_SET(err, 1, "constantshadervalues must be an object");
+      return -1;
+    }
+    json_object_object_foreach(v, key, val) {
+      if (p->n_consts >= XW_SCENE_CONSTS_MAX) break;
+      copy_str(p->consts[p->n_consts].key,
+               sizeof(p->consts[p->n_consts].key), key);
+      copy_str(p->consts[p->n_consts].value,
+               sizeof(p->consts[p->n_consts].value),
+               json_object_get_string(val));
+      p->n_consts++;
+    }
+  }
+  if (json_object_object_get_ex(jo, "textures", &v) && v) {
+    size_t ti, tn;
+    if (json_object_get_type(v) != json_type_array) {
+      XW_ERROR_SET(err, 1, "pass textures must be an array");
+      return -1;
+    }
+    tn = json_object_array_length(v);
+    for (ti = 0; ti < tn && p->n_textures < XW_SCENE_PASS_TEX_MAX; ti++) {
+      struct json_object *t = json_object_array_get_idx(v, ti);
+      if (!t || json_object_get_type(t) != json_type_string)
+        continue;
+      copy_str(p->textures[p->n_textures], sizeof(p->textures[0]),
+               json_object_get_string(t));
+      p->n_textures++;
+    }
+  }
   return 0;
+}
+
+/* Resolve scene effect "file" -> effect.json passes[i].material ->
+ * material passes[0].shader into empty scene-pass shader slots
+ * (index-aligned with clamp; missing links stay empty). */
+static void resolve_effect_shaders(const char *dir, const char *eff_file,
+                                   XWSceneEffect *e) {
+  struct json_object *ej, *passes;
+  size_t n, i;
+  if (!dir || !eff_file || !eff_file[0] || !e || e->n_passes <= 0)
+    return;
+  ej = slurp_json(dir, eff_file);
+  if (!ej)
+    return;
+  if (!json_object_object_get_ex(ej, "passes", &passes) || !passes ||
+      json_object_get_type(passes) != json_type_array) {
+    json_object_put(ej);
+    return;
+  }
+  n = json_object_array_length(passes);
+  if (n == 0) {
+    json_object_put(ej);
+    return;
+  }
+  for (i = 0; i < (size_t)e->n_passes; i++) {
+    struct json_object *pj = json_object_array_get_idx(
+        passes, i < n ? i : n - 1);
+    struct json_object *mat = NULL, *mj = NULL, *mp = NULL, *sh = NULL;
+    if (!pj || json_object_get_type(pj) != json_type_object)
+      continue;
+    if (e->passes[i].shader[0])
+      continue;
+    if (!json_object_object_get_ex(pj, "material", &mat) || !mat ||
+        json_object_get_type(mat) != json_type_string)
+      continue;
+    mj = slurp_json(dir, json_object_get_string(mat));
+    if (!mj)
+      continue;
+    if (json_object_object_get_ex(mj, "passes", &mp) && mp &&
+        json_object_get_type(mp) == json_type_array &&
+        json_object_array_length(mp) >= 1) {
+      struct json_object *m0 = json_object_array_get_idx(mp, 0);
+      if (m0 && json_object_get_type(m0) == json_type_object &&
+          json_object_object_get_ex(m0, "shader", &sh) && sh &&
+          json_object_get_type(sh) == json_type_string)
+        copy_str(e->passes[i].shader, sizeof(e->passes[i].shader),
+                 json_object_get_string(sh));
+    }
+    json_object_put(mj);
+  }
+  json_object_put(ej);
 }
 
 static void free_effects(XWSceneEffect *efx, int n) {
@@ -191,7 +276,8 @@ static void free_effects(XWSceneEffect *efx, int n) {
   free(efx);
 }
 
-static int parse_effect(struct json_object *jo, XWSceneEffect *e, XWError *err) {
+static int parse_effect(const char *dir, struct json_object *jo,
+                        XWSceneEffect *e, XWError *err) {
   struct json_object *v = NULL;
   memset(e, 0, sizeof(*e));
   if (json_object_object_get_ex(jo, "name", &v) && v)
@@ -223,11 +309,180 @@ static int parse_effect(struct json_object *jo, XWSceneEffect *e, XWError *err) 
       e->n_passes++;
     }
   }
+  if (json_object_object_get_ex(jo, "file", &v) && v &&
+      json_object_get_type(v) == json_type_string)
+    resolve_effect_shaders(dir, json_object_get_string(v), e);
   return 0;
 }
 
-static int parse_object_at(const char *dir, struct json_object *jo,
-                           XWSceneObject *o, XWError *err);
+/* Read a {user, value} multiplier (default constant 1). */
+static void parse_mult(struct json_object *parent, const char *key,
+                       XWDynFloat *d) {
+  struct json_object *v = NULL;
+  d->kind = XW_DYN_CONSTANT;
+  d->constant = 1.0f;
+  d->ref[0] = '\0';
+  if (!json_object_object_get_ex(parent, key, &v) || !v)
+    return;
+  if (json_object_get_type(v) != json_type_object)
+    return;
+  {
+    struct json_object *u = NULL, *w = NULL;
+    if (json_object_object_get_ex(v, "user", &u) && u &&
+        json_object_get_type(u) == json_type_string) {
+      d->kind = XW_DYN_USER;
+      copy_str(d->ref, sizeof(d->ref), json_object_get_string(u));
+    }
+    if (json_object_object_get_ex(v, "value", &w) && w &&
+        (json_object_get_type(w) == json_type_double ||
+         json_object_get_type(w) == json_type_int))
+      d->constant = (float)json_object_get_double(w);
+  }
+}
+
+static void parse_particle_cfg(const char *dir, struct json_object *jo,
+                               XWSceneObject *o) {
+  struct json_object *v = NULL, *cfg = NULL, *w = NULL;
+  size_t i, n;
+  if (!json_object_object_get_ex(jo, "particle", &v) || !v ||
+      json_object_get_type(v) != json_type_string)
+    return;
+  parse_mult(jo, "count", &o->particle.count_mult);
+  parse_mult(jo, "lifetime", &o->particle.life_mult);
+  parse_mult(jo, "speed", &o->particle.speed_mult);
+  /* NOTE: real walls nest these under "instanceoverride"; our fixtures
+   * and a future normalize pass may hoist them. Accept both. */
+  if (json_object_object_get_ex(jo, "instanceoverride", &w) && w &&
+      json_object_get_type(w) == json_type_object) {
+    struct json_object *a = NULL;
+    if (json_object_object_get_ex(w, "alpha", &a) && a) {
+      XWDynFloat dv;
+      memset(&dv, 0, sizeof(dv));
+      dv.kind = XW_DYN_CONSTANT;
+      dv.constant = 1.0f;
+      if (json_object_get_type(a) == json_type_object) {
+        struct json_object *u = NULL, *val = NULL;
+        if (json_object_object_get_ex(a, "user", &u) && u) {
+          dv.kind = XW_DYN_USER;
+          copy_str(dv.ref, sizeof(dv.ref), json_object_get_string(u));
+        }
+        if (json_object_object_get_ex(a, "value", &val) && val)
+          dv.constant = (float)json_object_get_double(val);
+      } else {
+        dv.constant = (float)json_object_get_double(a);
+      }
+      o->alpha = dv;
+    }
+    parse_mult(w, "count", &o->particle.count_mult);
+    parse_mult(w, "lifetime", &o->particle.life_mult);
+    parse_mult(w, "speed", &o->particle.speed_mult);
+  }
+  cfg = slurp_json(dir, json_object_get_string(v));
+  if (!cfg)
+    return;
+  if (json_object_object_get_ex(cfg, "maxcount", &w) && w)
+    o->particle.max_count = json_object_get_int(w);
+  if (json_object_object_get_ex(cfg, "emitter", &w) && w &&
+      json_object_get_type(w) == json_type_array &&
+      json_object_array_length(w) >= 1) {
+    struct json_object *e0 = json_object_array_get_idx(w, 0);
+    struct json_object *r = NULL;
+    if (e0 && json_object_get_type(e0) == json_type_object &&
+        json_object_object_get_ex(e0, "rate", &r) && r)
+      o->particle.rate = (float)json_object_get_double(r);
+  }
+  if (json_object_object_get_ex(cfg, "initializer", &w) && w &&
+      json_object_get_type(w) == json_type_array) {
+    n = json_object_array_length(w);
+    for (i = 0; i < n; i++) {
+      struct json_object *it = json_object_array_get_idx(w, i);
+      struct json_object *nm = NULL;
+      const char *name;
+      float a[3], b[3], m[3], len;
+      int k;
+      if (!it || json_object_get_type(it) != json_type_object)
+        continue;
+      if (!json_object_object_get_ex(it, "name", &nm) || !nm)
+        continue;
+      name = json_object_get_string(nm);
+      if (!name)
+        continue;
+      if (strcmp(name, "sizerandom") == 0) {
+        struct json_object *lo = NULL, *hi = NULL;
+        if (json_object_object_get_ex(it, "min", &lo) && lo)
+          o->particle.size_min = (float)json_object_get_double(lo);
+        if (json_object_object_get_ex(it, "max", &hi) && hi)
+          o->particle.size_max = (float)json_object_get_double(hi);
+      } else if (strcmp(name, "lifetimerandom") == 0) {
+        struct json_object *lo = NULL, *hi = NULL;
+        float lmin = 1.0f, lmax = 1.0f;
+        if (json_object_object_get_ex(it, "min", &lo) && lo)
+          lmin = (float)json_object_get_double(lo);
+        if (json_object_object_get_ex(it, "max", &hi) && hi)
+          lmax = (float)json_object_get_double(hi);
+        o->particle.life = (lmin + lmax) / 2.0f;
+      } else if (strcmp(name, "velocityrandom") == 0) {
+        struct json_object *mn = NULL, *mx = NULL;
+        a[0] = a[1] = a[2] = 0.0f;
+        b[0] = b[1] = b[2] = 0.0f;
+        if (json_object_object_get_ex(it, "min", &mn) && mn &&
+            json_object_get_type(mn) == json_type_string)
+          parse_vec_str(json_object_get_string(mn), a, 3);
+        if (json_object_object_get_ex(it, "max", &mx) && mx &&
+            json_object_get_type(mx) == json_type_string)
+          parse_vec_str(json_object_get_string(mx), b, 3);
+        len = 0.0f;
+        for (k = 0; k < 3; k++) {
+          m[k] = (a[k] + b[k]) / 2.0f;
+          len += m[k] * m[k];
+        }
+        o->particle.speed = sqrtf(len);
+      }
+    }
+  }
+  if (json_object_object_get_ex(cfg, "operator", &w) && w &&
+      json_object_get_type(w) == json_type_array) {
+    n = json_object_array_length(w);
+    for (i = 0; i < n; i++) {
+      struct json_object *it = json_object_array_get_idx(w, i);
+      struct json_object *nm = NULL, *g = NULL;
+      float gv[3] = {0, 0, 0};
+      if (!it || json_object_get_type(it) != json_type_object)
+        continue;
+      if (!json_object_object_get_ex(it, "name", &nm) || !nm)
+        continue;
+      if (strcmp(json_object_get_string(nm), "movement") != 0)
+        continue;
+      if (json_object_object_get_ex(it, "gravity", &g) && g &&
+          json_object_get_type(g) == json_type_string &&
+          parse_vec_str(json_object_get_string(g), gv, 3) == 0)
+        o->particle.gravity = gv[1];
+    }
+  }
+  if (json_object_object_get_ex(cfg, "material", &w) && w &&
+      json_object_get_type(w) == json_type_string) {
+    struct json_object *mj = slurp_json(dir, json_object_get_string(w));
+    struct json_object *mp = NULL;
+    if (mj && json_object_object_get_ex(mj, "passes", &mp) && mp &&
+        json_object_get_type(mp) == json_type_array &&
+        json_object_array_length(mp) >= 1) {
+      struct json_object *m0 = json_object_array_get_idx(mp, 0);
+      struct json_object *tx = NULL;
+      if (m0 && json_object_get_type(m0) == json_type_object &&
+          json_object_object_get_ex(m0, "textures", &tx) && tx &&
+          json_object_get_type(tx) == json_type_array &&
+          json_object_array_length(tx) >= 1) {
+        struct json_object *t0 = json_object_array_get_idx(tx, 0);
+        if (t0 && json_object_get_type(t0) == json_type_string)
+          copy_str(o->particle.sprite, sizeof(o->particle.sprite),
+                   json_object_get_string(t0));
+      }
+    }
+    if (mj)
+      json_object_put(mj);
+  }
+  json_object_put(cfg);
+}
 
 /* Real workshop ids are numbers with a separate name; prefer the name. */
 static void parse_id(struct json_object *jo, XWSceneObject *o) {
@@ -408,6 +663,7 @@ static int parse_object_at(const char *dir, struct json_object *jo,
       return -1;
     }
   }
+  parse_particle_cfg(dir, jo, o);
   if (json_object_object_get_ex(jo, "text", &v) && v) {
     if (json_object_get_type(v) != json_type_object) {
       XW_ERROR_SET(err, 1, "text must be an object");
@@ -482,7 +738,7 @@ static int parse_object_at(const char *dir, struct json_object *jo,
         o->effects = NULL;
         return -1;
       }
-      if (parse_effect(ej, &o->effects[i], err) != 0) {
+      if (parse_effect(dir, ej, &o->effects[i], err) != 0) {
         free_effects(o->effects, o->n_effects);
         o->effects = NULL;
         return -1;
