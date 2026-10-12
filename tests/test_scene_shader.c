@@ -66,10 +66,29 @@ static void test_bad_inputs(void) {
   TEST_CHECK_EQ_INT(xw_shader_translate("void main(){}", dst, 2), -1);
 }
 
+static void test_vertex_stage(void) {
+  TEST_BEGIN("vertex stage maps varying to out, injects prelude");
+  const char *src =
+      "#include \"common.h\"\n"
+      "attribute vec3 a_Position;\n"
+      "varying vec2 vUv;\n"
+      "void main() { vUv = a_TexCoord; gl_Position = mul(vec4(a_Position, 1.0), m); }\n";
+  char dst[4096];
+  TEST_CHECK_EQ_INT(xw_shader_translate_stage(src, dst, sizeof(dst), 1), 0);
+  TEST_CHECK(strstr(dst, "out vec2 vUv") != NULL);
+  TEST_CHECK(strstr(dst, "texSample2D(s, uv)") != NULL);
+  TEST_CHECK(strstr(dst, "#include") == NULL);
+  /* fragment default keeps the old mapping */
+  TEST_CHECK_EQ_INT(
+      xw_shader_translate("varying vec2 vUv;", dst, sizeof(dst)), 0);
+  TEST_CHECK(strstr(dst, "in vec2 vUv") != NULL);
+}
+
 int main(void) {
   TEST_SUITE("scene_shader");
   test_sample_translates();
   test_keywords_rewritten();
   test_bad_inputs();
+  test_vertex_stage();
   TEST_SUMMARY();
 }
