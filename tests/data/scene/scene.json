@@ -1,0 +1,55 @@
+{
+  "camera": {
+    "orthogonalprojection": [3840, 2160],
+    "clearcolor": [0.7, 0.7, 0.7],
+    "bloom": false,
+    "parallax": false
+  },
+  "objects": [
+    {
+      "id": "bg",
+      "model": "models/bg.json",
+      "material": "materials/bg.json",
+      "origin": [1920, 1080],
+      "scale": [1.05, 1.05],
+      "size": [3924, 2208],
+      "visible": true,
+      "effects": [
+        {
+          "name": "shake",
+          "passes": [
+            {
+              "shader": "shaders/shake.frag",
+              "combos": {"MASK": "0"},
+              "binds": {"previous": 0}
+            }
+          ]
+        },
+        {
+          "name": "glitter",
+          "passes": [
+            {
+              "shader": "shaders/glitter.frag",
+              "combos": {"MASK": "1"},
+              "binds": {"previous": 0, "mask": 2}
+            },
+            {
+              "shader": "shaders/glitter_combine.frag",
+              "binds": {"previous": 0}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fg",
+      "model": "models/fg.json",
+      "material": "materials/fg.json",
+      "origin": [960, 540],
+      "scale": [1.0, 1.0],
+      "size": [1920, 1080],
+      "visible": false,
+      "effects": []
+    }
+  ]
+}
