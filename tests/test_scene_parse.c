@@ -17,6 +17,8 @@ static void test_parse_fixture(void) {
   TEST_CHECK_EQ_INT((int)s.camera.ortho_w, 3840);
   TEST_CHECK_EQ_INT((int)s.camera.ortho_h, 2160);
   TEST_CHECK(s.camera.clearcolor[0] > 0.69 && s.camera.clearcolor[0] < 0.71);
+  TEST_CHECK(s.camera.clearcolor[1] > 0.69 && s.camera.clearcolor[1] < 0.71);
+  TEST_CHECK(s.camera.clearcolor[2] > 0.69 && s.camera.clearcolor[2] < 0.71);
   TEST_CHECK_EQ_INT(s.camera.bloom, 0);
   TEST_CHECK_EQ_INT(s.camera.parallax, 0);
   TEST_CHECK_EQ_INT(s.n_objects, 2);

@@ -33,6 +33,19 @@ static int get_vec2(struct json_object *o, const char *key, float *x, float *y,
   return 0;
 }
 
+static int get_vec3(struct json_object *o, const char *key, float *v) {
+  struct json_object *a = NULL;
+  if (!json_object_object_get_ex(o, key, &a) || !a) return 0;
+  if (json_object_get_type(a) != json_type_array) return -1;
+  if (json_object_array_length(a) < 3) return -1;
+  for (int i = 0; i < 3; i++) {
+    struct json_object *e = json_object_array_get_idx(a, i);
+    if (!e) return -1;
+    v[i] = (float)json_object_get_double(e);
+  }
+  return 0;
+}
+
 static int get_vec4(struct json_object *o, const char *key, float *v) {
   struct json_object *a = NULL;
   if (!json_object_object_get_ex(o, key, &a) || !a) return 0;
@@ -325,10 +338,9 @@ int xw_scene_parse(const char *dir, XWScene *out, XWError *err) {
     }
     out->camera.ortho_w = w;
     out->camera.ortho_h = h;
-    if (get_vec2(cam, "clearcolor", &out->camera.clearcolor[0],
-                 &out->camera.clearcolor[1], 0, 0) != 0) {
+    if (get_vec3(cam, "clearcolor", out->camera.clearcolor) != 0) {
       json_object_put(root);
-      XW_ERROR_SET(err, 1, "camera clearcolor must be [r, g(, b)]");
+      XW_ERROR_SET(err, 1, "camera clearcolor must be [r, g, b]");
       return -1;
     }
     if (json_object_object_get_ex(cam, "bloom", &v) && v)
