@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "scene_particle_gl.h"
+#include "scene_tex.h"
 
 int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
                              const char *dir, float dt, float alpha,
@@ -21,13 +22,14 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
   }
   if (e->alive <= 0)
     return 0;
-  if (!o->particle.sprite[0]) {
-    XW_ERROR_SET(err, 1, "particle object '%s' has no sprite", o->id);
-    return -1;
+  if (!o->particle.sprite[0])
+    return 1;
+  if (xw_tex_resolve(dir, NULL, o->particle.sprite, path, sizeof(path)) != 0)
+    return 1;
+  if (xw_gl_upload(g, path, &tex, err) != 0) {
+    memset(err, 0, sizeof(*err));
+    return 1;
   }
-  snprintf(path, sizeof(path), "%s/%s", dir, o->particle.sprite);
-  if (xw_gl_upload(g, path, &tex, err) != 0)
-    return -1;
   if (xw_gl_program_points(g, &prog, err) != 0)
     return -1;
   pts = malloc(sizeof(XWPoint) * (size_t)e->alive);

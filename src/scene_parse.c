@@ -207,14 +207,18 @@ static int parse_pass(struct json_object *jo, XWScenePass *p, XWError *err) {
       return -1;
     }
     tn = json_object_array_length(v);
-    for (ti = 0; ti < tn && p->n_textures < XW_SCENE_PASS_TEX_MAX; ti++) {
+    /* slot-aligned: null entries stay empty so unit indices match the
+     * scene doc (reference TextureMap is index-keyed the same way) */
+    if (tn > XW_SCENE_PASS_TEX_MAX)
+      tn = XW_SCENE_PASS_TEX_MAX;
+    for (ti = 0; ti < tn; ti++) {
       struct json_object *t = json_object_array_get_idx(v, ti);
       if (!t || json_object_get_type(t) != json_type_string)
         continue;
-      copy_str(p->textures[p->n_textures], sizeof(p->textures[0]),
+      copy_str(p->textures[ti], sizeof(p->textures[0]),
                json_object_get_string(t));
-      p->n_textures++;
     }
+    p->n_textures = (int)tn;
   }
   return 0;
 }
@@ -622,8 +626,16 @@ static int parse_object_at(const char *dir, struct json_object *jo,
     XW_ERROR_SET(err, 1, "object origin/scale/size must be [x, y]");
     return -1;
   }
-  if (json_object_object_get_ex(jo, "visible", &v) && v)
-    o->visible = json_object_get_boolean(v) ? 1 : 0;
+  if (json_object_object_get_ex(jo, "visible", &v) && v) {
+    if (json_object_get_type(v) == json_type_object) {
+      /* real walls: {"user": ..., "value": bool} toggle */
+      struct json_object *w = NULL;
+      if (json_object_object_get_ex(v, "value", &w) && w)
+        o->visible = json_object_get_boolean(w) ? 1 : 0;
+    } else {
+      o->visible = json_object_get_boolean(v) ? 1 : 0;
+    }
+  }
   o->type = infer_type(jo);
   if (parse_dynfloat(jo, "alpha", &o->alpha, 1.0f) != 0) {
     XW_ERROR_SET(err, 1, "object alpha must be a number or {user,expression}");

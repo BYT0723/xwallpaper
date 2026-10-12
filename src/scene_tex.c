@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #ifdef XW_HAVE_LZ4
 #include <lz4.h>
@@ -145,7 +147,29 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
   (void)texh;
   if (cur_bytes(&c, container, 9, err, "container") != 0)
     return -1;
-  if (memcmp(container, "TEXB0003", 8) == 0) {
+  if (memcmp(container, "TEXB0004", 8) == 0) {
+    /* 0004 adds an isVideo flag after the file id; non-video entries
+     * parse exactly like 0003 (reference downgrades the version). */
+    uint32_t is_video = 0;
+    if (cur_u32(&c, &images, err, "images") != 0)
+      return -1;
+    if (images < 1 || images > 64) {
+      XW_ERROR_SET(err, 1, "bad image count");
+      return -1;
+    }
+    if (cur_u32(&c, &fif, err, "fif") != 0)
+      return -1;
+    if (fif != XW_FIF_UNKNOWN && fif != XW_FIF_PNG) {
+      XW_ERROR_SET(err, 1, "unsupported embedded format %u", fif);
+      return -1;
+    }
+    if (cur_u32(&c, &is_video, err, "isvideo") != 0)
+      return -1;
+    if (is_video == 1) {
+      XW_ERROR_SET(err, 1, "video textures unsupported");
+      return -1;
+    }
+  } else if (memcmp(container, "TEXB0003", 8) == 0) {
     /* NOTE: image count comes first here; the reference reads the
      * embedded-file id first, which only fits newer files */
     if (cur_u32(&c, &images, err, "images") != 0)
@@ -285,4 +309,38 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
   img->tex_w = mw;
   img->tex_h = mh;
   return 0;
+}
+
+int xw_tex_resolve(const char *dir, const char *material, const char *ref,
+                   char *out, size_t n) {
+  static const char *exts[] = {"", ".tex", ".png", ".jpg"};
+  char base[1024], anchor[1024];
+  size_t i;
+  if (!dir || !ref || !ref[0] || !out || n == 0)
+    return -1;
+  if (strstr(ref, "..") != NULL)
+    return -1;
+  if (strchr(ref, '/') != NULL) {
+    snprintf(anchor, sizeof(anchor), "%s", dir);
+  } else {
+    const char *slash = material ? strrchr(material, '/') : NULL;
+    if (slash && (size_t)(slash - material) < sizeof(anchor) - 1) {
+      size_t dl = (size_t)(slash - material);
+      memcpy(anchor, material, dl);
+      anchor[dl] = '\0';
+      snprintf(base, sizeof(base), "%.512s/%.400s", dir, anchor);
+      snprintf(anchor, sizeof(anchor), "%.1000s", base);
+    } else {
+      snprintf(anchor, sizeof(anchor), "%s", dir);
+    }
+  }
+  for (i = 0; i < sizeof(exts) / sizeof(exts[0]); i++) {
+    struct stat st;
+    snprintf(base, sizeof(base), "%.512s/%.400s%s", anchor, ref, exts[i]);
+    if (stat(base, &st) == 0 && S_ISREG(st.st_mode)) {
+      snprintf(out, n, "%.1000s", base);
+      return 0;
+    }
+  }
+  return -1;
 }

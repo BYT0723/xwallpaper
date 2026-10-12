@@ -175,6 +175,101 @@ static void test_decode_raw(void) {
 #endif
 }
 
+/* TEXB0004 builder: like build_texv plus the isVideo flag word */
+static unsigned char *build_texv4(uint32_t fif, uint32_t is_video,
+                                   uint32_t w, uint32_t h, uint32_t mw,
+                                   uint32_t mh, uint32_t comp, int32_t usize,
+                                   const unsigned char *payload, size_t plen,
+                                   size_t *out_len) {
+  unsigned char *blob, *dst;
+  uint32_t m[8] = {1, fif, is_video, 1, mw, mh, comp, (uint32_t)usize};
+  size_t hdr = 9 + 9 + 28 + 9 + 8 * 4 + 4, total = hdr + plen;
+  int i;
+  blob = malloc(total);
+  if (!blob)
+    return NULL;
+  dst = blob;
+  memcpy(dst, "TEXV0005\0", 9);
+  dst += 9;
+  memcpy(dst, "TEXI0001\0", 9);
+  dst += 9;
+  {
+    uint32_t f[7] = {0, 0, w, h, w, h, 0};
+    for (i = 0; i < 7; i++) {
+      dst[0] = (unsigned char)(f[i] & 0xff);
+      dst[1] = (unsigned char)((f[i] >> 8) & 0xff);
+      dst[2] = (unsigned char)((f[i] >> 16) & 0xff);
+      dst[3] = (unsigned char)((f[i] >> 24) & 0xff);
+      dst += 4;
+    }
+  }
+  memcpy(dst, "TEXB0004\0", 9);
+  dst += 9;
+  /* images, fif, isVideo, mipmaps, mw, mh, comp, usize */
+  for (i = 0; i < 8; i++) {
+    dst[0] = (unsigned char)(m[i] & 0xff);
+    dst[1] = (unsigned char)((m[i] >> 8) & 0xff);
+    dst[2] = (unsigned char)((m[i] >> 16) & 0xff);
+    dst[3] = (unsigned char)((m[i] >> 24) & 0xff);
+    dst += 4;
+  }
+  /* csize */
+  dst[0] = (unsigned char)(plen & 0xff);
+  dst[1] = (unsigned char)((plen >> 8) & 0xff);
+  dst[2] = (unsigned char)((plen >> 16) & 0xff);
+  dst[3] = (unsigned char)((plen >> 24) & 0xff);
+  dst += 4;
+  memcpy(dst, payload, plen);
+  *out_len = total;
+  return blob;
+}
+
+static void test_decode_texb0004(void) {
+  TEST_BEGIN("TEXB0004 stills decode, video refused");
+  XWError err = {0};
+  XWTexImage img;
+  unsigned char px[64];
+  size_t len = 0;
+  unsigned char *blob;
+  for (int i = 0; i < 64; i++) px[i] = (unsigned char)(i + 7);
+  /* raw still: UNKNOWN fif, not video */
+  blob = build_texv4(0xFFFFFFFFu, 0, 4, 4, 4, 4, 0, 64, px, sizeof(px), &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    memset(&img, 0, sizeof(img));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+    TEST_CHECK_EQ_INT((int)img.fmt, (int)XW_TEXFMT_RGBA8);
+    TEST_CHECK(memcmp(img.px, px, 64) == 0);
+    xw_tex_image_free(&img);
+    free(blob);
+  }
+  /* embedded PNG with usize=0 (as shipped by real walls) */
+  {
+    static const unsigned char png[] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A,
+                                        0x1A, 0x0A, 0x00};
+    blob = build_texv4(13, 0, 4, 4, 4, 4, 0, 0, png, sizeof(png), &len);
+    TEST_CHECK(blob != NULL);
+    if (blob) {
+      memset(&img, 0, sizeof(img));
+      memset(&err, 0, sizeof(err));
+      TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+      TEST_CHECK_EQ_INT((int)img.fmt, (int)XW_TEXFMT_PNG);
+      TEST_CHECK_EQ_INT(img.len, sizeof(png));
+      xw_tex_image_free(&img);
+      free(blob);
+    }
+  }
+  /* video flag refused */
+  blob = build_texv4(13, 1, 4, 4, 4, 4, 0, 64, px, sizeof(px), &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), -1);
+    free(blob);
+  }
+}
+
 static void test_decode_edges(void) {
   TEST_BEGIN("rejects bad magic, truncation, formats, sizes");
   XWError err = {0};
@@ -228,6 +323,7 @@ int main(void) {
   test_find_mini_tex();
   test_bad_inputs();
   test_decode_raw();
+  test_decode_texb0004();
   test_decode_edges();
   TEST_SUMMARY();
 }

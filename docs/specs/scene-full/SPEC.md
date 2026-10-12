@@ -134,7 +134,7 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
 
 1. sound 用 SDL_mixer 新增依赖，还是复用现有 mpv？→ **SDL_mixer**（daemon 专属 chunk 循环，与 mpv 视频隔离）。
 2. 用户属性 CLI 形态 → **`xwallpaper --list-properties [-m]` / `--set-property name=value [-m]`**（live override，不落盘；daemon 精确 verb 匹配）。
-3. 粒子/脚本代表壁纸选哪几个 Workshop ID 做验收？→ **未取真实壁纸**，以合成 fixture（`tests/data/scene/`）+ xvfb 像素回读验收；真机冒烟待用户提供目录。
+3. 粒子/脚本代表壁纸选哪几个 Workshop ID 做验收？→ **未取真实壁纸**，以合成 fixture（`tests/data/scene/`）+ xvfb 像素回读验收；真机冒烟待用户提供目录。（2026-10-13 补充：用户提供 2178468632/3497575235 后，已用其 scene.pkg 在 xvfb 下联调出图；回写见 Decisions effect 运行时。）
 4. Wayland scene 是否纳入首版验收？→ **不纳入**（X11 先行；scene 后端 `init_wl` 为 NULL，daemon 明确报错）。
 5. quickjs vendor 路径与升级策略 → **`vendor/quickjs/` 直接 copy 上游 2024-01-13 最小嵌入集**（core+unicode/regexp/bignum，MIT LICENSE 保留；升级时整目录替换）。
 
@@ -143,6 +143,8 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
 - **渲染走 GLX compat 上下文**（非 core profile）：WE 方言 shader（`gl_FragColor`/`texture2D`/`varying`）经转译后可编译；Mesa/NVIDIA 均支持。
 - **Uniform 绑定按名回退**：sampler 取 `xw_tex0`→`g_Texture0`→`tex0`→首个 sampler；time 取 `xw_time`→`g_Time`；alpha 统一走合成 pass 的 `xw_alpha`。
 - **失败策略**：解析/脚本/纹理缺失 fail fast（`set` 直接报错）；帧内渲染失败回落 clear 色（壁纸活着）；音频缺设备/坏文件降级 mute。
+- **effect 运行时（2026-10-13 真包联调补）**：material shader 名省略 `shaders/` 前缀（resolve 时回退补齐）；effect 用同名 `.vert`（无则内置 quad），`a_Position→0`/`a_TexCoord→1` 绑定；`#include` 恒注入 prelude（texSample2D/mul/saturate/frac/lerp/CAST2-4/M_PI 系列/rotateVec2/ApplyBlending≈mix）+ `// [COMBO]` 默认 `#define`；material combos 进程序缓存键；draw 时绑 `g_Texture0..7`（0=输入，缺槽回退输入）+ `g_Texture{i}Resolution=(texW,texH,realW,realH)` + 单位 MVP + `g_Time`/`g_TexelSize` + 注释 default 被 scene 常量（按 material 名）覆盖；`util/black|white|noflow|perlin_256` 程序化；单 pass 失败降级到已画结果（不断整对象）；TEXB0004 非视频按 0003+isVideo 解析（视频拒绝），内嵌 PNG 不校验 usize。两张真实 Workshop 包（2178468632/3497575235）xvfb 像素回读已出图且与 preview 色系一致。
+- **effect 后续**：render-target/`bind: previous|_rt_*`（glitter 等多 pass 效果当前只跑出单链近似）、material 文件 combos 与 scene combos 合并、音频频谱 uniform（恒 0）、`util/` 更多内置。
 - **合成顺序**：image → text → particle 的 per-type 循环；object-order 与 scene-space FBO 合成是后续任务。
 - **粒子排序**：未做（swap-remove 打乱顺序；当前 blend 下可接受，记录为后续项）。
 - **文本**：Latin-1 单行；UTF-8/CJK shaping 后续。

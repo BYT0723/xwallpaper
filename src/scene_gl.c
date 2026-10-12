@@ -15,6 +15,7 @@
 
 #define XW_GL_PROG_MAX 16
 #define XW_GL_TEXCACHE_MAX 8
+#define XW_GL_DEFS_MAX 24
 
 #ifdef XW_HAVE_GL
 
@@ -34,13 +35,17 @@ struct XWGl {
   struct {
     char key[512];
     GLuint prog;
+    XWShaderDef defs[XW_GL_DEFS_MAX];
+    int ndefs;
   } progs[XW_GL_PROG_MAX];
   int nprogs;
   struct {
     char path[1024];
     GLuint tex;
+    int tw, th, rw, rh;
   } texcache[XW_GL_TEXCACHE_MAX];
   int ntex;
+  GLuint utils[4];
 };
 
 static const char *vert_src =
@@ -245,6 +250,7 @@ void xw_gl_destroy(XWGl *g) {
     glXMakeCurrent(g->dpy, g->win, g->ctx);
     for (i = 0; i < g->nprogs; i++) glDeleteProgram(g->progs[i].prog);
     for (i = 0; i < g->ntex; i++) glDeleteTextures(1, &g->texcache[i].tex);
+    glDeleteTextures(4, g->utils);
     glDeleteFramebuffers(2, g->fbos);
     glDeleteTextures(2, g->fbo_tex);
     glDeleteBuffers(1, &g->quad_vbo);
@@ -260,7 +266,8 @@ void xw_gl_destroy(XWGl *g) {
 }
 
 
-static int cache_store(XWGl *g, const char *path, GLuint t, XWError *err) {
+static int cache_store(XWGl *g, const char *path, GLuint t, int tw, int th,
+                     int rw, int rh, XWError *err) {
   if (g->ntex >= XW_GL_TEXCACHE_MAX) {
     if (t)
       glDeleteTextures(1, &t);
@@ -270,6 +277,10 @@ static int cache_store(XWGl *g, const char *path, GLuint t, XWError *err) {
   snprintf(g->texcache[g->ntex].path, sizeof(g->texcache[g->ntex].path), "%s",
            path);
   g->texcache[g->ntex].tex = t;
+  g->texcache[g->ntex].tw = tw;
+  g->texcache[g->ntex].th = th;
+  g->texcache[g->ntex].rw = rw;
+  g->texcache[g->ntex].rh = rh;
   g->ntex++;
   return 0;
 }
@@ -279,6 +290,8 @@ static int cache_fail(XWGl *g, const char *path, XWError *err, const char *msg) 
     snprintf(g->texcache[g->ntex].path, sizeof(g->texcache[g->ntex].path),
              "%s", path);
     g->texcache[g->ntex].tex = 0;
+    g->texcache[g->ntex].tw = g->texcache[g->ntex].th = 0;
+    g->texcache[g->ntex].rw = g->texcache[g->ntex].rh = 0;
     g->ntex++;
   }
   XW_ERROR_SET(err, 1, "%s '%s'", msg, path);
@@ -301,7 +314,7 @@ static int upload_rgba_bytes(XWGl *g, const unsigned char *px, int w, int h,
 
 /* current imlib image must already be set by the caller */
 static int upload_imlib_current(XWGl *g, const char *path, GLuint *t,
-                                XWError *err) {
+                                int *wp, int *hp, XWError *err) {
   int iw, ih, x, y;
   DATA32 *data;
   unsigned char *px;
@@ -326,11 +339,16 @@ static int upload_imlib_current(XWGl *g, const char *path, GLuint *t,
     }
   upload_rgba_bytes(g, px, iw, ih, t);
   free(px);
+  if (wp)
+    *wp = iw;
+  if (hp)
+    *hp = ih;
   return 0;
 }
 
 static int upload_texv(XWGl *g, const unsigned char *file, size_t flen,
-                       GLuint *t, XWError *err) {
+                       GLuint *t, int *twp, int *thp, int *rwp, int *rhp,
+                       XWError *err) {
   XWTexImage img;
   int rc = -1;
   memset(&img, 0, sizeof(img));
@@ -411,12 +429,22 @@ static int upload_texv(XWGl *g, const unsigned char *file, size_t flen,
       break;
     }
     imlib_context_set_image(im);
-    rc = upload_imlib_current(g, "embedded", t, err);
+    rc = upload_imlib_current(g, "embedded", t, NULL, NULL, err);
     imlib_free_image();
     imlib_context_pop();
     imlib_context_free(ictx);
     break;
   }
+  }
+  if (rc == 0) {
+    if (twp)
+      *twp = (int)img.tex_w;
+    if (thp)
+      *thp = (int)img.tex_h;
+    if (rwp)
+      *rwp = (int)img.w;
+    if (rhp)
+      *rhp = (int)img.h;
   }
   xw_tex_image_free(&img);
   return rc;
@@ -472,13 +500,14 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
   if (!file)
     return cache_fail(g, path, err, "cannot read texture");
   if (flen >= 4 && memcmp(file, "TEXV", 4) == 0) {
-    rc = upload_texv(g, file, flen, &t, err);
+    int tw = 0, th = 0, rw = 0, rh = 0;
+    rc = upload_texv(g, file, flen, &t, &tw, &th, &rw, &rh, err);
     free(file);
     if (rc != 0) {
       cache_fail(g, path, err, "cannot decode texture");
       return -1;
     }
-    if (cache_store(g, path, t, err) != 0)
+    if (cache_store(g, path, t, tw, th, rw, rh, err) != 0)
       return -1;
     *tex = t;
     return 0;
@@ -495,16 +524,19 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
     return cache_fail(g, path, err, "cannot load texture");
   }
   imlib_context_set_image(img);
-  rc = upload_imlib_current(g, path, &t, err);
-  imlib_free_image();
-  imlib_context_pop();
-  imlib_context_free(ictx);
-  if (rc != 0) {
-    cache_fail(g, path, err, "cannot decode texture");
-    return -1;
+  {
+    int iw = 0, ih = 0;
+    rc = upload_imlib_current(g, path, &t, &iw, &ih, err);
+    imlib_free_image();
+    imlib_context_pop();
+    imlib_context_free(ictx);
+    if (rc != 0) {
+      cache_fail(g, path, err, "cannot decode texture");
+      return -1;
+    }
+    if (cache_store(g, path, t, iw, ih, iw, ih, err) != 0)
+      return -1;
   }
-  if (cache_store(g, path, t, err) != 0)
-    return -1;
   *tex = t;
   return 0;
 }
@@ -556,6 +588,10 @@ static int link_program(const char *key, const char *vert, const char *frag_src,
   p = glCreateProgram();
   glAttachShader(p, vs);
   glAttachShader(p, fs);
+  /* WE vertex files declare a_Position/a_TexCoord without locations;
+   * pin them to the fullscreen-quad VAO slots (harmless when absent). */
+  glBindAttribLocation(p, 0, "a_Position");
+  glBindAttribLocation(p, 1, "a_TexCoord");
   glLinkProgram(p);
   glDetachShader(p, vs);
   glDetachShader(p, fs);
@@ -610,35 +646,137 @@ static int slurp(const char *path, char **out, XWError *err) {
   return 0;
 }
 
-int xw_gl_program_we(XWGl *g, const char *frag_path, unsigned int *prog,
-                     XWError *err) {
+/* Bake material combos as -D defines, inserted after the #version
+ * line (or prepended when the source has none). */
+static int bake_combos(char *dst, size_t cap, const XWSceneCombo *combos,
+                       int n_combos) {
+  char *at;
+  size_t dl, tail;
+  int i;
+  if (!combos || n_combos <= 0)
+    return 0;
+  at = dst;
+  if (strncmp(dst, "#version", 8) == 0) {
+    at = strchr(dst, '\n');
+    if (!at)
+      return -1;
+    at++;
+  }
+  for (i = 0; i < n_combos; i++) {
+    char line[128];
+    int ll;
+    if (!combos[i].key[0])
+      continue;
+    ll = snprintf(line, sizeof(line), "#define %s %s\n", combos[i].key,
+                  combos[i].value[0] ? combos[i].value : "1");
+    if (ll <= 0 || ll >= (int)sizeof(line))
+      continue;
+    dl = strlen(dst);
+    tail = dl - (size_t)(at - dst);
+    if (dl + (size_t)ll + 1 > cap)
+      return -1;
+    memmove(at + ll, at, tail + 1);
+    memcpy(at, line, (size_t)ll);
+    at += ll;
+  }
+  return 0;
+}
+
+static void program_key(char *key, size_t n, const char *frag_path,
+                        const XWSceneCombo *combos, int n_combos) {
+  size_t len;
+  int i;
+  snprintf(key, n, "%s", frag_path);
+  if (!combos)
+    return;
+  for (i = 0; i < n_combos; i++) {
+    if (!combos[i].key[0])
+      continue;
+    len = strlen(key);
+    snprintf(key + len, n > len ? n - len : 0, ";%s=%s", combos[i].key,
+             combos[i].value);
+    if (strlen(key) >= n - 1)
+      break;
+  }
+}
+
+int xw_gl_program_we(XWGl *g, const char *frag_path,
+                     const XWSceneCombo *combos, int n_combos,
+                     unsigned int *prog, XWError *err) {
   char *src = NULL, *dst = NULL;
-  size_t cap;
-  int rc;
+  char vert_path[1152];
+  char key[512];
+  char *vsrc = NULL, *vdst = NULL;
+  const char *vert_use = vert_src;
+  size_t cap, vcap;
+  size_t flen;
+  int rc, i, slot = -1;
   if (!g || !frag_path || !prog)
     return gl_error("invalid args", err);
-  for (int i = 0; i < g->nprogs; i++)
-    if (strcmp(g->progs[i].key, frag_path) == 0) {
+  program_key(key, sizeof(key), frag_path, combos, n_combos);
+  for (i = 0; i < g->nprogs; i++)
+    if (strcmp(g->progs[i].key, key) == 0) {
       *prog = g->progs[i].prog;
       return 0;
     }
+  if (g->nprogs >= XW_GL_PROG_MAX) {
+    XW_ERROR_SET(err, 1, "program cache full");
+    return -1;
+  }
+  slot = g->nprogs;
   if (slurp(frag_path, &src, err) != 0)
     return -1;
-  cap = strlen(src) + 4096;
+  cap = strlen(src) + 8192;
   dst = malloc(cap);
   if (!dst) {
     free(src);
     return gl_error("out of memory", err);
   }
-  if (xw_shader_translate(src, dst, cap) != 0) {
+  if (xw_shader_translate(src, dst, cap) != 0 ||
+      bake_combos(dst, cap, combos, n_combos) != 0) {
     free(src);
     free(dst);
     XW_ERROR_SET(err, 1, "cannot translate shader '%s'", frag_path);
     return -1;
   }
   free(src);
-  rc = link_program(frag_path, vert_src, dst, g, prog, err);
+  /* WE effects ship a sibling vertex file (same basename, .vert) with
+   * custom varyings; use it when present, else the builtin quad shader. */
+  snprintf(vert_path, sizeof(vert_path), "%.1000s", frag_path);
+  flen = strlen(vert_path);
+  if (flen > 5 && strcmp(vert_path + flen - 5, ".frag") == 0) {
+    XWError verr;
+    memset(&verr, 0, sizeof(verr));
+    memcpy(vert_path + flen - 5, ".vert", 6);
+    if (slurp(vert_path, &vsrc, &verr) == 0) {
+      vcap = strlen(vsrc) + 8192;
+      vdst = malloc(vcap);
+      if (!vdst) {
+        free(vsrc);
+        free(dst);
+        return gl_error("out of memory", err);
+      }
+      if (xw_shader_translate_stage(vsrc, vdst, vcap, 1) != 0 ||
+          bake_combos(vdst, vcap, combos, n_combos) != 0) {
+        free(vsrc);
+        free(vdst);
+        free(dst);
+        XW_ERROR_SET(err, 1, "cannot translate shader '%s'", vert_path);
+        return -1;
+      }
+      free(vsrc);
+      vert_use = vdst;
+    }
+  }
+  /* collect annotated uniform defaults for the draw path */
+  g->progs[slot].ndefs = 0;
+  xw_shader_collect_defaults(vert_use, g->progs[slot].defs,
+                             &g->progs[slot].ndefs, XW_GL_DEFS_MAX);
+  xw_shader_collect_defaults(dst, g->progs[slot].defs, &g->progs[slot].ndefs,
+                             XW_GL_DEFS_MAX);
+  rc = link_program(key, vert_use, dst, g, prog, err);
   free(dst);
+  free(vdst);
   return rc;
 }
 
@@ -951,12 +1089,56 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
   return -1;
 }
 
-int xw_gl_program_we(XWGl *g, const char *frag_path, unsigned int *prog,
-                     XWError *err) {
+int xw_gl_program_we(XWGl *g, const char *frag_path,
+                     const XWSceneCombo *combos, int n_combos,
+                     unsigned int *prog, XWError *err) {
   (void)g;
   (void)frag_path;
+  (void)combos;
+  (void)n_combos;
   (void)prog;
   XW_ERROR_SET(err, 1, "scene GL support not compiled in (need gl/glew)");
+  return -1;
+}
+
+int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
+                  const float input_res[4], const XWWeSlot *slots,
+                  const XWSceneConst *consts, int n_consts, float time) {
+  (void)g;
+  (void)prog;
+  (void)input;
+  (void)input_res;
+  (void)slots;
+  (void)consts;
+  (void)n_consts;
+  (void)time;
+  return -1;
+}
+
+int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
+                       int *rh) {
+  (void)g;
+  (void)tex;
+  (void)tw;
+  (void)th;
+  (void)rw;
+  (void)rh;
+  return -1;
+}
+
+int xw_gl_target_size(XWGl *g, int *w, int *h) {
+  (void)g;
+  (void)w;
+  (void)h;
+  return -1;
+}
+
+int xw_gl_util_texture(XWGl *g, const char *name, unsigned int *tex,
+                       float res[4]) {
+  (void)g;
+  (void)name;
+  (void)tex;
+  (void)res;
   return -1;
 }
 
@@ -1092,3 +1274,262 @@ int xw_gl_present(XWGl *g) {
 }
 
 #endif /* XW_HAVE_GL */
+
+#ifdef XW_HAVE_GL
+static int parse_const_floats(const char *s, float *v) {
+  int n = 0;
+  if (!s)
+    return 0;
+  while (*s && n < 4) {
+    char *e = NULL;
+    while (*s == ' ' || *s == '\t') s++;
+    if (!*s)
+      break;
+    v[n] = strtof(s, &e);
+    if (!e || e == s)
+      break;
+    n++;
+    s = e;
+  }
+  return n;
+}
+
+static void bind_mvp(XWGl *g, GLuint prog) {
+  static const char *names[] = {
+    "g_ModelViewProjectionMatrix",
+    "g_ModelViewProjectionMatrixInverse",
+    "g_EffectModelViewProjectionMatrix",
+    "g_ModelMatrix",
+    "g_EffectModelMatrix",
+    "g_ViewProjectionMatrix",
+    NULL,
+  };
+  static const float ident[16] = {1, 0, 0, 0, 0, 1, 0, 0,
+                                  0, 0, 1, 0, 0, 0, 0, 1};
+  int i;
+  (void)g;
+  for (i = 0; names[i]; i++) {
+    GLint loc = glGetUniformLocation(prog, names[i]);
+    if (loc >= 0)
+      glUniformMatrix4fv(loc, 1, GL_FALSE, ident);
+  }
+}
+
+static void bind_prog_defaults(XWGl *g, GLuint prog,
+                               const XWSceneConst *consts, int n_consts) {
+  int p, i;
+  for (p = 0; p < g->nprogs; p++) {
+    if (g->progs[p].prog != prog)
+      continue;
+    for (i = 0; i < g->progs[p].ndefs; i++) {
+      const XWShaderDef *d = &g->progs[p].defs[i];
+      GLint loc = glGetUniformLocation(prog, d->name);
+      float v[4];
+      int c;
+      if (loc < 0)
+        continue;
+      memcpy(v, d->v, sizeof(v));
+      if (consts) {
+        for (c = 0; c < n_consts; c++) {
+          if (d->material[0] && strcmp(d->material, consts[c].key) == 0) {
+            float pv[4];
+            int pn = parse_const_floats(consts[c].value, pv);
+            int k;
+            if (pn == 1) {
+              for (k = 0; k < 4; k++) v[k] = pv[0];
+            } else if (pn > 1) {
+              for (k = 0; k < pn && k < 4; k++) v[k] = pv[k];
+            }
+            break;
+          }
+        }
+      }
+      switch (d->kind) {
+      case 1:
+        glUniform1f(loc, v[0]);
+        break;
+      case 2:
+        glUniform2f(loc, v[0], v[1]);
+        break;
+      case 3:
+        glUniform3f(loc, v[0], v[1], v[2]);
+        break;
+      default:
+        glUniform4f(loc, v[0], v[1], v[2], v[3]);
+        break;
+      }
+    }
+    return;
+  }
+}
+
+int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
+                  const float input_res[4], const XWWeSlot *slots,
+                  const XWSceneConst *consts, int n_consts, float time) {
+  char uname[48];
+  int i;
+  GLint loc;
+  if (!g || !prog)
+    return -1;
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glUseProgram(prog);
+  for (i = 0; i < XW_GL_WE_SLOTS; i++) {
+    unsigned int t = input;
+    const float *res = input_res;
+    if (i == 0 && slots && slots[0].tex) {
+      t = slots[0].tex;
+      res = slots[0].res;
+    } else if (i > 0 && slots && slots[i].tex) {
+      t = slots[i].tex;
+      res = slots[i].res;
+    }
+    snprintf(uname, sizeof(uname), "g_Texture%d", i);
+    loc = glGetUniformLocation(prog, uname);
+    if (loc >= 0 && t) {
+      glActiveTexture((GLenum)(GL_TEXTURE0 + i));
+      glBindTexture(GL_TEXTURE_2D, t);
+      /* effect inputs repeat at the edges (reference default) */
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+      glUniform1i(loc, i);
+    }
+    snprintf(uname, sizeof(uname), "g_Texture%dResolution", i);
+    loc = glGetUniformLocation(prog, uname);
+    if (loc >= 0 && res)
+      glUniform4f(loc, res[0], res[1], res[2], res[3]);
+  }
+  glActiveTexture(GL_TEXTURE0);
+  bind_mvp(g, prog);
+  loc = glGetUniformLocation(prog, "g_Time");
+  if (loc >= 0)
+    glUniform1f(loc, time);
+  if (g->w > 0 && g->h > 0) {
+    loc = glGetUniformLocation(prog, "g_TexelSize");
+    if (loc >= 0)
+      glUniform2f(loc, 1.0f / g->w, 1.0f / g->h);
+    loc = glGetUniformLocation(prog, "g_TexelSizeHalf");
+    if (loc >= 0)
+      glUniform2f(loc, 0.5f / g->w, 0.5f / g->h);
+  }
+  bind_prog_defaults(g, prog, consts, n_consts);
+  glBindVertexArray(g->quad_vao);
+  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+  glBindVertexArray(0);
+  glUseProgram(0);
+  return 0;
+}
+
+int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
+                       int *rh) {
+  int i;
+  if (!g || !tex)
+    return -1;
+  for (i = 0; i < g->ntex; i++) {
+    if (g->texcache[i].tex == tex) {
+      if (tw)
+        *tw = g->texcache[i].tw;
+      if (th)
+        *th = g->texcache[i].th;
+      if (rw)
+        *rw = g->texcache[i].rw;
+      if (rh)
+        *rh = g->texcache[i].rh;
+      return 0;
+    }
+  }
+  return -1;
+}
+
+int xw_gl_target_size(XWGl *g, int *w, int *h) {
+  if (!g)
+    return -1;
+  if (w)
+    *w = g->w;
+  if (h)
+    *h = g->h;
+  return 0;
+}
+
+static int make_solid(XWGl *g, unsigned char r, unsigned char gg,
+                      unsigned char b, unsigned char a, GLuint *t) {
+  unsigned char px[4] = {r, gg, b, a};
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glGenTextures(1, t);
+  glBindTexture(GL_TEXTURE_2D, *t);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+               px);
+  return 0;
+}
+
+int xw_gl_util_texture(XWGl *g, const char *name, unsigned int *tex,
+                       float res[4]) {
+  /* 0 black, 1 white, 2 noflow (neutral flowmask), 3 perlin noise */
+  int idx = -1;
+  if (!g || !name || !tex)
+    return -1;
+  if (strcmp(name, "util/black") == 0)
+    idx = 0;
+  else if (strcmp(name, "util/white") == 0)
+    idx = 1;
+  else if (strcmp(name, "util/noflow") == 0)
+    idx = 2;
+  else if (strcmp(name, "util/perlin_256") == 0)
+    idx = 3;
+  else
+    return -1;
+  if (!g->utils[idx]) {
+    if (idx == 3) {
+      unsigned char *px;
+      int x, y;
+      unsigned int seed = 0x12345678u;
+      px = malloc(256 * 256 * 4);
+      if (!px)
+        return -1;
+      for (y = 0; y < 256; y++) {
+        for (x = 0; x < 256; x++) {
+          unsigned char *o = px + ((size_t)y * 256 + x) * 4;
+          seed = seed * 1664525u + 1013904223u;
+          o[0] = (unsigned char)(seed >> 24);
+          seed = seed * 1664525u + 1013904223u;
+          o[1] = (unsigned char)(seed >> 24);
+          seed = seed * 1664525u + 1013904223u;
+          o[2] = (unsigned char)(seed >> 24);
+          o[3] = 255;
+        }
+      }
+      glXMakeCurrent(g->dpy, g->win, g->ctx);
+      glGenTextures(1, &g->utils[idx]);
+      glBindTexture(GL_TEXTURE_2D, g->utils[idx]);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 256, 256, 0, GL_RGBA,
+                   GL_UNSIGNED_BYTE, px);
+      free(px);
+    } else if (idx == 0) {
+      make_solid(g, 0, 0, 0, 255, &g->utils[idx]);
+    } else if (idx == 1) {
+      make_solid(g, 255, 255, 255, 255, &g->utils[idx]);
+    } else {
+      make_solid(g, 127, 127, 0, 255, &g->utils[idx]);
+    }
+  }
+  *tex = g->utils[idx];
+  if (res) {
+    if (idx == 3) {
+      res[0] = 256;
+      res[1] = 256;
+      res[2] = 256;
+      res[3] = 256;
+    } else {
+      res[0] = res[1] = res[2] = res[3] = 1;
+    }
+  }
+  return 0;
+}
+#endif

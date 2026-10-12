@@ -3,6 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
+#include <ftw.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include <X11/Xlib.h>
 
@@ -15,6 +19,7 @@
 #include "scene_parse.h"
 #include "scene_particle.h"
 #include "scene_particle_gl.h"
+#include "scene_pkg.h"
 #include "scene_script.h"
 #include "scene_sound.h"
 #include "scene_text.h"
@@ -44,6 +49,7 @@ typedef struct XWSceneCtx {
   int mute;
   double volume;
   XWScript *script;
+  char tmpdir[1024];
 } XWSceneCtx;
 
 static void free_emitters(XWSceneCtx *c) {
@@ -240,6 +246,60 @@ static void free_script(XWSceneCtx *c) {
   c->script = NULL;
 }
 
+static int unlink_cb(const char *path, const struct stat *st, int flag,
+                     struct FTW *ftw) {
+  (void)st;
+  (void)flag;
+  (void)ftw;
+  remove(path);
+  return 0;
+}
+
+static void free_tmpdir(XWSceneCtx *c) {
+  if (!c || !c->tmpdir[0])
+    return;
+  nftw(c->tmpdir, unlink_cb, 16, FTW_DEPTH | FTW_PHYS);
+  rmdir(c->tmpdir);
+  c->tmpdir[0] = '\0';
+}
+
+/* Resolve the asset directory: loose scene.json wins, otherwise unpack
+ * scene.pkg into a temp dir (cleaned up at destroy). c->dir always points
+ * at parsed assets; opt->path stays the user's dir for --list. */
+static int resolve_dir(XWSceneCtx *c, const char *optpath, XWError *err) {
+  char probe[1152], pkgpath[1152];
+  struct stat st;
+  snprintf(c->dir, sizeof(c->dir), "%s", optpath);
+  snprintf(probe, sizeof(probe), "%.512s/scene.json", optpath);
+  if (stat(probe, &st) == 0)
+    return 0;
+  snprintf(pkgpath, sizeof(pkgpath), "%.512s/scene.pkg", optpath);
+  if (stat(pkgpath, &st) != 0) {
+    XW_ERROR_SET(err, 1, "cannot open scene.json");
+    return -1;
+  }
+  {
+    XWPkg *pkg = NULL;
+    char tmp[] = "/tmp/xw-scene-XXXXXX";
+    if (!mkdtemp(tmp)) {
+      XW_ERROR_SET(err, 1, "cannot make temp dir");
+      return -1;
+    }
+    if (xw_pkg_open(pkgpath, &pkg) != 0 ||
+        xw_pkg_extract_all(pkg, tmp) != 0) {
+      if (pkg)
+        xw_pkg_close(pkg);
+      XW_ERROR_SET(err, 1, "cannot unpack scene.pkg");
+      rmdir(tmp);
+      return -1;
+    }
+    xw_pkg_close(pkg);
+    snprintf(c->dir, sizeof(c->dir), "%s", tmp);
+    snprintf(c->tmpdir, sizeof(c->tmpdir), "%s", tmp);
+  }
+  return 0;
+}
+
 static int paint_gl(XWSceneCtx *c) {
   XWError rerr;
   float t;
@@ -295,10 +355,12 @@ static int render_overlays(XWSceneCtx *c, const float *alphas, XWError *rerr) {
   for (i = 0; i < c->scene.n_objects; i++) {
     const XWSceneObject *o = &c->scene.objects[i];
     float a = alphas ? alphas[i] : 1.0f;
+    int r;
     if (!o->visible || o->type != XW_OBJ_PARTICLE)
       continue;
-    if (xw_scene_particle_render(c->gl, o, &c->emitters[i], c->dir, dt, a,
-                                 rerr) != 0)
+    r = xw_scene_particle_render(c->gl, o, &c->emitters[i], c->dir, dt, a,
+                                 rerr);
+    if (r < 0)
       return -1;
   }
   /* text pass: per-type loops until the multi-object composite task;
@@ -306,9 +368,11 @@ static int render_overlays(XWSceneCtx *c, const float *alphas, XWError *rerr) {
   for (i = 0; i < c->scene.n_objects; i++) {
     const XWSceneObject *o = &c->scene.objects[i];
     float a = alphas ? alphas[i] : 1.0f;
+    int r;
     if (!o->visible || o->type != XW_OBJ_TEXT)
       continue;
-    if (xw_scene_text_draw(c->gl, o, c->dir, &c->texts[i], a, rerr) != 0)
+    r = xw_scene_text_draw(c->gl, o, c->dir, &c->texts[i], a, rerr);
+    if (r < 0)
       return -1;
   }
   return 0;
@@ -353,17 +417,22 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     return -1;
   }
   c->win = win;
-  snprintf(c->dir, sizeof(c->dir), "%s", opt->path);
+  if (resolve_dir(c, opt->path, err) != 0) {
+    free(c);
+    return -1;
+  }
   c->fps = opt->fps > 0.0 ? opt->fps : XW_SCENE_FPS_DEFAULT;
   c->mute = opt->mute ? 1 : 0;
   c->volume = opt->volume;
   if (xw_scene_parse(c->dir, &c->scene, err) != 0) {
+    free_tmpdir(c);
     free(c);
     return -1;
   }
   c->parsed = 1;
   if (init_emitters(c, err) != 0) {
     xw_scene_free(&c->scene);
+    free_tmpdir(c);
     free(c);
     return -1;
   }
@@ -373,6 +442,7 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     XW_ERROR_SET(err, 1, "out of memory");
     free_emitters(c);
     xw_scene_free(&c->scene);
+    free_tmpdir(c);
     free(c);
     return -1;
   }
@@ -380,10 +450,10 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     free(c->texts);
     free_emitters(c);
     xw_scene_free(&c->scene);
+    free_tmpdir(c);
     free(c);
     return -1;
   }
-  init_sounds(c);
   c->gc = XCreateGC(win->dpy, win->win, 0, NULL);
   if (!c->gc) {
     XW_ERROR_SET(err, 1, "cannot create scene GC");
@@ -392,6 +462,7 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     free_sounds(c);
     free_emitters(c);
     xw_scene_free(&c->scene);
+    free_tmpdir(c);
     free(c);
     return -1;
   }
@@ -436,6 +507,7 @@ static void scene_destroy(XWBackend *b) {
   if (c->gc)
     XFreeGC(c->win->dpy, c->gc);
   xw_scene_free(&c->scene);
+  free_tmpdir(c);
   free(c);
   b->priv = NULL;
 }
@@ -448,14 +520,19 @@ static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
     return -1;
   }
   memset(&next, 0, sizeof(next));
-  if (xw_scene_parse(opt->path, &next, err) != 0)
-    return -1;
   free_texts(c);
   free_sounds(c);
   free_script(c);
   xw_scene_free(&c->scene);
+  free_tmpdir(c);
+  memset(&c->scene, 0, sizeof(c->scene));
+  if (resolve_dir(c, opt->path, err) != 0)
+    return -1;
+  if (xw_scene_parse(c->dir, &next, err) != 0) {
+    free_tmpdir(c);
+    return -1;
+  }
   c->scene = next;
-  snprintf(c->dir, sizeof(c->dir), "%s", opt->path);
   c->mute = opt->mute ? 1 : 0;
   c->volume = opt->volume;
   if (init_emitters(c, err) != 0)

@@ -33,4 +33,10 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
                   XWError *err);
 void xw_tex_image_free(XWTexImage *img);
 
+/* Resolve a material texture ref to a loadable file. Bare refs ("night
+ * blue") anchor at the material file's directory, pathed refs at the
+ * scene directory; tries "", ".tex", ".png", ".jpg" in order. */
+int xw_tex_resolve(const char *dir, const char *material, const char *ref,
+                   char *out, size_t n);
+
 #endif

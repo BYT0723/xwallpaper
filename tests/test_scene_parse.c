@@ -199,9 +199,12 @@ static void test_realrain(void) {
       const XWScenePass *p = &fx->passes[0];
       TEST_CHECK_EQ_STR(p->shader, "effects/waterripple");
       TEST_CHECK(p->n_consts >= 3);
-      TEST_CHECK_EQ_INT(p->n_textures, 2);
-      TEST_CHECK_EQ_STR(p->textures[0],
+      /* slot-aligned: [null, mask, normal] keeps unit indices */
+      TEST_CHECK_EQ_INT(p->n_textures, 3);
+      TEST_CHECK_EQ_STR(p->textures[0], "");
+      TEST_CHECK_EQ_STR(p->textures[1],
                         "masks/waterripple_mask_14baecd88cd86197979e9592a3614e57bbd01235");
+      TEST_CHECK_EQ_STR(p->textures[2], "effects/waterripplenormal");
     }
   }
   /* rain particle config + instanceoverride multipliers */
@@ -243,6 +246,22 @@ static void test_bad_inputs(void) {
   TEST_CHECK_EQ_INT(xw_scene_parse("tests/data", &s, &err), -1);
 }
 
+static void test_visible_dict(void) {
+  TEST_BEGIN("visible {user, value} dicts resolve via value");
+  XWScene s;
+  memset(&s, 0, sizeof(s));
+  XWError err = {0};
+  int rc = xw_scene_parse("tests/data/scene/visibledict", &s, &err);
+  TEST_CHECK_EQ_INT(rc, 0);
+  if (rc != 0)
+    return;
+  TEST_CHECK_EQ_INT(s.n_objects, 3);
+  TEST_CHECK_EQ_INT(s.objects[0].visible, 1);
+  TEST_CHECK_EQ_INT(s.objects[1].visible, 0);
+  TEST_CHECK_EQ_INT(s.objects[2].visible, 0);
+  xw_scene_free(&s);
+}
+
 int main(void) {
   TEST_SUITE("scene_parse");
   test_parse_fixture();
@@ -251,5 +270,6 @@ int main(void) {
   test_full_props_script();
   test_gl_texture();
   test_realrain();
+  test_visible_dict();
   TEST_SUMMARY();
 }

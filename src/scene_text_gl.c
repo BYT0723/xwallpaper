@@ -14,17 +14,17 @@ int xw_scene_text_draw(XWGl *g, const XWSceneObject *o, const char *dir,
     XW_ERROR_SET(err, 1, "invalid args");
     return -1;
   }
-  if (!o->text.font[0]) {
-    XW_ERROR_SET(err, 1, "text object '%s' has no font", o->id);
-    return -1;
-  }
+  if (!o->text.font[0])
+    return 1;
   if (!it->valid || strcmp(it->font, o->text.font) != 0 ||
       strcmp(it->content, o->text.content) != 0 || it->size != o->text.size) {
     xw_text_item_free(g, it);
     snprintf(font_path, sizeof(font_path), "%s/%s", dir, o->text.font);
     if (xw_text_rasterize(font_path, o->text.content, o->text.size, &px, &w,
-                           &h, err) != 0)
-      return -1;
+                           &h, err) != 0) {
+      memset(err, 0, sizeof(*err));
+      return 1;
+    }
     if (xw_gl_upload_rgba(g, px, w, h, &it->tex, err) != 0) {
       free(px);
       return -1;

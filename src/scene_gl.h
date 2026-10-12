@@ -4,6 +4,7 @@
 #include <X11/Xlib.h>
 
 #include "scene_core.h"
+#include "scene_model.h"
 #include "xw_err.h"
 
 /* Desktop-GL runtime for scene wallpapers (daemon-only).
@@ -42,8 +43,9 @@ int xw_gl_delete_texture(XWGl *g, unsigned int tex);
 
 /* Compile+link a WE-dialect fragment file with the builtin vertex shader,
  * cached by path. */
-int xw_gl_program_we(XWGl *g, const char *frag_path, unsigned int *prog,
-                     XWError *err);
+int xw_gl_program_we(XWGl *g, const char *frag_path,
+                     const XWSceneCombo *combos, int n_combos,
+                     unsigned int *prog, XWError *err);
 
 /* Builtin base-copy program (samples xw_tex0). */
 int xw_gl_program_copy(XWGl *g, unsigned int *prog, XWError *err);
@@ -82,6 +84,31 @@ int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time);
 /* Like draw, also binding xw_alpha when the program declares it. */
 int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
                      float alpha);
+
+/* Effect-pass draw: binds g_Texture0..7 (unit 0 = input, the rest = slots
+ * with input as fallback), g_Texture{i}Resolution vec4s, identity MVP
+ * matrices, g_Time, and annotated uniform defaults overridden by the
+ * scene pass constants (matched by material name). slots[0] overrides
+ * the input when its tex is nonzero. res layout: {texW,texH,realW,realH}. */
+#define XW_GL_WE_SLOTS 8
+typedef struct XWWeSlot {
+  unsigned int tex;
+  float res[4];
+} XWWeSlot;
+int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
+                  const float input_res[4], const XWWeSlot *slots,
+                  const XWSceneConst *consts, int n_consts, float time);
+
+/* Pixel dims of a cached texture (texW/texH, realW/realH). */
+int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
+                       int *rh);
+
+/* Current render target size (window/FBO pixels). */
+int xw_gl_target_size(XWGl *g, int *w, int *h);
+
+/* WE builtin util/ textures (black/white/noflow/perlin_256), cached. */
+int xw_gl_util_texture(XWGl *g, const char *name, unsigned int *tex,
+                       float res[4]);
 
 /* Texture id backing internal FBO idx (for ping-pong sources). */
 int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex);
