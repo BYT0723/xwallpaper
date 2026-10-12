@@ -174,6 +174,9 @@ tests/test_scene_shader: tests/test_scene_shader.c src/scene_shader.o
 tests/test_scene_parse: tests/test_scene_parse.c src/scene_parse.o
 	$(CC) $(CFLAGS) $(SCENE_CFLAGS) -o $@ $< src/scene_parse.o $(SCENE_LIBS)
 
+tests/test_scene_core: tests/test_scene_core.c src/scene_core.o
+	$(CC) $(CFLAGS) -o $@ $< src/scene_core.o
+
 # test_wl compiles wl.c sources directly (without XW_HAVE_WAYLAND, so only
 # the pure-logic part builds): keeps the unit test free of wayland headers
 # and avoids sharing src/wl.o flag state with the daemon build.

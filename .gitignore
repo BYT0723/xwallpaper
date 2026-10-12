@@ -13,6 +13,7 @@ xwallpaperd
 /tests/test_scene_tex
 /tests/test_scene_shader
 /tests/test_scene_parse
+/tests/test_scene_core
 /tests/integration/test_x11
 /tests/integration/test_image
 /tests/integration/test_video

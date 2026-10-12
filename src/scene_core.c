@@ -1,4 +1,99 @@
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
 #include "scene_core.h"
+
+void xw_fbo_table_init(XWFboTable *t) {
+  if (!t) return;
+  memset(t, 0, sizeof(*t));
+}
+
+int xw_fbo_create(XWFboTable *t, const char *name, unsigned int w,
+                  unsigned int h, float scale, XWGlId id) {
+  if (!t || !name || !name[0] || w == 0 || h == 0) return -1;
+  if (xw_fbo_find(t, name) != NULL) return -1;
+  if (t->n >= XW_FBO_MAX) return -1;
+  XWFbo *f = &t->fbos[t->n++];
+  snprintf(f->name, sizeof(f->name), "%s", name);
+  f->id = id;
+  f->w = w;
+  f->h = h;
+  f->scale = scale;
+  return 0;
+}
+
+int xw_fbo_alias(XWFboTable *t, const char *alias, const char *target) {
+  const XWFbo *src;
+  if (!t || !alias || !alias[0] || !target) return -1;
+  src = xw_fbo_find(t, target);
+  if (!src) return -1;
+  return xw_fbo_create(t, alias, src->w, src->h, src->scale, src->id);
+}
+
+const XWFbo *xw_fbo_find(const XWFboTable *t, const char *name) {
+  int i;
+  if (!t || !name) return NULL;
+  for (i = 0; i < t->n; i++)
+    if (strncmp(t->fbos[i].name, name, XW_FBO_NAME_MAX) == 0) return &t->fbos[i];
+  return NULL;
+}
+
+void xw_camera_ortho(float l, float r, float b, float tt, float *m16) {
+  if (!m16) return;
+  memset(m16, 0, 16 * sizeof(float));
+  m16[0] = 2.0f / (r - l);
+  m16[5] = 2.0f / (tt - b);
+  m16[10] = -1.0f;
+  m16[12] = -(r + l) / (r - l);
+  m16[13] = -(tt + b) / (tt - b);
+  m16[15] = 1.0f;
+}
+
+void xw_camera_auto_size(const XWSceneObject *objs, int n, float fb_w,
+                         float fb_h, float *w, float *h) {
+  float mw = 0.0f, mh = 0.0f;
+  int i;
+  if (!w || !h) return;
+  for (i = 0; objs && i < n; i++) {
+    float need_w = (fabsf(objs[i].origin[0]) + objs[i].size[0] / 2.0f) * 2.0f;
+    float need_h = (fabsf(objs[i].origin[1]) + objs[i].size[1] / 2.0f) * 2.0f;
+    if (need_w > mw) mw = need_w;
+    if (need_h > mh) mh = need_h;
+  }
+  *w = mw > 0.0f ? mw : fb_w;
+  *h = mh > 0.0f ? mh : fb_h;
+}
+
+void xw_blend_funcs(XWBlend m, int *srcRGB, int *dstRGB, int *srcA, int *dstA) {
+  int sRGB = XW_GL_ONE, dRGB = XW_GL_ZERO;
+  int sA = XW_GL_ONE, dA = XW_GL_ZERO;
+  switch (m) {
+  case XW_BLEND_TRANSLUCENT:
+    sRGB = XW_GL_SRC_ALPHA;
+    dRGB = XW_GL_ONE_MINUS_SRC_ALPHA;
+    sA = XW_GL_ONE;
+    dA = XW_GL_ONE_MINUS_SRC_ALPHA;
+    break;
+  case XW_BLEND_ADDITIVE:
+    sRGB = XW_GL_SRC_ALPHA;
+    dRGB = XW_GL_ONE;
+    sA = XW_GL_SRC_ALPHA;
+    dA = XW_GL_ONE;
+    break;
+  case XW_BLEND_NORMAL:
+  default:
+    break;
+  }
+  if (srcRGB) *srcRGB = sRGB;
+  if (dstRGB) *dstRGB = dRGB;
+  if (srcA) *srcA = sA;
+  if (dstA) *dstA = dA;
+}
+
+int xw_bloom_enabled(const XWSceneCamera *cam) {
+  return (cam && cam->bloom) ? 1 : 0;
+}
 
 int xw_core_present_uvs(float *u0, float *v0, float *u1, float *v1) {
   if (u0) *u0 = 0.0f;
