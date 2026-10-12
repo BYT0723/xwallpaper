@@ -91,6 +91,18 @@ SND_LIBS :=
 $(info xwallpaper: scene sound OFF (need: $(SND_PKGS) dev package))
 endif
 
+# ---- Scene textures (LZ4 mipmap decompression): daemon-only ----
+LZ4_PKGS := liblz4
+HAVE_LZ4 := $(shell pkg-config --exists $(LZ4_PKGS) && echo 1 || echo 0)
+ifeq ($(HAVE_LZ4),1)
+LZ4_CFLAGS := $(shell pkg-config --cflags $(LZ4_PKGS)) -DXW_HAVE_LZ4=1
+LZ4_LIBS := $(shell pkg-config --libs $(LZ4_PKGS))
+else
+LZ4_CFLAGS :=
+LZ4_LIBS :=
+$(info xwallpaper: scene TEXV decode OFF (need: $(LZ4_PKGS) dev package))
+endif
+
 # ---- PulseAudio monitor capture (WE audio listener): daemon-only ----
 # libpulse works via pipewire-pulse with no new daemon process.
 # The thin CLI never sees these flags or libs (check-client-libs guards that).
@@ -154,7 +166,7 @@ $(info xwallpaper: Wayland layer-shell support OFF (need: $(WL_PKGS) libs + 'mak
 endif
 
 # wayland flags reach daemon objects only (protocol obj included above).
-$(DAEMON_OBJ): CFLAGS += $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) $(GL_CFLAGS) $(FT_CFLAGS) $(SND_CFLAGS)
+$(DAEMON_OBJ): CFLAGS += $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) $(GL_CFLAGS) $(FT_CFLAGS) $(SND_CFLAGS) $(LZ4_CFLAGS)
 
 BINS := xwallpaper xwallpaperd
 
@@ -188,7 +200,7 @@ xwallpaper: $(CLI_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(CLI_OBJ) $(SANITIZE)
 
 xwallpaperd: $(DAEMON_OBJ)
-	$(CC) $(LDFLAGS) -o $@ $(DAEMON_OBJ) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) $(GL_LIBS) $(FT_LIBS) $(SND_LIBS) -lm
+	$(CC) $(LDFLAGS) -o $@ $(DAEMON_OBJ) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) $(GL_LIBS) $(FT_LIBS) $(SND_LIBS) $(LZ4_LIBS) -lm
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -225,7 +237,7 @@ tests/test_scene_pkg: tests/test_scene_pkg.c src/scene_pkg.o
 	$(CC) $(CFLAGS) -o $@ $< src/scene_pkg.o
 
 tests/test_scene_tex: tests/test_scene_tex.c src/scene_tex.o
-	$(CC) $(CFLAGS) -o $@ $< src/scene_tex.o
+	$(CC) $(CFLAGS) $(LZ4_CFLAGS) -o $@ $< src/scene_tex.o $(LZ4_LIBS)
 
 tests/test_scene_shader: tests/test_scene_shader.c src/scene_shader.o
 	$(CC) $(CFLAGS) -o $@ $< src/scene_shader.o
@@ -258,7 +270,7 @@ test: $(TEST_BIN)
 	@for t in $(TEST_BIN); do echo "== $$t =="; ./$$t || exit 1; done
 
 tests/integration/%: tests/integration/%.c $(filter-out src/dmain.o,$(DAEMON_OBJ))
-	$(CC) $(CFLAGS) $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) $(GL_CFLAGS) $(FT_CFLAGS) $(SND_CFLAGS) -o $@ $< $(filter-out src/dmain.o,$(DAEMON_OBJ)) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) $(GL_LIBS) $(FT_LIBS) $(SND_LIBS) -lm
+	$(CC) $(CFLAGS) $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) $(GL_CFLAGS) $(FT_CFLAGS) $(SND_CFLAGS) $(LZ4_CFLAGS) -o $@ $< $(filter-out src/dmain.o,$(DAEMON_OBJ)) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) $(GL_LIBS) $(FT_LIBS) $(SND_LIBS) $(LZ4_LIBS) -lm
 
 test-xvfb: $(BINS) $(INTEG_BIN)
 	@for t in $(INTEG_BIN); do \

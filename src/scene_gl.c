@@ -11,6 +11,7 @@
 
 #include "scene_gl.h"
 #include "scene_shader.h"
+#include "scene_tex.h"
 
 #define XW_GL_PROG_MAX 16
 #define XW_GL_TEXCACHE_MAX 8
@@ -258,14 +259,204 @@ void xw_gl_destroy(XWGl *g) {
   free(g);
 }
 
-int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
-  Imlib_Context ictx;
-  Imlib_Image img;
+
+static int cache_store(XWGl *g, const char *path, GLuint t, XWError *err) {
+  if (g->ntex >= XW_GL_TEXCACHE_MAX) {
+    if (t)
+      glDeleteTextures(1, &t);
+    XW_ERROR_SET(err, 1, "texture cache full");
+    return -1;
+  }
+  snprintf(g->texcache[g->ntex].path, sizeof(g->texcache[g->ntex].path), "%s",
+           path);
+  g->texcache[g->ntex].tex = t;
+  g->ntex++;
+  return 0;
+}
+
+static int cache_fail(XWGl *g, const char *path, XWError *err, const char *msg) {
+  if (g->ntex < XW_GL_TEXCACHE_MAX) {
+    snprintf(g->texcache[g->ntex].path, sizeof(g->texcache[g->ntex].path),
+             "%s", path);
+    g->texcache[g->ntex].tex = 0;
+    g->ntex++;
+  }
+  XW_ERROR_SET(err, 1, "%s '%s'", msg, path);
+  return -1;
+}
+
+static int upload_rgba_bytes(XWGl *g, const unsigned char *px, int w, int h,
+                             GLuint *t) {
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glGenTextures(1, t);
+  glBindTexture(GL_TEXTURE_2D, *t);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+               px);
+  return 0;
+}
+
+/* current imlib image must already be set by the caller */
+static int upload_imlib_current(XWGl *g, const char *path, GLuint *t,
+                                XWError *err) {
   int iw, ih, x, y;
   DATA32 *data;
   unsigned char *px;
-  GLuint t;
-  int i;
+  iw = imlib_image_get_width();
+  ih = imlib_image_get_height();
+  if (iw <= 0 || ih <= 0 || iw > 8192 || ih > 8192) {
+    XW_ERROR_SET(err, 1, "bad texture size '%s'", path);
+    return -1;
+  }
+  data = imlib_image_get_data_for_reading_only();
+  px = malloc((size_t)iw * ih * 4);
+  if (!px)
+    return gl_error("out of memory", err);
+  for (y = 0; y < ih; y++)
+    for (x = 0; x < iw; x++) {
+      DATA32 d = data[y * iw + x];
+      unsigned char *o = px + ((size_t)y * iw + x) * 4;
+      o[0] = (unsigned char)((d >> 16) & 0xff);
+      o[1] = (unsigned char)((d >> 8) & 0xff);
+      o[2] = (unsigned char)(d & 0xff);
+      o[3] = (unsigned char)((d >> 24) & 0xff);
+    }
+  upload_rgba_bytes(g, px, iw, ih, t);
+  free(px);
+  return 0;
+}
+
+static int upload_texv(XWGl *g, const unsigned char *file, size_t flen,
+                       GLuint *t, XWError *err) {
+  XWTexImage img;
+  int rc = -1;
+  memset(&img, 0, sizeof(img));
+  if (xw_tex_decode(file, flen, &img, err) != 0)
+    return -1;
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  switch (img.fmt) {
+  case XW_TEXFMT_RGBA8:
+    /* byte order exactly as the reference uploads it */
+    glGenTextures(1, t);
+    glBindTexture(GL_TEXTURE_2D, *t);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (int)img.tex_w, (int)img.tex_h,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, img.px);
+    rc = 0;
+    break;
+  case XW_TEXFMT_R8:
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glGenTextures(1, t);
+    glBindTexture(GL_TEXTURE_2D, *t);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, (int)img.tex_w, (int)img.tex_h, 0,
+                 GL_RED, GL_UNSIGNED_BYTE, img.px);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    rc = 0;
+    break;
+  case XW_TEXFMT_RG88:
+    glGenTextures(1, t);
+    glBindTexture(GL_TEXTURE_2D, *t);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8, (int)img.tex_w, (int)img.tex_h, 0,
+                 GL_RG, GL_UNSIGNED_BYTE, img.px);
+    rc = 0;
+    break;
+  case XW_TEXFMT_DXT1:
+  case XW_TEXFMT_DXT3:
+  case XW_TEXFMT_DXT5: {
+    GLenum internal = img.fmt == XW_TEXFMT_DXT1
+                          ? GL_COMPRESSED_RGBA_S3TC_DXT1_EXT
+                      : img.fmt == XW_TEXFMT_DXT3
+                          ? GL_COMPRESSED_RGBA_S3TC_DXT3_EXT
+                          : GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+    glGenTextures(1, t);
+    glBindTexture(GL_TEXTURE_2D, *t);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glCompressedTexImage2D(GL_TEXTURE_2D, 0, internal, (int)img.tex_w,
+                           (int)img.tex_h, 0, (GLsizei)img.len, img.px);
+    rc = glGetError() == GL_NO_ERROR ? 0 : -1;
+    if (rc != 0)
+      XW_ERROR_SET(err, 1, "driver rejected compressed texture");
+    break;
+  }
+  case XW_TEXFMT_PNG: {
+    Imlib_Context ictx = imlib_context_new();
+    Imlib_Image im;
+    if (!ictx) {
+      XW_ERROR_SET(err, 1, "out of memory");
+      break;
+    }
+    imlib_context_push(ictx);
+    im = imlib_load_image_mem("x.png", img.px, img.len);
+    if (!im) {
+      imlib_context_pop();
+      imlib_context_free(ictx);
+      XW_ERROR_SET(err, 1, "cannot decode embedded png");
+      break;
+    }
+    imlib_context_set_image(im);
+    rc = upload_imlib_current(g, "embedded", t, err);
+    imlib_free_image();
+    imlib_context_pop();
+    imlib_context_free(ictx);
+    break;
+  }
+  }
+  xw_tex_image_free(&img);
+  return rc;
+}
+
+static unsigned char *slurp_file(const char *path, size_t *len, size_t cap) {
+  FILE *f = fopen(path, "rb");
+  long sz;
+  unsigned char *b;
+  if (!f)
+    return NULL;
+  fseek(f, 0, SEEK_END);
+  sz = ftell(f);
+  rewind(f);
+  if (sz <= 0 || (size_t)sz > cap) {
+    fclose(f);
+    return NULL;
+  }
+  b = malloc((size_t)sz);
+  if (!b) {
+    fclose(f);
+    return NULL;
+  }
+  if (fread(b, 1, (size_t)sz, f) != (size_t)sz) {
+    free(b);
+    fclose(f);
+    return NULL;
+  }
+  fclose(f);
+  *len = (size_t)sz;
+  return b;
+}
+
+int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
+  Imlib_Context ictx;
+  Imlib_Image img;
+  GLuint t = 0;
+  unsigned char *file = NULL;
+  size_t flen = 0;
+  int i, rc = -1;
   if (!g || !path || !tex)
     return gl_error("invalid args", err);
   for (i = 0; i < g->ntex; i++)
@@ -277,6 +468,22 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
       *tex = g->texcache[i].tex;
       return 0;
     }
+  file = slurp_file(path, &flen, 64 * 1024 * 1024);
+  if (!file)
+    return cache_fail(g, path, err, "cannot read texture");
+  if (flen >= 4 && memcmp(file, "TEXV", 4) == 0) {
+    rc = upload_texv(g, file, flen, &t, err);
+    free(file);
+    if (rc != 0) {
+      cache_fail(g, path, err, "cannot decode texture");
+      return -1;
+    }
+    if (cache_store(g, path, t, err) != 0)
+      return -1;
+    *tex = t;
+    return 0;
+  }
+  free(file);
   ictx = imlib_context_new();
   if (!ictx)
     return gl_error("imlib_context_new failed", err);
@@ -285,65 +492,19 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
   if (!img) {
     imlib_context_pop();
     imlib_context_free(ictx);
-    if (g->ntex < XW_GL_TEXCACHE_MAX) {
-      snprintf(g->texcache[g->ntex].path, sizeof(g->texcache[g->ntex].path),
-               "%s", path);
-      g->texcache[g->ntex].tex = 0;
-      g->ntex++;
-    }
-    XW_ERROR_SET(err, 1, "cannot load texture '%s'", path);
-    return -1;
+    return cache_fail(g, path, err, "cannot load texture");
   }
   imlib_context_set_image(img);
-  iw = imlib_image_get_width();
-  ih = imlib_image_get_height();
-  if (iw <= 0 || ih <= 0 || iw > 8192 || ih > 8192) {
-    imlib_free_image();
-    imlib_context_pop();
-    imlib_context_free(ictx);
-    XW_ERROR_SET(err, 1, "bad texture size '%s'", path);
-    return -1;
-  }
-  data = imlib_image_get_data_for_reading_only();
-  px = malloc((size_t)iw * ih * 4);
-  if (!px) {
-    imlib_free_image();
-    imlib_context_pop();
-    imlib_context_free(ictx);
-    return gl_error("out of memory", err);
-  }
-  for (y = 0; y < ih; y++)
-    for (x = 0; x < iw; x++) {
-      DATA32 d = data[y * iw + x];
-      unsigned char *o = px + ((size_t)y * iw + x) * 4;
-      o[0] = (unsigned char)((d >> 16) & 0xff);
-      o[1] = (unsigned char)((d >> 8) & 0xff);
-      o[2] = (unsigned char)(d & 0xff);
-      o[3] = (unsigned char)((d >> 24) & 0xff);
-    }
+  rc = upload_imlib_current(g, path, &t, err);
   imlib_free_image();
   imlib_context_pop();
   imlib_context_free(ictx);
-  glXMakeCurrent(g->dpy, g->win, g->ctx);
-  glGenTextures(1, &t);
-  glBindTexture(GL_TEXTURE_2D, t);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, iw, ih, 0, GL_RGBA,
-               GL_UNSIGNED_BYTE, px);
-  free(px);
-  if (g->ntex < XW_GL_TEXCACHE_MAX) {
-    snprintf(g->texcache[g->ntex].path, sizeof(g->texcache[g->ntex].path),
-             "%s", path);
-    g->texcache[g->ntex].tex = t;
-    g->ntex++;
-  } else {
-    glDeleteTextures(1, &t);
-    XW_ERROR_SET(err, 1, "texture cache full");
+  if (rc != 0) {
+    cache_fail(g, path, err, "cannot decode texture");
     return -1;
   }
+  if (cache_store(g, path, t, err) != 0)
+    return -1;
   *tex = t;
   return 0;
 }

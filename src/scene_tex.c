@@ -1,5 +1,11 @@
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#ifdef XW_HAVE_LZ4
+#include <lz4.h>
+#endif
 
 #include "scene_tex.h"
 
@@ -31,5 +37,252 @@ int xw_tex_find_image(const unsigned char *data, size_t len, size_t *img_off,
   *w = rd32be(data + off + 16);
   *h = rd32be(data + off + 20);
   if (*w == 0 || *h == 0 || *w > 16384 || *h > 16384) return -1;
+  return 0;
+}
+
+
+/* ---- raw TEXV decode ----
+ * Layouts follow linux-wallpaperengine's TextureParser: TEXV0005 header,
+ * TEXI0001 dimensions, TEXB0001-4 containers, LZ4 mipmaps. Level-0 mipmap
+ * only; animations/video rejected. */
+
+static uint32_t rd32le(const unsigned char *p) {
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+         ((uint32_t)p[3] << 24);
+}
+
+typedef struct XWTexCursor {
+  const unsigned char *base;
+  size_t len;
+  size_t pos;
+} XWTexCursor;
+
+static int cur_bytes(XWTexCursor *c, void *out, size_t n, XWError *err,
+                     const char *what) {
+  if (!c || c->pos + n > c->len || c->pos + n < c->pos) {
+    XW_ERROR_SET(err, 1, "tex truncated at %s", what);
+    return -1;
+  }
+  memcpy(out, c->base + c->pos, n);
+  c->pos += n;
+  return 0;
+}
+
+static int cur_u32(XWTexCursor *c, uint32_t *v, XWError *err, const char *what) {
+  unsigned char b[4];
+  if (cur_bytes(c, b, 4, err, what) != 0)
+    return -1;
+  *v = rd32le(b);
+  return 0;
+}
+
+static int cur_magic(XWTexCursor *c, const char *want, XWError *err) {
+  char got[9];
+  memset(got, 0, sizeof(got));
+  if (cur_bytes(c, got, 9, err, "magic") != 0)
+    return -1;
+  if (memcmp(got, want, 8) != 0) {
+    XW_ERROR_SET(err, 1, "bad tex magic");
+    return -1;
+  }
+  return 0;
+}
+
+void xw_tex_image_free(XWTexImage *img) {
+  if (!img)
+    return;
+  free(img->px);
+  memset(img, 0, sizeof(*img));
+}
+
+/* WE texture format ids (see reference Texture.h) */
+#define XW_TEX_ARGB8888 0u
+#define XW_TEX_DXT5 4u
+#define XW_TEX_DXT3 6u
+#define XW_TEX_DXT1 7u
+#define XW_TEX_RG88 8u
+#define XW_TEX_R8 9u
+/* FreeImage ids; PNG is the only embedded file we decode (via imlib) */
+#define XW_FIF_PNG 13u
+#define XW_FIF_UNKNOWN 0xFFFFFFFFu
+
+static size_t dxt_bytes(uint32_t w, uint32_t h, int block) {
+  size_t bw = ((size_t)w + 3) / 4, bh = ((size_t)h + 3) / 4;
+  return bw * bh * (size_t)block;
+}
+
+int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
+                  XWError *err) {
+  XWTexCursor c = {data, len, 0};
+  uint32_t format, flags, texw, texh, w, h, fif = XW_FIF_UNKNOWN;
+  uint32_t images, mipmaps, mw, mh, comp;
+  int32_t usize = 0, csize = 0;
+  char container[9];
+  size_t expect = 0;
+  memset(img, 0, sizeof(*img));
+  memset(container, 0, sizeof(container));
+  if (!data || len < 64) {
+    XW_ERROR_SET(err, 1, "invalid args");
+    return -1;
+  }
+  if (cur_magic(&c, "TEXV0005", err) != 0)
+    return -1;
+  if (cur_magic(&c, "TEXI0001", err) != 0)
+    return -1;
+  if (cur_u32(&c, &format, err, "format") != 0 ||
+      cur_u32(&c, &flags, err, "flags") != 0 ||
+      cur_u32(&c, &texw, err, "texw") != 0 ||
+      cur_u32(&c, &texh, err, "texh") != 0 ||
+      cur_u32(&c, &w, err, "w") != 0 || cur_u32(&c, &h, err, "h") != 0)
+    return -1;
+  {
+    uint32_t ign;
+    if (cur_u32(&c, &ign, err, "reserved") != 0)
+      return -1;
+  }
+  (void)flags;
+  (void)texw;
+  (void)texh;
+  if (cur_bytes(&c, container, 9, err, "container") != 0)
+    return -1;
+  if (memcmp(container, "TEXB0003", 8) == 0) {
+    /* NOTE: image count comes first here; the reference reads the
+     * embedded-file id first, which only fits newer files */
+    if (cur_u32(&c, &images, err, "images") != 0)
+      return -1;
+    if (images < 1 || images > 64) {
+      XW_ERROR_SET(err, 1, "bad image count");
+      return -1;
+    }
+    if (cur_u32(&c, &fif, err, "fif") != 0)
+      return -1;
+    if (fif != XW_FIF_UNKNOWN && fif != XW_FIF_PNG) {
+      XW_ERROR_SET(err, 1, "unsupported embedded format %u", fif);
+      return -1;
+    }
+  } else if (memcmp(container, "TEXB0001", 8) != 0 &&
+             memcmp(container, "TEXB0002", 8) != 0) {
+    XW_ERROR_SET(err, 1, "unsupported container");
+    return -1;
+  } else {
+    if (cur_u32(&c, &images, err, "images") != 0)
+      return -1;
+    if (images < 1 || images > 64) {
+      XW_ERROR_SET(err, 1, "bad image count");
+      return -1;
+    }
+  }
+  if (cur_u32(&c, &mipmaps, err, "mipmaps") != 0)
+    return -1;
+  if (mipmaps < 1 || mipmaps > 32) {
+    XW_ERROR_SET(err, 1, "bad mipmap count");
+    return -1;
+  }
+  if (cur_u32(&c, &mw, err, "mw") != 0 || cur_u32(&c, &mh, err, "mh") != 0 ||
+      cur_u32(&c, &comp, err, "comp") != 0)
+    return -1;
+  {
+    unsigned char b[8];
+    if (cur_bytes(&c, b, 8, err, "sizes") != 0)
+      return -1;
+    usize = (int32_t)rd32le(b);
+    csize = (int32_t)rd32le(b + 4);
+  }
+  if (mw == 0 || mh == 0 || mw > 8192 || mh > 8192) {
+    XW_ERROR_SET(err, 1, "bad mip size");
+    return -1;
+  }
+  if (comp != 0 && comp != 1) {
+    XW_ERROR_SET(err, 1, "unsupported compression %u", comp);
+    return -1;
+  }
+  if (csize <= 0 || usize < 0 || (size_t)csize > c.len - c.pos) {
+    XW_ERROR_SET(err, 1, "bad mip sizes");
+    return -1;
+  }
+  if (fif == XW_FIF_PNG) {
+    /* embedded file: hand the raw bytes up for imlib */
+    img->px = malloc((size_t)csize);
+    if (!img->px) {
+      XW_ERROR_SET(err, 1, "out of memory");
+      return -1;
+    }
+    memcpy(img->px, c.base + c.pos, (size_t)csize);
+    img->len = (size_t)csize;
+    img->fmt = XW_TEXFMT_PNG;
+    img->w = w ? w : mw;
+    img->h = h ? h : mh;
+    img->tex_w = mw;
+    img->tex_h = mh;
+    return 0;
+  }
+  switch (format) {
+  case XW_TEX_ARGB8888:
+    img->fmt = XW_TEXFMT_RGBA8;
+    expect = (size_t)mw * mh * 4;
+    break;
+  case XW_TEX_R8:
+    img->fmt = XW_TEXFMT_R8;
+    expect = (size_t)mw * mh;
+    break;
+  case XW_TEX_RG88:
+    img->fmt = XW_TEXFMT_RG88;
+    expect = (size_t)mw * mh * 2;
+    break;
+  case XW_TEX_DXT1:
+    img->fmt = XW_TEXFMT_DXT1;
+    expect = dxt_bytes(mw, mh, 8);
+    break;
+  case XW_TEX_DXT3:
+    img->fmt = XW_TEXFMT_DXT3;
+    expect = dxt_bytes(mw, mh, 16);
+    break;
+  case XW_TEX_DXT5:
+    img->fmt = XW_TEXFMT_DXT5;
+    expect = dxt_bytes(mw, mh, 16);
+    break;
+  default:
+    XW_ERROR_SET(err, 1, "unsupported tex format %u", format);
+    return -1;
+  }
+  if ((size_t)usize != expect) {
+    XW_ERROR_SET(err, 1, "size mismatch");
+    return -1;
+  }
+  img->px = malloc(expect ? expect : 1);
+  if (!img->px) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
+  if (comp == 1) {
+#ifdef XW_HAVE_LZ4
+    int got = LZ4_decompress_safe((const char *)c.base + c.pos, (char *)img->px,
+                                  csize, usize);
+    if (got < 0 || (size_t)got != (size_t)usize) {
+      free(img->px);
+      img->px = NULL;
+      XW_ERROR_SET(err, 1, "lz4 decode failed");
+      return -1;
+    }
+#else
+    free(img->px);
+    img->px = NULL;
+    XW_ERROR_SET(err, 1, "lz4 support not compiled in");
+    return -1;
+#endif
+  } else {
+    if ((size_t)csize != expect) {
+      free(img->px);
+      img->px = NULL;
+      XW_ERROR_SET(err, 1, "size mismatch");
+      return -1;
+    }
+    memcpy(img->px, c.base + c.pos, expect);
+  }
+  img->len = expect;
+  img->w = w ? w : mw;
+  img->h = h ? h : mh;
+  img->tex_w = mw;
+  img->tex_h = mh;
   return 0;
 }
