@@ -55,6 +55,18 @@ GL_LIBS :=
 $(info xwallpaper: scene GL rendering OFF (need: $(GL_PKGS) dev packages))
 endif
 
+# ---- Scene text (FreeType glyph rasterization): daemon-only ----
+FT_PKGS := freetype2
+HAVE_FT := $(shell pkg-config --exists $(FT_PKGS) && echo 1 || echo 0)
+ifeq ($(HAVE_FT),1)
+FT_CFLAGS := $(shell pkg-config --cflags $(FT_PKGS)) -DXW_HAVE_FT=1
+FT_LIBS := $(shell pkg-config --libs $(FT_PKGS))
+else
+FT_CFLAGS :=
+FT_LIBS :=
+$(info xwallpaper: scene text OFF (need: $(FT_PKGS) dev package))
+endif
+
 # ---- PulseAudio monitor capture (WE audio listener): daemon-only ----
 # libpulse works via pipewire-pulse with no new daemon process.
 # The thin CLI never sees these flags or libs (check-client-libs guards that).
@@ -118,7 +130,7 @@ $(info xwallpaper: Wayland layer-shell support OFF (need: $(WL_PKGS) libs + 'mak
 endif
 
 # wayland flags reach daemon objects only (protocol obj included above).
-$(DAEMON_OBJ): CFLAGS += $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) $(GL_CFLAGS)
+$(DAEMON_OBJ): CFLAGS += $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) $(GL_CFLAGS) $(FT_CFLAGS)
 
 BINS := xwallpaper xwallpaperd
 
@@ -148,7 +160,7 @@ xwallpaper: $(CLI_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(CLI_OBJ) $(SANITIZE)
 
 xwallpaperd: $(DAEMON_OBJ)
-	$(CC) $(LDFLAGS) -o $@ $(DAEMON_OBJ) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) $(GL_LIBS) -lm
+	$(CC) $(LDFLAGS) -o $@ $(DAEMON_OBJ) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) $(GL_LIBS) $(FT_LIBS) -lm
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -197,6 +209,9 @@ tests/test_scene_core: tests/test_scene_core.c src/scene_core.o
 tests/test_scene_particle: tests/test_scene_particle.c src/scene_particle.o
 	$(CC) $(CFLAGS) -o $@ $< src/scene_particle.o -lm
 
+tests/test_scene_text: tests/test_scene_text.c src/scene_text.o
+	$(CC) $(CFLAGS) $(FT_CFLAGS) -o $@ $< src/scene_text.o $(FT_LIBS)
+
 # test_wl compiles wl.c sources directly (without XW_HAVE_WAYLAND, so only
 # the pure-logic part builds): keeps the unit test free of wayland headers
 # and avoids sharing src/wl.o flag state with the daemon build.
@@ -207,7 +222,7 @@ test: $(TEST_BIN)
 	@for t in $(TEST_BIN); do echo "== $$t =="; ./$$t || exit 1; done
 
 tests/integration/%: tests/integration/%.c $(filter-out src/dmain.o,$(DAEMON_OBJ))
-	$(CC) $(CFLAGS) $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) $(GL_CFLAGS) -o $@ $< $(filter-out src/dmain.o,$(DAEMON_OBJ)) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) $(GL_LIBS) -lm
+	$(CC) $(CFLAGS) $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) $(GL_CFLAGS) $(FT_CFLAGS) -o $@ $< $(filter-out src/dmain.o,$(DAEMON_OBJ)) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) $(GL_LIBS) $(FT_LIBS) -lm
 
 test-xvfb: $(BINS) $(INTEG_BIN)
 	@for t in $(INTEG_BIN); do \
@@ -236,7 +251,7 @@ proto-wayland: $(WLR_XML)
 	$(WAYLAND_SCANNER) private-code $(XDGOUT_XML) $(XDGOUT_GEN_C)
 
 check-client-libs: xwallpaper
-	@! ldd ./xwallpaper | grep -qE 'webkit|mpv|Imlib2|javascriptcore|libpulse|libjson-c|libGL|GLEW' \
+	@! ldd ./xwallpaper | grep -qE 'webkit|mpv|Imlib2|javascriptcore|libpulse|libjson-c|libGL|GLEW|freetype' \
 	  && echo "OK: xwallpaper (cli) is free of heavy backend libs" \
 	  || (echo "FAIL: cli links heavy backend libs"; exit 1)
 
