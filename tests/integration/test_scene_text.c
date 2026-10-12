@@ -113,7 +113,7 @@ int main(void) {
   XWTextItem it;
   memset(&it, 0, sizeof(it));
   memset(&err, 0, sizeof(err));
-  TEST_CHECK_EQ_INT(xw_scene_text_draw(gl, &o, dir, &it, &err), 0);
+  TEST_CHECK_EQ_INT(xw_scene_text_draw(gl, &o, dir, &it, 1.0f, &err), 0);
   if (err.code != 0)
     TEST_FAIL("draw: %s", err.msg);
   TEST_CHECK_EQ_INT(xw_gl_present(gl), 0);

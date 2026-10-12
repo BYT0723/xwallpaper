@@ -7,8 +7,10 @@
 
 /* Simulate dt then draw live particles as one point-sprite batch on the
  * bound target (positions are object-local; origin maps to window pixels).
- * Strict like the image renderer: missing sprite errors fail. */
+ * Point alpha is fade times the resolved object alpha. Strict like the
+ * image renderer: missing sprite errors fail. */
 int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
-                             const char *dir, float dt, XWError *err);
+                             const char *dir, float dt, float alpha,
+                             XWError *err);
 
 #endif

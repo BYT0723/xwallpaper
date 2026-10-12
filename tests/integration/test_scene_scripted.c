@@ -40,6 +40,13 @@ static void test_scripted_runs(void) {
   TEST_CHECK(win != NULL);
   if (!win)
     return;
+  XWConfig cfg0;
+  int gx, gy;
+  unsigned int w, h;
+  memset(&cfg0, 0, sizeof(cfg0));
+  cfg0.target = XW_TARGET_PRIMARY;
+  TEST_CHECK_EQ_INT(
+      xw_x11_resolve_geometry(dpy, &cfg0, &gx, &gy, &w, &h, NULL), 0);
 
   XWBackendOpt opt;
   memset(&opt, 0, sizeof(opt));
@@ -63,6 +70,21 @@ static void test_scripted_runs(void) {
   backend.tick(&backend);
   XSync(dpy, False);
   TEST_CHECK(xw_scene_frames(&backend) > f0);
+  {
+    /* script overrode opacity to 0.5: dimmed red over the dark clear */
+    int cx = w / 2, cy = h / 2;
+    XImage *img = XGetImage(dpy, win->win, cx, cy, 1, 1, AllPlanes, ZPixmap);
+    TEST_CHECK(img != NULL);
+    if (img) {
+      unsigned long px = XGetPixel(img, 0, 0);
+      XDestroyImage(img);
+      int r = (px >> 16) & 0xff;
+      int g = (px >> 8) & 0xff;
+      int b = px & 0xff;
+      TEST_CHECK(r >= 90 && r <= 170);
+      TEST_CHECK(g < 40 && b < 60);
+    }
+  }
   backend.destroy(&backend);
   xw_x11_destroy_window(win);
 }

@@ -5,57 +5,57 @@
 #include "scene_image.h"
 
 static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
-                         float time, XWError *err) {
+                         float time, float alpha, XWError *err) {
   char path[1152];
-  unsigned int tex = 0, prog = 0;
-  int npasses = 0, i, e;
-  for (e = 0; e < o->n_effects; e++) npasses += o->effects[e].n_passes;
+  unsigned int tex = 0, prog = 0, comp = 0, src = 0;
+  int i, e, dst = 1;
   snprintf(path, sizeof(path), "%s/%s", dir, o->texture);
   if (xw_gl_upload(gl, path, &tex, err) != 0)
     return -1;
   if (xw_gl_program_copy(gl, &prog, err) != 0)
     return -1;
-  if (npasses == 0) {
-    if (xw_gl_bind_target(gl, -1) != 0)
-      return -1;
-    return xw_gl_draw(gl, prog, tex, time);
-  }
+  if (xw_gl_program_composite(gl, &comp, err) != 0)
+    return -1;
+  /* base copy always lands in an FBO; the composite pass owns the window
+   * so resolved alpha modulates arbitrary effect chains uniformly. */
   if (xw_gl_bind_target(gl, 0) != 0)
     return -1;
   if (xw_gl_draw(gl, prog, tex, time) != 0)
     return -1;
-  {
-    unsigned int src = 0, dst_prog = 0;
-    int seen = 0, total = npasses, cur = 0, dst = 1;
-    if (xw_gl_fbo_texture(gl, 0, &src) != 0)
-      return -1;
-    for (e = 0; e < o->n_effects; e++) {
-      for (i = 0; i < o->effects[e].n_passes; i++) {
-        int last = (cur == total - 1);
-        snprintf(path, sizeof(path), "%s/%s", dir,
-                 o->effects[e].passes[i].shader);
-        if (xw_gl_program_we(gl, path, &dst_prog, err) != 0)
-          return -1;
-        if (xw_gl_bind_target(gl, last ? -1 : dst) != 0)
-          return -1;
-        if (xw_gl_draw(gl, dst_prog, src, time) != 0)
-          return -1;
-        if (!last) {
-          if (xw_gl_fbo_texture(gl, dst, &src) != 0)
-            return -1;
-          dst = 1 - dst;
-        }
-        seen++;
-        cur++;
-      }
+  if (xw_gl_fbo_texture(gl, 0, &src) != 0)
+    return -1;
+  for (e = 0; e < o->n_effects; e++) {
+    for (i = 0; i < o->effects[e].n_passes; i++) {
+      unsigned int ep = 0;
+      snprintf(path, sizeof(path), "%s/%s", dir,
+               o->effects[e].passes[i].shader);
+      if (xw_gl_program_we(gl, path, &ep, err) != 0)
+        return -1;
+      if (xw_gl_bind_target(gl, dst) != 0)
+        return -1;
+      if (xw_gl_draw(gl, ep, src, time) != 0)
+        return -1;
+      if (xw_gl_fbo_texture(gl, dst, &src) != 0)
+        return -1;
+      dst = 1 - dst;
     }
-    (void)seen;
   }
+  if (xw_gl_blend_begin(gl, XW_BLEND_TRANSLUCENT) != 0)
+    return -1;
+  if (xw_gl_bind_target(gl, -1) != 0) {
+    xw_gl_blend_end(gl);
+    return -1;
+  }
+  if (xw_gl_draw_alpha(gl, comp, src, time, alpha) != 0) {
+    xw_gl_blend_end(gl);
+    return -1;
+  }
+  xw_gl_blend_end(gl);
   return 0;
 }
 
 int xw_scene_image_render(XWGl *gl, const XWScene *scene, const char *dir,
-                          float time, XWError *err) {
+                          float time, const float *alphas, XWError *err) {
   int i;
   if (!gl || !scene || !dir) {
     XW_ERROR_SET(err, 1, "invalid args");
@@ -67,9 +67,10 @@ int xw_scene_image_render(XWGl *gl, const XWScene *scene, const char *dir,
               scene->camera.clearcolor[2]);
   for (i = 0; i < scene->n_objects; i++) {
     const XWSceneObject *o = &scene->objects[i];
+    float a = alphas ? alphas[i] : 1.0f;
     if (!o->visible || o->type != XW_OBJ_IMAGE || !o->texture[0])
       continue;
-    if (render_object(gl, o, dir, time, err) != 0)
+    if (render_object(gl, o, dir, time, a, err) != 0)
       return -1;
   }
   return 0;

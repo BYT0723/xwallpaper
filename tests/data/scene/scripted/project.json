@@ -1,0 +1,7 @@
+{
+  "general": {
+    "properties": {
+      "opacity": {"type": "slider", "value": 0.8, "text": "Opacity"}
+    }
+  }
+}

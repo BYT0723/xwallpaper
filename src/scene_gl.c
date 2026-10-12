@@ -63,6 +63,17 @@ static const char *copy_frag_src =
     "out vec4 xw_out;\n"
     "void main() { xw_out = texture(xw_tex0, v_TexCoord); }\n";
 
+static const char *composite_frag_src =
+    "#version 330 core\n"
+    "in vec2 v_TexCoord;\n"
+    "uniform sampler2D xw_tex0;\n"
+    "uniform float xw_alpha;\n"
+    "out vec4 xw_out;\n"
+    "void main() {\n"
+    "  vec4 c = texture(xw_tex0, v_TexCoord);\n"
+    "  xw_out = vec4(c.rgb, c.a * xw_alpha);\n"
+    "}\n";
+
 static const char *points_vert_src =
     "#version 330 core\n"
     "layout(location=0) in vec2 pos;\n"
@@ -476,6 +487,13 @@ int xw_gl_program_copy(XWGl *g, unsigned int *prog, XWError *err) {
   return link_program("xw_copy", vert_src, copy_frag_src, g, prog, err);
 }
 
+int xw_gl_program_composite(XWGl *g, unsigned int *prog, XWError *err) {
+  if (!g || !prog)
+    return gl_error("invalid args", err);
+  return link_program("xw_composite", vert_src, composite_frag_src, g, prog,
+                      err);
+}
+
 int xw_gl_program_points(XWGl *g, unsigned int *prog, XWError *err) {
   if (!g || !prog)
     return gl_error("invalid args", err);
@@ -534,8 +552,13 @@ static GLint time_location(GLuint prog) {
   return -1;
 }
 
-int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time) {
-  GLint sloc, tloc;
+static GLint alpha_location(GLuint prog) {
+  return glGetUniformLocation(prog, "xw_alpha");
+}
+
+static int draw_full(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                     float alpha, int use_alpha) {
+  GLint sloc, tloc, aloc;
   if (!g || !prog)
     return -1;
   glXMakeCurrent(g->dpy, g->win, g->ctx);
@@ -549,11 +572,25 @@ int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time) {
   tloc = time_location(prog);
   if (tloc >= 0)
     glUniform1f(tloc, time);
+  if (use_alpha) {
+    aloc = alpha_location(prog);
+    if (aloc >= 0)
+      glUniform1f(aloc, alpha);
+  }
   glBindVertexArray(g->quad_vao);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glBindVertexArray(0);
   glUseProgram(0);
   return 0;
+}
+
+int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time) {
+  return draw_full(g, prog, tex, time, 1.0f, 0);
+}
+
+int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                     float alpha) {
+  return draw_full(g, prog, tex, time, alpha, 1);
 }
 
 int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
@@ -639,10 +676,11 @@ int xw_gl_delete_texture(XWGl *g, unsigned int tex) {
   return 0;
 }
 
-int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
-                    int dx, int dy, int dw, int dh) {
+static int draw_rect_full(XWGl *g, unsigned int prog, unsigned int tex,
+                          float time, float alpha, int use_alpha, int dx,
+                          int dy, int dw, int dh) {
   float x0, x1, y0, y1, verts[16];
-  GLint sloc, tloc;
+  GLint sloc, tloc, aloc;
   if (!g || !prog || dw <= 0 || dh <= 0 || g->w <= 0 || g->h <= 0)
     return -1;
   x0 = (float)dx / (float)g->w * 2.0f - 1.0f;
@@ -676,6 +714,11 @@ int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
   tloc = time_location(prog);
   if (tloc >= 0)
     glUniform1f(tloc, time);
+  if (use_alpha) {
+    aloc = alpha_location(prog);
+    if (aloc >= 0)
+      glUniform1f(aloc, alpha);
+  }
   glBindVertexArray(g->rect_vao);
   glBindBuffer(GL_ARRAY_BUFFER, g->rect_vbo);
   glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_DYNAMIC_DRAW);
@@ -683,6 +726,17 @@ int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
   glBindVertexArray(0);
   glUseProgram(0);
   return 0;
+}
+
+int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                    int dx, int dy, int dw, int dh) {
+  return draw_rect_full(g, prog, tex, time, 1.0f, 0, dx, dy, dw, dh);
+}
+
+int xw_gl_draw_rect_alpha(XWGl *g, unsigned int prog, unsigned int tex,
+                          float time, float alpha, int dx, int dy, int dw,
+                          int dh) {
+  return draw_rect_full(g, prog, tex, time, alpha, 1, dx, dy, dw, dh);
 }
 
 int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex) {
@@ -759,6 +813,13 @@ int xw_gl_program_points(XWGl *g, unsigned int *prog, XWError *err) {
   return -1;
 }
 
+int xw_gl_program_composite(XWGl *g, unsigned int *prog, XWError *err) {
+  (void)g;
+  (void)prog;
+  XW_ERROR_SET(err, 1, "scene GL support not compiled in (need gl/glew)");
+  return -1;
+}
+
 int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
                       const XWPoint *pts, int n) {
   (void)g;
@@ -766,6 +827,16 @@ int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
   (void)tex;
   (void)pts;
   (void)n;
+  return -1;
+}
+
+int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                     float alpha) {
+  (void)g;
+  (void)prog;
+  (void)tex;
+  (void)time;
+  (void)alpha;
   return -1;
 }
 
@@ -803,6 +874,21 @@ int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
   (void)prog;
   (void)tex;
   (void)time;
+  (void)dx;
+  (void)dy;
+  (void)dw;
+  (void)dh;
+  return -1;
+}
+
+int xw_gl_draw_rect_alpha(XWGl *g, unsigned int prog, unsigned int tex,
+                          float time, float alpha, int dx, int dy, int dw,
+                          int dh) {
+  (void)g;
+  (void)prog;
+  (void)tex;
+  (void)time;
+  (void)alpha;
   (void)dx;
   (void)dy;
   (void)dw;

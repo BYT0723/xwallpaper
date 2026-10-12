@@ -48,6 +48,11 @@ int xw_gl_program_we(XWGl *g, const char *frag_path, unsigned int *prog,
 /* Builtin base-copy program (samples xw_tex0). */
 int xw_gl_program_copy(XWGl *g, unsigned int *prog, XWError *err);
 
+/* Builtin composite program: samples xw_tex0, scales alpha by xw_alpha.
+ * Final pass to the window goes through this (with blending) so resolved
+ * per-object alpha modulates arbitrary effect chains. */
+int xw_gl_program_composite(XWGl *g, unsigned int *prog, XWError *err);
+
 /* One particle splat in window pixels (x/y) with size px and alpha. */
 typedef struct XWPoint {
   float x, y;
@@ -74,6 +79,10 @@ int xw_gl_clear(XWGl *g, float r, float gg, float b);
 /* Draw the fullscreen quad with prog/tex/time. */
 int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time);
 
+/* Like draw, also binding xw_alpha when the program declares it. */
+int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                     float alpha);
+
 /* Texture id backing internal FBO idx (for ping-pong sources). */
 int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex);
 
@@ -82,6 +91,11 @@ int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex);
  * fullscreen path. */
 int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
                     int dx, int dy, int dw, int dh);
+
+/* Like draw_rect, also binding xw_alpha when the program declares it. */
+int xw_gl_draw_rect_alpha(XWGl *g, unsigned int prog, unsigned int tex,
+                          float time, float alpha, int dx, int dy, int dw,
+                          int dh);
 
 /* Swap window buffers. */
 int xw_gl_present(XWGl *g);

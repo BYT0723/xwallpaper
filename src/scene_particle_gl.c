@@ -5,7 +5,8 @@
 #include "scene_particle_gl.h"
 
 int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
-                             const char *dir, float dt, XWError *err) {
+                             const char *dir, float dt, float alpha,
+                             XWError *err) {
   char path[1152];
   unsigned int tex = 0, prog = 0;
   XWPoint *pts = NULL;
@@ -42,7 +43,7 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
     pts[i].x = o->origin[0] + p->x;
     pts[i].y = o->origin[1] + p->y;
     pts[i].size = p->size;
-    pts[i].alpha = p->a * fade;
+    pts[i].alpha = p->a * fade * alpha;
   }
   if (xw_gl_blend_begin(g, XW_BLEND_TRANSLUCENT) != 0)
     goto out;

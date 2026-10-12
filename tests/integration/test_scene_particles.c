@@ -82,7 +82,7 @@ int main(void) {
     TEST_CHECK_EQ_INT(xw_gl_bind_target(gl, -1), 0);
     TEST_CHECK_EQ_INT(xw_gl_clear(gl, 0.02f, 0.02f, 0.10f), 0);
     if (xw_scene_particle_render(gl, &o, &e, "tests/data/scene/gl", 1.0f / 30.0f,
-                                 &err) != 0) {
+                                 1.0f, &err) != 0) {
       TEST_FAIL("render: %s", err.msg);
       break;
     }

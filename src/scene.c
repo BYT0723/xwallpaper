@@ -166,6 +166,7 @@ static uint64_t now_ms(void) {
 }
 
 static int paint_fill(XWSceneCtx *c);
+static int render_overlays(XWSceneCtx *c, const float *alphas, XWError *rerr);
 
 static int load_script(XWSceneCtx *c, XWError *err) {
   char path[1152], *src = NULL;
@@ -232,9 +233,7 @@ static void free_script(XWSceneCtx *c) {
 
 static int paint_gl(XWSceneCtx *c) {
   XWError rerr;
-  float t, dt;
-  uint64_t now;
-  int i;
+  float t;
   memset(&rerr, 0, sizeof(rerr));
   if (!c->gl) {
     uint64_t now = now_ms();
@@ -248,10 +247,36 @@ static int paint_gl(XWSceneCtx *c) {
     }
   }
   t = (float)(now_ms() - c->t0_ms) / 1000.0f;
-  if (xw_scene_image_render(c->gl, &c->scene, c->dir, t, &rerr) != 0)
+  {
+    float *alphas = NULL;
+    int n = c->scene.n_objects, rc = -1, i;
+    if (n > 0) {
+      alphas = malloc(sizeof(float) * (size_t)n);
+      if (!alphas)
+        return -1;
+      for (i = 0; i < n; i++)
+        alphas[i] = c->script ? xw_script_resolve_alpha(
+                                    c->script, &c->scene.objects[i])
+                              : 1.0f;
+    }
+    if (xw_scene_image_render(c->gl, &c->scene, c->dir, t, alphas, &rerr) == 0)
+      rc = render_overlays(c, alphas, &rerr);
+    free(alphas);
+    if (rc != 0)
+      return -1;
+  }
+  if (xw_gl_present(c->gl) != 0)
     return -1;
-  now = now_ms();
-  dt = c->last_ms ? (float)(now - c->last_ms) / 1000.0f : 1.0f / 30.0f;
+  c->frames++;
+  c->last_ms = now_ms();
+  return 0;
+}
+
+/* particle + text passes over the image layer (dt from frame pacing). */
+static int render_overlays(XWSceneCtx *c, const float *alphas, XWError *rerr) {
+  uint64_t now = now_ms();
+  float dt = c->last_ms ? (float)(now - c->last_ms) / 1000.0f : 1.0f / 30.0f;
+  int i;
   if (dt < 0.0f)
     dt = 0.0f;
   if (dt > 0.25f)
@@ -260,25 +285,23 @@ static int paint_gl(XWSceneCtx *c) {
     return -1;
   for (i = 0; i < c->scene.n_objects; i++) {
     const XWSceneObject *o = &c->scene.objects[i];
+    float a = alphas ? alphas[i] : 1.0f;
     if (!o->visible || o->type != XW_OBJ_PARTICLE)
       continue;
-    if (xw_scene_particle_render(c->gl, o, &c->emitters[i], c->dir, dt,
-                                 &rerr) != 0)
+    if (xw_scene_particle_render(c->gl, o, &c->emitters[i], c->dir, dt, a,
+                                 rerr) != 0)
       return -1;
   }
   /* text pass: per-type loops until the multi-object composite task;
    * object-order compositing comes with scene-space FBOs. */
   for (i = 0; i < c->scene.n_objects; i++) {
     const XWSceneObject *o = &c->scene.objects[i];
+    float a = alphas ? alphas[i] : 1.0f;
     if (!o->visible || o->type != XW_OBJ_TEXT)
       continue;
-    if (xw_scene_text_draw(c->gl, o, c->dir, &c->texts[i], &rerr) != 0)
+    if (xw_scene_text_draw(c->gl, o, c->dir, &c->texts[i], a, rerr) != 0)
       return -1;
   }
-  if (xw_gl_present(c->gl) != 0)
-    return -1;
-  c->frames++;
-  c->last_ms = now_ms();
   return 0;
 }
 

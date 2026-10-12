@@ -5,7 +5,7 @@
 #include "scene_text_gl.h"
 
 int xw_scene_text_draw(XWGl *g, const XWSceneObject *o, const char *dir,
-                       XWTextItem *it, XWError *err) {
+                       XWTextItem *it, float alpha, XWError *err) {
   char font_path[1152];
   unsigned char *px = NULL;
   int w = 0, h = 0, rc = -1;
@@ -37,12 +37,12 @@ int xw_scene_text_draw(XWGl *g, const XWSceneObject *o, const char *dir,
     it->h = h;
     it->valid = 1;
   }
-  if (xw_gl_program_copy(g, &prog, err) != 0)
+  if (xw_gl_program_composite(g, &prog, err) != 0)
     return -1;
   if (xw_gl_blend_begin(g, XW_BLEND_TRANSLUCENT) != 0)
     return -1;
-  if (xw_gl_draw_rect(g, prog, it->tex, 0.0f, (int)o->origin[0],
-                      (int)o->origin[1], it->w, it->h) == 0)
+  if (xw_gl_draw_rect_alpha(g, prog, it->tex, 0.0f, alpha, (int)o->origin[0],
+                            (int)o->origin[1], it->w, it->h) == 0)
     rc = 0;
   else
     XW_ERROR_SET(err, 1, "text draw failed");
