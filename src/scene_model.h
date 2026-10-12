@@ -57,6 +57,13 @@ typedef struct XWParticleCfg {
   float rate;
   int max_count;
   char sprite[XW_SCENE_PATH_MAX];
+  float life;
+  float speed;
+  float spread;
+  float size_min;
+  float size_max;
+  float color[4];
+  float gravity;
 } XWParticleCfg;
 
 typedef struct XWTextCfg {

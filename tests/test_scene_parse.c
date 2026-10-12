@@ -66,6 +66,19 @@ static void test_full_types(void) {
              s.objects[1].particle.rate < 61.0);
   TEST_CHECK_EQ_INT(s.objects[1].particle.max_count, 500);
   TEST_CHECK_EQ_STR(s.objects[1].particle.sprite, "particles/spark.png");
+  TEST_CHECK(s.objects[1].particle.life > 1.99 &&
+             s.objects[1].particle.life < 2.01);
+  TEST_CHECK(s.objects[1].particle.speed > 119.0 &&
+             s.objects[1].particle.speed < 121.0);
+  TEST_CHECK(s.objects[1].particle.size_min > 1.99 &&
+             s.objects[1].particle.size_min < 2.01);
+  TEST_CHECK(s.objects[1].particle.size_max > 4.99 &&
+             s.objects[1].particle.size_max < 5.01);
+  TEST_CHECK(s.objects[1].particle.gravity > 49.0 &&
+             s.objects[1].particle.gravity < 51.0);
+  TEST_CHECK(s.objects[1].particle.color[0] > 0.99 &&
+             s.objects[1].particle.color[1] > 0.79 &&
+             s.objects[1].particle.color[1] < 0.81);
   TEST_CHECK_EQ_INT(s.objects[1].alpha.kind, XW_DYN_CONSTANT);
   TEST_CHECK_EQ_INT(s.objects[2].type, XW_OBJ_TEXT);
   TEST_CHECK_EQ_STR(s.objects[2].text.content, "Hello");

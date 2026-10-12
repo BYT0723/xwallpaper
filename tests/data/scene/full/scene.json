@@ -20,7 +20,10 @@
     },
     {
       "id": "sparks",
-      "emitter": {"rate": 60.0, "max_count": 500, "sprite": "particles/spark.png"},
+      "emitter": {"rate": 60.0, "max_count": 500, "sprite": "particles/spark.png",
+                  "life": 2.0, "speed": 120.0, "spread": 0.3,
+                  "size_min": 2.0, "size_max": 5.0,
+                  "color": [1.0, 0.8, 0.2, 1.0], "gravity": 50.0},
       "origin": [1920, 1800],
       "alpha": 0.9
     },

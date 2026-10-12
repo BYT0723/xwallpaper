@@ -220,6 +220,26 @@ static int parse_object(struct json_object *jo, XWSceneObject *o, XWError *err) 
     if (json_object_object_get_ex(v, "sprite", &e) && e)
       copy_str(o->particle.sprite, sizeof(o->particle.sprite),
                json_object_get_string(e));
+    if (json_object_object_get_ex(v, "life", &e) && e)
+      o->particle.life = (float)json_object_get_double(e);
+    if (json_object_object_get_ex(v, "speed", &e) && e)
+      o->particle.speed = (float)json_object_get_double(e);
+    if (json_object_object_get_ex(v, "spread", &e) && e)
+      o->particle.spread = (float)json_object_get_double(e);
+    if (json_object_object_get_ex(v, "size_min", &e) && e)
+      o->particle.size_min = (float)json_object_get_double(e);
+    if (json_object_object_get_ex(v, "size_max", &e) && e)
+      o->particle.size_max = (float)json_object_get_double(e);
+    if (json_object_object_get_ex(v, "gravity", &e) && e)
+      o->particle.gravity = (float)json_object_get_double(e);
+    o->particle.color[0] = 1.0f;
+    o->particle.color[1] = 1.0f;
+    o->particle.color[2] = 1.0f;
+    o->particle.color[3] = 1.0f;
+    if (get_vec4(v, "color", o->particle.color) != 0) {
+      XW_ERROR_SET(err, 1, "emitter color must be [r, g, b, a]");
+      return -1;
+    }
   }
   if (json_object_object_get_ex(jo, "text", &v) && v) {
     if (json_object_get_type(v) != json_type_object) {
