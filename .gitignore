@@ -11,6 +11,7 @@ xwallpaperd
 /tests/test_wl
 /tests/test_scene_pkg
 /tests/test_scene_tex
+/tests/test_scene_shader
 /tests/integration/test_x11
 /tests/integration/test_image
 /tests/integration/test_video
