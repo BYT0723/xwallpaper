@@ -20,8 +20,27 @@ CLI_OBJ := $(CLI_SRC:.c=.o)
 # daemon: owns all wallpaper windows, links the full backend stack.
 DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/x11.c src/app.c src/image.c src/video.c src/web.c \
-              src/web_dir.c src/wl.c src/we_audio.c src/we_pulse.c
+              src/web_dir.c src/wl.c src/we_audio.c src/we_pulse.c \
+              src/scene_pkg.c src/scene_tex.c src/scene_shader.c \
+              src/scene_parse.c src/scene_core.c src/scene_image.c \
+              src/scene_particle.c src/scene_text.c src/scene_sound.c \
+              src/scene_script.c src/scene.c
 DAEMON_OBJ := $(DAEMON_SRC:.c=.o)
+
+# ---- Scene (WE scene wallpapers): daemon-only ----
+# json-c parses project.json/scene.json; freetype rasterizes text objects;
+# SDL2_mixer decodes sound objects (ogg loop). quickjs is vendored later.
+# The thin CLI never sees these flags or libs (check-client-libs guards that).
+SCENE_PKGS := json-c
+HAVE_JSONC := $(shell pkg-config --exists $(SCENE_PKGS) && echo 1 || echo 0)
+ifeq ($(HAVE_JSONC),1)
+SCENE_CFLAGS := $(shell pkg-config --cflags $(SCENE_PKGS)) -DXW_HAVE_JSONC=1
+SCENE_LIBS := $(shell pkg-config --libs $(SCENE_PKGS))
+else
+SCENE_CFLAGS :=
+SCENE_LIBS :=
+$(info xwallpaper: scene JSON parsing OFF (need: $(SCENE_PKGS) dev package))
+endif
 
 # ---- PulseAudio monitor capture (WE audio listener): daemon-only ----
 # libpulse works via pipewire-pulse with no new daemon process.
@@ -86,7 +105,7 @@ $(info xwallpaper: Wayland layer-shell support OFF (need: $(WL_PKGS) libs + 'mak
 endif
 
 # wayland flags reach daemon objects only (protocol obj included above).
-$(DAEMON_OBJ): CFLAGS += $(WL_CFLAGS) $(PULSE_CFLAGS)
+$(DAEMON_OBJ): CFLAGS += $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS)
 
 BINS := xwallpaper xwallpaperd
 
@@ -113,7 +132,7 @@ xwallpaper: $(CLI_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(CLI_OBJ) $(SANITIZE)
 
 xwallpaperd: $(DAEMON_OBJ)
-	$(CC) $(LDFLAGS) -o $@ $(DAEMON_OBJ) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) -lm
+	$(CC) $(LDFLAGS) -o $@ $(DAEMON_OBJ) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) -lm
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -122,7 +141,9 @@ xwallpaperd: $(DAEMON_OBJ)
 # layout change relinks stale objects against new ones (mixed ABI).
 HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/client.h src/state.h src/x11.h src/app.h src/backends.h \
-  src/wl.h src/daemon.h src/web_dir.h src/we_audio.h src/we_pulse.h $(wildcard src/proto/*-client-protocol.h)
+  src/wl.h src/daemon.h src/web_dir.h src/we_audio.h src/we_pulse.h \
+  src/scene_pkg.h src/scene_tex.h src/scene_shader.h src/scene_parse.h \
+  src/scene_model.h src/scene_core.h src/scene.h $(wildcard src/proto/*-client-protocol.h)
 $(CLI_OBJ) $(DAEMON_OBJ) $(TEST_BIN) $(INTEG_BIN) $(WL_INTEG_BIN): $(HEADER_DEPS)
 
 # thin unit tests: only the client-side objects, no heavy libs
@@ -141,6 +162,9 @@ tests/test_web_dir: tests/test_web_dir.c src/web_dir.o
 tests/test_we_audio: tests/test_we_audio.c src/we_audio.o
 	$(CC) $(CFLAGS) -o $@ $< src/we_audio.o -lm
 
+tests/test_scene_pkg: tests/test_scene_pkg.c src/scene_pkg.o
+	$(CC) $(CFLAGS) -o $@ $< src/scene_pkg.o
+
 # test_wl compiles wl.c sources directly (without XW_HAVE_WAYLAND, so only
 # the pure-logic part builds): keeps the unit test free of wayland headers
 # and avoids sharing src/wl.o flag state with the daemon build.
@@ -151,7 +175,7 @@ test: $(TEST_BIN)
 	@for t in $(TEST_BIN); do echo "== $$t =="; ./$$t || exit 1; done
 
 tests/integration/%: tests/integration/%.c $(filter-out src/dmain.o,$(DAEMON_OBJ))
-	$(CC) $(CFLAGS) $(WL_CFLAGS) $(PULSE_CFLAGS) -o $@ $< $(filter-out src/dmain.o,$(DAEMON_OBJ)) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) -lm
+	$(CC) $(CFLAGS) $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) -o $@ $< $(filter-out src/dmain.o,$(DAEMON_OBJ)) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) -lm
 
 test-xvfb: $(BINS) $(INTEG_BIN)
 	@for t in $(INTEG_BIN); do \
@@ -180,7 +204,7 @@ proto-wayland: $(WLR_XML)
 	$(WAYLAND_SCANNER) private-code $(XDGOUT_XML) $(XDGOUT_GEN_C)
 
 check-client-libs: xwallpaper
-	@! ldd ./xwallpaper | grep -qE 'webkit|mpv|Imlib2|javascriptcore|libpulse' \
+	@! ldd ./xwallpaper | grep -qE 'webkit|mpv|Imlib2|javascriptcore|libpulse|libjson-c' \
 	  && echo "OK: xwallpaper (cli) is free of heavy backend libs" \
 	  || (echo "FAIL: cli links heavy backend libs"; exit 1)
 

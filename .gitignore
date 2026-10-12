@@ -9,6 +9,7 @@ xwallpaperd
 /tests/test_we_audio
 /tests/test_web_dir
 /tests/test_wl
+/tests/test_scene_pkg
 /tests/integration/test_x11
 /tests/integration/test_image
 /tests/integration/test_video
