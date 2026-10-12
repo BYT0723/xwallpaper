@@ -3,6 +3,7 @@
 
 #include <X11/Xlib.h>
 
+#include "scene_core.h"
 #include "xw_err.h"
 
 /* Desktop-GL runtime for scene wallpapers (daemon-only).
@@ -17,7 +18,8 @@
  * first (g_Texture0, g_Time) then xw_ names (xw_tex0, xw_time); a missing
  * time uniform is fine, a missing sampler renders black. The builtin
  * vertex shader feeds v_TexCoord/vUv/v_uv; FBO ping-pong runs at window
- * size (object-size FBOs are a later task); blending stays off (opaque).
+ * size (object-size FBOs are a later task); image passes render opaque,
+ * particle passes enable blending transiently (see xw_gl_blend_begin).
  */
 
 typedef struct XWGl XWGl;
@@ -38,6 +40,23 @@ int xw_gl_program_we(XWGl *g, const char *frag_path, unsigned int *prog,
 
 /* Builtin base-copy program (samples xw_tex0). */
 int xw_gl_program_copy(XWGl *g, unsigned int *prog, XWError *err);
+
+/* One particle splat in window pixels (x/y) with size px and alpha. */
+typedef struct XWPoint {
+  float x, y;
+  float size, alpha;
+} XWPoint;
+
+/* Builtin point-sprite program (samples xw_tex0, multiplies alpha). */
+int xw_gl_program_points(XWGl *g, unsigned int *prog, XWError *err);
+
+/* Draw n point sprites on the bound target (positions window pixels). */
+int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
+                      const XWPoint *pts, int n);
+
+/* Transient blending around particle draws (core blend-state mapping). */
+int xw_gl_blend_begin(XWGl *g, XWBlend mode);
+int xw_gl_blend_end(XWGl *g);
 
 /* Bind render target: -1 = window backbuffer, 0/1 = internal FBO. */
 int xw_gl_bind_target(XWGl *g, int fbo);

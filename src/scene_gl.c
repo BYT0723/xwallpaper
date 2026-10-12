@@ -24,6 +24,8 @@ struct XWGl {
   int w, h;
   GLuint quad_vao;
   GLuint quad_vbo;
+  GLuint points_vao;
+  GLuint points_vbo;
   GLuint fbos[2];
   GLuint fbo_tex[2];
   struct {
@@ -58,6 +60,28 @@ static const char *copy_frag_src =
     "uniform sampler2D xw_tex0;\n"
     "out vec4 xw_out;\n"
     "void main() { xw_out = texture(xw_tex0, v_TexCoord); }\n";
+
+static const char *points_vert_src =
+    "#version 330 core\n"
+    "layout(location=0) in vec2 pos;\n"
+    "layout(location=1) in vec2 ps;\n"
+    "out float v_alpha;\n"
+    "void main() {\n"
+    "  v_alpha = ps.y;\n"
+    "  gl_PointSize = ps.x;\n"
+    "  gl_Position = vec4(pos, 0.0, 1.0);\n"
+    "}\n";
+
+static const char *points_frag_src =
+    "#version 330 core\n"
+    "in float v_alpha;\n"
+    "uniform sampler2D xw_tex0;\n"
+    "out vec4 xw_out;\n"
+    "void main() {\n"
+    "  vec2 pc = vec2(gl_PointCoord.x, 1.0 - gl_PointCoord.y);\n"
+    "  vec4 c = texture(xw_tex0, pc);\n"
+    "  xw_out = vec4(c.rgb, c.a * v_alpha);\n"
+    "}\n";
 
 /* Fullscreen quad, V flipped (imlib2 rows are top-first, GL expects
  * bottom-first). Positions NDC, uvs mapped so the image lands upright. */
@@ -171,6 +195,16 @@ int xw_gl_create(XWGl **out, Display *dpy, Window win, int w, int h,
   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
                         (void *)(2 * sizeof(float)));
   glBindVertexArray(0);
+  glGenVertexArrays(1, &g->points_vao);
+  glGenBuffers(1, &g->points_vbo);
+  glBindVertexArray(g->points_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, g->points_vbo);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                        (void *)(2 * sizeof(float)));
+  glBindVertexArray(0);
   if (make_fbo(g, 0, err) != 0 || make_fbo(g, 1, err) != 0) {
     xw_gl_destroy(g);
     return -1;
@@ -191,6 +225,8 @@ void xw_gl_destroy(XWGl *g) {
     glDeleteTextures(2, g->fbo_tex);
     glDeleteBuffers(1, &g->quad_vbo);
     glDeleteVertexArrays(1, &g->quad_vao);
+    glDeleteBuffers(1, &g->points_vbo);
+    glDeleteVertexArrays(1, &g->points_vao);
     glXMakeCurrent(g->dpy, None, NULL);
     glXDestroyContext(g->dpy, g->ctx);
   }
@@ -209,6 +245,10 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
     return gl_error("invalid args", err);
   for (i = 0; i < g->ntex; i++)
     if (strcmp(g->texcache[i].path, path) == 0) {
+      if (!g->texcache[i].tex) {
+        XW_ERROR_SET(err, 1, "cached texture failure '%s'", path);
+        return -1;
+      }
       *tex = g->texcache[i].tex;
       return 0;
     }
@@ -220,6 +260,12 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
   if (!img) {
     imlib_context_pop();
     imlib_context_free(ictx);
+    if (g->ntex < XW_GL_TEXCACHE_MAX) {
+      snprintf(g->texcache[g->ntex].path, sizeof(g->texcache[g->ntex].path),
+               "%s", path);
+      g->texcache[g->ntex].tex = 0;
+      g->ntex++;
+    }
     XW_ERROR_SET(err, 1, "cannot load texture '%s'", path);
     return -1;
   }
@@ -294,8 +340,8 @@ static int compile_stage(GLuint sh, const char *src, XWError *err,
   return 0;
 }
 
-static int link_program(const char *key, const char *frag_src, XWGl *g,
-                        unsigned int *prog, XWError *err) {
+static int link_program(const char *key, const char *vert, const char *frag_src,
+                        XWGl *g, unsigned int *prog, XWError *err) {
   GLuint vs, fs, p;
   int i;
   char log[1024];
@@ -311,7 +357,7 @@ static int link_program(const char *key, const char *frag_src, XWGl *g,
     return -1;
   }
   vs = glCreateShader(GL_VERTEX_SHADER);
-  if (compile_stage(vs, vert_src, err, "vertex") != 0) {
+  if (compile_stage(vs, vert, err, "vertex") != 0) {
     glDeleteShader(vs);
     return -1;
   }
@@ -405,7 +451,7 @@ int xw_gl_program_we(XWGl *g, const char *frag_path, unsigned int *prog,
     return -1;
   }
   free(src);
-  rc = link_program(frag_path, dst, g, prog, err);
+  rc = link_program(frag_path, vert_src, dst, g, prog, err);
   free(dst);
   return rc;
 }
@@ -413,7 +459,14 @@ int xw_gl_program_we(XWGl *g, const char *frag_path, unsigned int *prog,
 int xw_gl_program_copy(XWGl *g, unsigned int *prog, XWError *err) {
   if (!g || !prog)
     return gl_error("invalid args", err);
-  return link_program("xw_copy", copy_frag_src, g, prog, err);
+  return link_program("xw_copy", vert_src, copy_frag_src, g, prog, err);
+}
+
+int xw_gl_program_points(XWGl *g, unsigned int *prog, XWError *err) {
+  if (!g || !prog)
+    return gl_error("invalid args", err);
+  return link_program("xw_points", points_vert_src, points_frag_src, g, prog,
+                      err);
 }
 
 int xw_gl_bind_target(XWGl *g, int fbo) {
@@ -489,6 +542,63 @@ int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time) {
   return 0;
 }
 
+int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
+                      const XWPoint *pts, int n) {
+  GLint sloc;
+  XWPoint *ndc = NULL;
+  int i, rc = -1;
+  if (!g || !prog || !pts || n <= 0 || g->w <= 0 || g->h <= 0)
+    return -1;
+  ndc = malloc((size_t)n * sizeof(XWPoint));
+  if (!ndc)
+    return -1;
+  for (i = 0; i < n; i++) {
+    ndc[i].x = pts[i].x / (float)g->w * 2.0f - 1.0f;
+    ndc[i].y = 1.0f - pts[i].y / (float)g->h * 2.0f;
+    ndc[i].size = pts[i].size;
+    ndc[i].alpha = pts[i].alpha;
+  }
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glUseProgram(prog);
+  sloc = sampler_location(prog);
+  if (sloc >= 0 && tex) {
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glUniform1i(sloc, 0);
+  }
+  glBindVertexArray(g->points_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, g->points_vbo);
+  glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)n * sizeof(XWPoint)), ndc,
+               GL_DYNAMIC_DRAW);
+  glEnable(GL_PROGRAM_POINT_SIZE);
+  glDrawArrays(GL_POINTS, 0, n);
+  glDisable(GL_PROGRAM_POINT_SIZE);
+  glBindVertexArray(0);
+  glUseProgram(0);
+  rc = 0;
+  free(ndc);
+  return rc;
+}
+
+int xw_gl_blend_begin(XWGl *g, XWBlend mode) {
+  int sRGB, dRGB, sA, dA;
+  if (!g)
+    return -1;
+  xw_blend_funcs(mode, &sRGB, &dRGB, &sA, &dA);
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glEnable(GL_BLEND);
+  glBlendFuncSeparate((GLenum)sRGB, (GLenum)dRGB, (GLenum)sA, (GLenum)dA);
+  return 0;
+}
+
+int xw_gl_blend_end(XWGl *g) {
+  if (!g)
+    return -1;
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glDisable(GL_BLEND);
+  return 0;
+}
+
 int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex) {
   if (!g || !tex || idx < 0 || idx > 1)
     return -1;
@@ -553,6 +663,34 @@ int xw_gl_program_copy(XWGl *g, unsigned int *prog, XWError *err) {
   (void)g;
   (void)prog;
   XW_ERROR_SET(err, 1, "scene GL support not compiled in (need gl/glew)");
+  return -1;
+}
+
+int xw_gl_program_points(XWGl *g, unsigned int *prog, XWError *err) {
+  (void)g;
+  (void)prog;
+  XW_ERROR_SET(err, 1, "scene GL support not compiled in (need gl/glew)");
+  return -1;
+}
+
+int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
+                      const XWPoint *pts, int n) {
+  (void)g;
+  (void)prog;
+  (void)tex;
+  (void)pts;
+  (void)n;
+  return -1;
+}
+
+int xw_gl_blend_begin(XWGl *g, XWBlend mode) {
+  (void)g;
+  (void)mode;
+  return -1;
+}
+
+int xw_gl_blend_end(XWGl *g) {
+  (void)g;
   return -1;
 }
 

@@ -13,6 +13,7 @@
 #include "scene_image.h"
 #include "scene_model.h"
 #include "scene_parse.h"
+#include "scene_particle.h"
 #include "x11.h"
 
 /* Scene backend shell (Task 7): parses the wallpaper directory, paints the
@@ -31,7 +32,36 @@ typedef struct XWSceneCtx {
   unsigned long frames;
   GC gc;
   XWGl *gl;
+  XWEmitter *emitters;
 } XWSceneCtx;
+
+static void free_emitters(XWSceneCtx *c) {
+  int i;
+  if (!c || !c->emitters)
+    return;
+  for (i = 0; i < c->scene.n_objects; i++) xw_emitter_free(&c->emitters[i]);
+  free(c->emitters);
+  c->emitters = NULL;
+}
+
+static int init_emitters(XWSceneCtx *c, XWError *err) {
+  int i;
+  free_emitters(c);
+  c->emitters = calloc(c->scene.n_objects > 0 ? (size_t)c->scene.n_objects : 1,
+                       sizeof(XWEmitter));
+  if (!c->emitters) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
+  for (i = 0; i < c->scene.n_objects; i++) {
+    if (xw_emitter_init(&c->emitters[i], &c->scene.objects[i].particle) != 0) {
+      XW_ERROR_SET(err, 1, "cannot init emitter %d", i);
+      free_emitters(c);
+      return -1;
+    }
+  }
+  return 0;
+}
 
 static uint64_t now_ms(void) {
   struct timespec ts;
@@ -43,7 +73,9 @@ static int paint_fill(XWSceneCtx *c);
 
 static int paint_gl(XWSceneCtx *c) {
   XWError rerr;
-  float t;
+  float t, dt;
+  uint64_t now;
+  int i;
   memset(&rerr, 0, sizeof(rerr));
   if (!c->gl) {
     uint64_t now = now_ms();
@@ -59,6 +91,22 @@ static int paint_gl(XWSceneCtx *c) {
   t = (float)(now_ms() - c->t0_ms) / 1000.0f;
   if (xw_scene_image_render(c->gl, &c->scene, c->dir, t, &rerr) != 0)
     return -1;
+  now = now_ms();
+  dt = c->last_ms ? (float)(now - c->last_ms) / 1000.0f : 1.0f / 30.0f;
+  if (dt < 0.0f)
+    dt = 0.0f;
+  if (dt > 0.25f)
+    dt = 0.25f;
+  if (!c->emitters)
+    return -1;
+  for (i = 0; i < c->scene.n_objects; i++) {
+    const XWSceneObject *o = &c->scene.objects[i];
+    if (!o->visible || o->type != XW_OBJ_PARTICLE)
+      continue;
+    if (xw_scene_particle_render(c->gl, o, &c->emitters[i], c->dir, dt,
+                                 &rerr) != 0)
+      return -1;
+  }
   if (xw_gl_present(c->gl) != 0)
     return -1;
   c->frames++;
@@ -110,6 +158,11 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     return -1;
   }
   c->parsed = 1;
+  if (init_emitters(c, err) != 0) {
+    xw_scene_free(&c->scene);
+    free(c);
+    return -1;
+  }
   c->gc = XCreateGC(win->dpy, win->win, 0, NULL);
   if (!c->gc) {
     XW_ERROR_SET(err, 1, "cannot create scene GC");
@@ -141,6 +194,7 @@ static void scene_destroy(XWBackend *b) {
     return;
   if (c->gl)
     xw_gl_destroy(c->gl);
+  free_emitters(c);
   if (c->gc)
     XFreeGC(c->win->dpy, c->gc);
   xw_scene_free(&c->scene);
@@ -161,6 +215,8 @@ static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   xw_scene_free(&c->scene);
   c->scene = next;
   snprintf(c->dir, sizeof(c->dir), "%s", opt->path);
+  if (init_emitters(c, err) != 0)
+    return -1;
   if (opt->fps > 0.0)
     c->fps = opt->fps;
   return paint(c);

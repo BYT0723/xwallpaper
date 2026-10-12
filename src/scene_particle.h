@@ -1,6 +1,7 @@
 #ifndef XW_SCENE_PARTICLE_H
 #define XW_SCENE_PARTICLE_H
 
+#include "scene_gl.h"
 #include "scene_model.h"
 
 /* CPU particle emitter (GL-free; rendering lands in Task 9b).
@@ -28,5 +29,11 @@ void xw_emitter_free(XWEmitter *e);
 /* Advance by dt seconds: spawn rate*dt (accumulated), integrate velocity
  * with gravity, age and kill the dead. Returns live count, -1 on bad args. */
 int xw_emitter_update(XWEmitter *e, float dt);
+
+/* Simulate dt then draw live particles as one point-sprite batch on the
+ * bound target (positions are object-local; origin maps to window pixels).
+ * Strict like the image renderer: missing sprite/shader errors fail. */
+int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
+                             const char *dir, float dt, XWError *err);
 
 #endif
