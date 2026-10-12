@@ -15,4 +15,7 @@ int xw_scene_object_count(const XWBackend *b);
 /* Whether the GL renderer is active (0 = clear-color fallback). */
 int xw_scene_has_gl(const XWBackend *b);
 
+/* Whether a wallpaper script is loaded and ticking. */
+int xw_scene_script_active(const XWBackend *b);
+
 #endif /* XW_SCENE_H */

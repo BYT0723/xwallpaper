@@ -1,0 +1,10 @@
+{
+  "camera": {
+    "orthogonalprojection": [1280, 720],
+    "clearcolor": [0.05, 0.05, 0.08],
+    "bloom": false,
+    "parallax": false
+  },
+  "script": "main.js",
+  "objects": []
+}

@@ -15,6 +15,7 @@
 #include "scene_parse.h"
 #include "scene_particle.h"
 #include "scene_particle_gl.h"
+#include "scene_script.h"
 #include "scene_sound.h"
 #include "scene_text.h"
 #include "scene_text_gl.h"
@@ -42,6 +43,7 @@ typedef struct XWSceneCtx {
   int sound_sys;
   int mute;
   double volume;
+  XWScript *script;
 } XWSceneCtx;
 
 static void free_emitters(XWSceneCtx *c) {
@@ -165,6 +167,69 @@ static uint64_t now_ms(void) {
 
 static int paint_fill(XWSceneCtx *c);
 
+static int load_script(XWSceneCtx *c, XWError *err) {
+  char path[1152], *src = NULL;
+  FILE *f;
+  long sz;
+  if (!c->scene.script[0])
+    return 0;
+  if (xw_script_create(&c->script, err) != 0)
+    return -1;
+  xw_script_set_scene(c->script, &c->scene);
+  xw_script_set_props(c->script, c->scene.props, c->scene.n_props);
+  snprintf(path, sizeof(path), "%.900s/%.200s", c->dir, c->scene.script);
+  f = fopen(path, "rb");
+  if (!f) {
+    XW_ERROR_SET(err, 1, "cannot open script '%.200s'", c->scene.script);
+    xw_script_destroy(c->script);
+    c->script = NULL;
+    return -1;
+  }
+  fseek(f, 0, SEEK_END);
+  sz = ftell(f);
+  rewind(f);
+  if (sz <= 0 || sz > 1024 * 1024) {
+    fclose(f);
+    XW_ERROR_SET(err, 1, "bad script size");
+    xw_script_destroy(c->script);
+    c->script = NULL;
+    return -1;
+  }
+  src = malloc((size_t)sz + 1);
+  if (!src) {
+    fclose(f);
+    XW_ERROR_SET(err, 1, "out of memory");
+    xw_script_destroy(c->script);
+    c->script = NULL;
+    return -1;
+  }
+  if (fread(src, 1, (size_t)sz, f) != (size_t)sz) {
+    free(src);
+    fclose(f);
+    XW_ERROR_SET(err, 1, "cannot read script");
+    xw_script_destroy(c->script);
+    c->script = NULL;
+    return -1;
+  }
+  fclose(f);
+  src[sz] = '\0';
+  if (xw_script_eval(c->script, src, c->scene.script, err) != 0) {
+    free(src);
+    xw_script_destroy(c->script);
+    c->script = NULL;
+    return -1;
+  }
+  free(src);
+  return 0;
+}
+
+static void free_script(XWSceneCtx *c) {
+  if (!c || !c->script)
+    return;
+  xw_script_destroy(c->script);
+  c->script = NULL;
+}
+
 static int paint_gl(XWSceneCtx *c) {
   XWError rerr;
   float t, dt;
@@ -218,6 +283,8 @@ static int paint_gl(XWSceneCtx *c) {
 }
 
 static int paint(XWSceneCtx *c) {
+  if (c->script)
+    xw_script_tick(c->script);
   if (paint_gl(c) == 0)
     return 0;
   return paint_fill(c);
@@ -277,10 +344,18 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     free(c);
     return -1;
   }
+  if (load_script(c, err) != 0) {
+    free(c->texts);
+    free_emitters(c);
+    xw_scene_free(&c->scene);
+    free(c);
+    return -1;
+  }
   init_sounds(c);
   c->gc = XCreateGC(win->dpy, win->win, 0, NULL);
   if (!c->gc) {
     XW_ERROR_SET(err, 1, "cannot create scene GC");
+    free_script(c);
     free(c->texts);
     free_sounds(c);
     free_emitters(c);
@@ -325,6 +400,7 @@ static void scene_destroy(XWBackend *b) {
   c->gl = NULL;
   free_sounds(c);
   free_emitters(c);
+  free_script(c);
   if (c->gc)
     XFreeGC(c->win->dpy, c->gc);
   xw_scene_free(&c->scene);
@@ -344,6 +420,7 @@ static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
     return -1;
   free_texts(c);
   free_sounds(c);
+  free_script(c);
   xw_scene_free(&c->scene);
   c->scene = next;
   snprintf(c->dir, sizeof(c->dir), "%s", opt->path);
@@ -358,6 +435,11 @@ static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
     XW_ERROR_SET(err, 1, "out of memory");
     return -1;
   }
+  /* Degraded, not fatal: the new scene is already swapped in (reload keeps
+   * the window alive by design); a broken script just leaves it scriptless.
+   * Fresh sets fail hard in init instead so typos never land silently. */
+  if (load_script(c, err) != 0)
+    memset(err, 0, sizeof(*err));
   if (opt->fps > 0.0)
     c->fps = opt->fps;
   {
@@ -425,4 +507,9 @@ int xw_scene_object_count(const XWBackend *b) {
 int xw_scene_has_gl(const XWBackend *b) {
   const XWSceneCtx *c = b ? (const XWSceneCtx *)b->priv : NULL;
   return (c && c->gl) ? 1 : 0;
+}
+
+int xw_scene_script_active(const XWBackend *b) {
+  const XWSceneCtx *c = b ? (const XWSceneCtx *)b->priv : NULL;
+  return (c && c->script) ? 1 : 0;
 }

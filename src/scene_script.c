@@ -31,6 +31,16 @@ struct XWScript {
   uint64_t t0_ms;
   int64_t adjust_ms;
   char last_error[256];
+  XWScene *scene;
+  const XWUserProp *props;
+  int n_props;
+  struct {
+    char name[64];
+    char value[256];
+  } *overrides;
+  int noverrides;
+  int override_cap;
+  float mouse_x, mouse_y;
 };
 
 static uint64_t mono_ms(void) {
@@ -135,6 +145,327 @@ static JSValue js_set_time(JSContext *ctx, JSValueConst this_val, int argc,
   return JS_UNDEFINED;
 }
 
+static XWSceneObject *find_object(XWScript *s, JSValueConst idv) {
+  const char *id;
+  XWSceneObject *found = NULL;
+  if (!s || !s->scene || !JS_IsString(idv))
+    return NULL;
+  id = JS_ToCString(s->ctx, idv);
+  if (!id)
+    return NULL;
+  for (int i = 0; i < s->scene->n_objects; i++) {
+    if (strcmp(s->scene->objects[i].id, id) == 0) {
+      found = &s->scene->objects[i];
+      break;
+    }
+  }
+  JS_FreeCString(s->ctx, id);
+  return found;
+}
+
+static int set_override(XWScript *s, const char *name, const char *value) {
+  for (int i = 0; i < s->noverrides; i++) {
+    if (strcmp(s->overrides[i].name, name) == 0) {
+      snprintf(s->overrides[i].value, sizeof(s->overrides[i].value), "%s",
+               value);
+      return 0;
+    }
+  }
+  if (s->noverrides >= s->override_cap) {
+    int ncap = s->override_cap ? s->override_cap * 2 : 8;
+    void *no = realloc(s->overrides, (size_t)ncap * sizeof(*s->overrides));
+    if (!no)
+      return -1;
+    s->overrides = no;
+    s->override_cap = ncap;
+  }
+  snprintf(s->overrides[s->noverrides].name,
+           sizeof(s->overrides[s->noverrides].name), "%s", name);
+  snprintf(s->overrides[s->noverrides].value,
+           sizeof(s->overrides[s->noverrides].value), "%s", value);
+  s->noverrides++;
+  return 0;
+}
+
+static const char *lookup_prop(XWScript *s, const char *name) {
+  for (int i = 0; i < s->noverrides; i++)
+    if (strcmp(s->overrides[i].name, name) == 0)
+      return s->overrides[i].value;
+  for (int i = 0; i < s->n_props; i++)
+    if (strcmp(s->props[i].name, name) == 0)
+      return s->props[i].value;
+  return NULL;
+}
+
+static JSValue prop_to_js(JSContext *ctx, const char *value) {
+  char *end;
+  double d;
+  if (strcmp(value, "true") == 0)
+    return JS_NewBool(ctx, 1);
+  if (strcmp(value, "false") == 0)
+    return JS_NewBool(ctx, 0);
+  d = strtod(value, &end);
+  if (end != value && *end == '\0' && !isnan(d))
+    return JS_NewFloat64(ctx, d);
+  return JS_NewString(ctx, value);
+}
+
+static JSValue require_object(JSContext *ctx, XWScript *s, JSValueConst idv,
+                              XWSceneObject **out) {
+  const char *id;
+  *out = find_object(s, idv);
+  if (*out)
+    return JS_UNDEFINED;
+  if (JS_IsString(idv)) {
+    id = JS_ToCString(ctx, idv);
+    JSValue ex = JS_ThrowReferenceError(ctx, "unknown scene object '%s'",
+                                        id ? id : "?");
+    if (id)
+      JS_FreeCString(ctx, id);
+    return ex;
+  }
+  return JS_ThrowTypeError(ctx, "object id must be a string");
+}
+
+static JSValue js_scene_get_count(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  (void)this_val;
+  (void)argc;
+  (void)argv;
+  return JS_NewInt32(ctx, s && s->scene ? s->scene->n_objects : 0);
+}
+
+static JSValue js_scene_get_alpha(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  XWSceneObject *o;
+  JSValue need;
+  (void)this_val;
+  if (argc < 1)
+    return JS_ThrowTypeError(ctx, "object id required");
+  need = require_object(ctx, s, argv[0], &o);
+  if (!o)
+    return need;
+  JS_FreeValue(ctx, need);
+  return JS_NewFloat64(ctx, xw_script_resolve_alpha(s, o));
+}
+
+static JSValue js_scene_set_alpha(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  XWSceneObject *o;
+  JSValue need;
+  double v = 1.0;
+  char num[64];
+  (void)this_val;
+  if (argc < 2)
+    return JS_ThrowTypeError(ctx, "object id and alpha required");
+  need = require_object(ctx, s, argv[0], &o);
+  if (!o)
+    return need;
+  JS_FreeValue(ctx, need);
+  if (JS_ToFloat64(ctx, &v, argv[1]) != 0 || isnan(v))
+    return JS_ThrowTypeError(ctx, "alpha must be a number");
+  if (o->alpha.kind == XW_DYN_USER && o->alpha.ref[0]) {
+    snprintf(num, sizeof(num), "%g", v);
+    if (set_override(s, o->alpha.ref, num) != 0)
+      return JS_ThrowOutOfMemory(ctx);
+  } else {
+    o->alpha.kind = XW_DYN_CONSTANT;
+    o->alpha.constant = (float)v;
+  }
+  return JS_UNDEFINED;
+}
+
+static JSValue js_vec2(JSContext *ctx, float x, float y) {
+  JSValue a = JS_NewArray(ctx);
+  JS_SetPropertyUint32(ctx, a, 0, JS_NewFloat64(ctx, x));
+  JS_SetPropertyUint32(ctx, a, 1, JS_NewFloat64(ctx, y));
+  return a;
+}
+
+static JSValue js_scene_get_origin(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  XWSceneObject *o;
+  JSValue need;
+  (void)this_val;
+  if (argc < 1)
+    return JS_ThrowTypeError(ctx, "object id required");
+  need = require_object(ctx, s, argv[0], &o);
+  if (!o)
+    return need;
+  JS_FreeValue(ctx, need);
+  return js_vec2(ctx, o->origin[0], o->origin[1]);
+}
+
+static JSValue js_scene_set_origin(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  XWSceneObject *o;
+  JSValue need;
+  double x, y;
+  (void)this_val;
+  if (argc < 3)
+    return JS_ThrowTypeError(ctx, "object id, x and y required");
+  need = require_object(ctx, s, argv[0], &o);
+  if (!o)
+    return need;
+  JS_FreeValue(ctx, need);
+  if (JS_ToFloat64(ctx, &x, argv[1]) != 0 ||
+      JS_ToFloat64(ctx, &y, argv[2]) != 0 || isnan(x) || isnan(y))
+    return JS_ThrowTypeError(ctx, "x and y must be numbers");
+  o->origin[0] = (float)x;
+  o->origin[1] = (float)y;
+  return JS_UNDEFINED;
+}
+
+static JSValue js_scene_get_scale(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  XWSceneObject *o;
+  JSValue need;
+  (void)this_val;
+  if (argc < 1)
+    return JS_ThrowTypeError(ctx, "object id required");
+  need = require_object(ctx, s, argv[0], &o);
+  if (!o)
+    return need;
+  JS_FreeValue(ctx, need);
+  return js_vec2(ctx, o->scale[0], o->scale[1]);
+}
+
+static JSValue js_scene_set_scale(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  XWSceneObject *o;
+  JSValue need;
+  double x, y;
+  (void)this_val;
+  if (argc < 3)
+    return JS_ThrowTypeError(ctx, "object id, sx and sy required");
+  need = require_object(ctx, s, argv[0], &o);
+  if (!o)
+    return need;
+  JS_FreeValue(ctx, need);
+  if (JS_ToFloat64(ctx, &x, argv[1]) != 0 ||
+      JS_ToFloat64(ctx, &y, argv[2]) != 0 || isnan(x) || isnan(y))
+    return JS_ThrowTypeError(ctx, "sx and sy must be numbers");
+  o->scale[0] = (float)x;
+  o->scale[1] = (float)y;
+  return JS_UNDEFINED;
+}
+
+static JSValue js_scene_set_visible(JSContext *ctx, JSValueConst this_val,
+                                    int argc, JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  XWSceneObject *o;
+  JSValue need;
+  (void)this_val;
+  if (argc < 2)
+    return JS_ThrowTypeError(ctx, "object id and flag required");
+  need = require_object(ctx, s, argv[0], &o);
+  if (!o)
+    return need;
+  JS_FreeValue(ctx, need);
+  o->visible = JS_ToBool(ctx, argv[1]) ? 1 : 0;
+  return JS_UNDEFINED;
+}
+
+static JSValue js_scene_is_visible(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  XWSceneObject *o;
+  JSValue need;
+  (void)this_val;
+  if (argc < 1)
+    return JS_ThrowTypeError(ctx, "object id required");
+  need = require_object(ctx, s, argv[0], &o);
+  if (!o)
+    return need;
+  JS_FreeValue(ctx, need);
+  return JS_NewBool(ctx, o->visible);
+}
+
+static JSValue js_scene_get_property(JSContext *ctx, JSValueConst this_val,
+                                     int argc, JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  const char *name, *value;
+  JSValue out;
+  (void)this_val;
+  if (!s || argc < 1 || !JS_IsString(argv[0]))
+    return JS_ThrowTypeError(ctx, "property name required");
+  name = JS_ToCString(ctx, argv[0]);
+  if (!name)
+    return JS_ThrowOutOfMemory(ctx);
+  value = lookup_prop(s, name);
+  JS_FreeCString(ctx, name);
+  if (!value)
+    return JS_UNDEFINED;
+  out = prop_to_js(ctx, value);
+  return out;
+}
+
+static JSValue js_scene_set_property(JSContext *ctx, JSValueConst this_val,
+                                     int argc, JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  const char *name;
+  char value[256];
+  double d;
+  int32_t b;
+  (void)this_val;
+  if (!s || argc < 2 || !JS_IsString(argv[0]))
+    return JS_ThrowTypeError(ctx, "property name and value required");
+  name = JS_ToCString(ctx, argv[0]);
+  if (!name)
+    return JS_ThrowOutOfMemory(ctx);
+  if (JS_IsBool(argv[1])) {
+    b = JS_ToBool(ctx, argv[1]);
+    snprintf(value, sizeof(value), "%s", b ? "true" : "false");
+  } else if (!JS_IsString(argv[1]) &&
+             JS_ToFloat64(ctx, &d, argv[1]) == 0 && !isnan(d)) {
+    snprintf(value, sizeof(value), "%g", d);
+  } else {
+    const char *raw = JS_ToCString(ctx, argv[1]);
+    snprintf(value, sizeof(value), "%s", raw ? raw : "");
+    if (raw)
+      JS_FreeCString(ctx, raw);
+  }
+  {
+    /* copy name: ToCString buffer dies with FreeCString */
+    char key[64];
+    snprintf(key, sizeof(key), "%s", name);
+    JS_FreeCString(ctx, name);
+    if (set_override(s, key, value) != 0)
+      return JS_ThrowOutOfMemory(ctx);
+  }
+  return JS_UNDEFINED;
+}
+
+static JSValue js_input_get_x(JSContext *ctx, JSValueConst this_val, int argc,
+                              JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  (void)this_val;
+  (void)argc;
+  (void)argv;
+  return JS_NewFloat64(ctx, s ? s->mouse_x : 0.0);
+}
+
+static JSValue js_input_get_y(JSContext *ctx, JSValueConst this_val, int argc,
+                              JSValueConst *argv) {
+  XWScript *s = ctx_script(ctx);
+  (void)this_val;
+  (void)argc;
+  (void)argv;
+  return JS_NewFloat64(ctx, s ? s->mouse_y : 0.0);
+}
+
+static void add_fn(JSContext *ctx, JSValue obj, const char *name,
+                   JSCFunction *func, int len) {
+  JS_SetPropertyStr(ctx, obj, name, JS_NewCFunction(ctx, func, name, len));
+}
+
 int xw_script_create(XWScript **out, XWError *err) {
   XWScript *s;
   JSValue global;
@@ -177,6 +508,27 @@ int xw_script_create(XWScript **out, XWError *err) {
                     JS_NewCFunction(s->ctx, js_get_time, "getTime", 0));
   JS_SetPropertyStr(s->ctx, global, "setTime",
                     JS_NewCFunction(s->ctx, js_set_time, "setTime", 1));
+  {
+    JSValue scene = JS_NewObject(s->ctx);
+    add_fn(s->ctx, scene, "getObjectCount", js_scene_get_count, 0);
+    add_fn(s->ctx, scene, "getAlpha", js_scene_get_alpha, 1);
+    add_fn(s->ctx, scene, "setAlpha", js_scene_set_alpha, 2);
+    add_fn(s->ctx, scene, "getOrigin", js_scene_get_origin, 1);
+    add_fn(s->ctx, scene, "setOrigin", js_scene_set_origin, 3);
+    add_fn(s->ctx, scene, "getScale", js_scene_get_scale, 1);
+    add_fn(s->ctx, scene, "setScale", js_scene_set_scale, 3);
+    add_fn(s->ctx, scene, "setVisible", js_scene_set_visible, 2);
+    add_fn(s->ctx, scene, "isVisible", js_scene_is_visible, 1);
+    add_fn(s->ctx, scene, "getProperty", js_scene_get_property, 1);
+    add_fn(s->ctx, scene, "setProperty", js_scene_set_property, 2);
+    JS_SetPropertyStr(s->ctx, global, "scene", scene);
+  }
+  {
+    JSValue input = JS_NewObject(s->ctx);
+    add_fn(s->ctx, input, "getMouseX", js_input_get_x, 0);
+    add_fn(s->ctx, input, "getMouseY", js_input_get_y, 0);
+    JS_SetPropertyStr(s->ctx, global, "input", input);
+  }
   JS_FreeValue(s->ctx, global);
   *out = s;
   return 0;
@@ -187,6 +539,7 @@ void xw_script_destroy(XWScript *s) {
     return;
   for (int i = 0; i < s->ntimers; i++) JS_FreeValue(s->ctx, s->timers[i].func);
   free(s->timers);
+  free(s->overrides);
   JS_FreeContext(s->ctx);
   JS_FreeRuntime(s->rt);
   free(s);
@@ -288,4 +641,65 @@ uint64_t xw_script_now_ms(const XWScript *s) {
 
 const char *xw_script_last_error(const XWScript *s) {
   return s ? s->last_error : "";
+}
+
+int xw_script_set_scene(XWScript *s, XWScene *scene) {
+  if (!s)
+    return -1;
+  s->scene = scene;
+  return 0;
+}
+
+int xw_script_set_props(XWScript *s, const XWUserProp *props, int n) {
+  if (!s || (n > 0 && !props))
+    return -1;
+  s->props = n > 0 ? props : NULL;
+  s->n_props = n > 0 ? n : 0;
+  return 0;
+}
+
+void xw_script_set_mouse(XWScript *s, float x, float y) {
+  if (!s)
+    return;
+  s->mouse_x = x;
+  s->mouse_y = y;
+}
+
+int xw_script_set_user_prop(XWScript *s, const char *name, const char *value) {
+  if (!s || !name || !name[0] || !value)
+    return -1;
+  return set_override(s, name, value);
+}
+
+int xw_script_get_user_prop(XWScript *s, const char *name, char *value,
+                            size_t n) {
+  const char *v;
+  if (!s || !name || !value || n == 0)
+    return -1;
+  v = lookup_prop(s, name);
+  if (!v)
+    return -1;
+  snprintf(value, n, "%s", v);
+  return 0;
+}
+
+float xw_script_resolve_alpha(XWScript *s, const XWSceneObject *o) {
+  const char *v;
+  char *end;
+  double d;
+  if (!o)
+    return 1.0f;
+  if (!s || o->alpha.kind == XW_DYN_CONSTANT)
+    return o->alpha.constant;
+  if (o->alpha.kind == XW_DYN_EXPRESSION)
+    return o->alpha.constant;
+  if (!o->alpha.ref[0])
+    return o->alpha.constant;
+  v = lookup_prop(s, o->alpha.ref);
+  if (!v)
+    return o->alpha.constant;
+  d = strtod(v, &end);
+  if (end == v || *end != '\0' || isnan(d))
+    return o->alpha.constant;
+  return (float)d;
 }
