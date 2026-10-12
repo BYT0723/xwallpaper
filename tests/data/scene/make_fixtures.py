@@ -17,21 +17,20 @@ def write_pkg(path):
     files = {
         "hello.txt": b"hello scene",
         "data.bin": bytes(range(16)),
+        "sub/dir.bin": b"\xde\xad\xbe\xef",
     }
     names = list(files.keys())
     blobs = [files[n] for n in names]
     n = len(names)
-    # header: magic + count
-    header = b"PKGV" + struct.pack("<I", n)
-    # entry table: name_len(u16) + name + offset(u32) + size(u32)
-    # offsets are absolute from file start
+    # real PKGV layout: u32 ignored + magic + version + u32 count,
+    # entries as u32 namelen + name + u32 offset + u32 size,
+    # offsets relative to the end of the file table.
+    header = struct.pack("<I", 8) + b"PKGV" + b"0008" + struct.pack("<I", n)
     entries = b""
-    table_size = sum(2 + len(nm.encode()) + 4 + 4 for nm in names)
-    data_off = len(header) + table_size
-    off = data_off
+    off = 0
     for nm, blob in zip(names, blobs):
         nb = nm.encode()
-        entries += struct.pack("<H", len(nb)) + nb
+        entries += struct.pack("<I", len(nb)) + nb
         entries += struct.pack("<II", off, len(blob))
         off += len(blob)
     with open(path, "wb") as f:
