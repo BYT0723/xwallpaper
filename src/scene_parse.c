@@ -14,6 +14,8 @@ static void copy_str(char *dst, size_t n, const char *src) {
   snprintf(dst, n, "%s", src);
 }
 
+static int parse_project_props(const char *dir, XWScene *out, XWError *err);
+
 #ifdef XW_HAVE_JSONC
 static int get_vec2(struct json_object *o, const char *key, float *x, float *y,
                     float dx, float dy) {
@@ -29,6 +31,62 @@ static int get_vec2(struct json_object *o, const char *key, float *x, float *y,
   *x = (float)json_object_get_double(e0);
   *y = (float)json_object_get_double(e1);
   return 0;
+}
+
+static int get_vec4(struct json_object *o, const char *key, float *v) {
+  struct json_object *a = NULL;
+  if (!json_object_object_get_ex(o, key, &a) || !a) return 0;
+  if (json_object_get_type(a) != json_type_array) return -1;
+  if (json_object_array_length(a) < 4) return -1;
+  for (int i = 0; i < 4; i++) {
+    struct json_object *e = json_object_array_get_idx(a, i);
+    if (!e) return -1;
+    v[i] = (float)json_object_get_double(e);
+  }
+  return 0;
+}
+
+static int parse_dynfloat(struct json_object *o, const char *key,
+                          XWDynFloat *d, float def) {
+  struct json_object *v = NULL;
+  d->kind = XW_DYN_CONSTANT;
+  d->constant = def;
+  d->ref[0] = '\0';
+  if (!json_object_object_get_ex(o, key, &v) || !v) return 0;
+  enum json_type t = json_object_get_type(v);
+  if (t == json_type_double || t == json_type_int) {
+    d->constant = (float)json_object_get_double(v);
+    return 0;
+  }
+  if (t != json_type_object) return -1;
+  struct json_object *u = NULL;
+  if (json_object_object_get_ex(v, "user", &u) && u) {
+    d->kind = XW_DYN_USER;
+    copy_str(d->ref, sizeof(d->ref), json_object_get_string(u));
+    return 0;
+  }
+  if (json_object_object_get_ex(v, "expression", &u) && u) {
+    d->kind = XW_DYN_EXPRESSION;
+    copy_str(d->ref, sizeof(d->ref), json_object_get_string(u));
+    return 0;
+  }
+  return -1;
+}
+
+static XWObjType infer_type(struct json_object *jo) {
+  struct json_object *v = NULL;
+  if (json_object_object_get_ex(jo, "type", &v) && v &&
+      json_object_get_type(v) == json_type_string) {
+    const char *t = json_object_get_string(v);
+    if (strcmp(t, "particle") == 0) return XW_OBJ_PARTICLE;
+    if (strcmp(t, "text") == 0) return XW_OBJ_TEXT;
+    if (strcmp(t, "sound") == 0) return XW_OBJ_SOUND;
+    return XW_OBJ_IMAGE;
+  }
+  if (json_object_object_get_ex(jo, "text", &v) && v) return XW_OBJ_TEXT;
+  if (json_object_object_get_ex(jo, "sound", &v) && v) return XW_OBJ_SOUND;
+  if (json_object_object_get_ex(jo, "emitter", &v) && v) return XW_OBJ_PARTICLE;
+  return XW_OBJ_IMAGE;
 }
 
 static int parse_pass(struct json_object *jo, XWScenePass *p, XWError *err) {
@@ -128,6 +186,56 @@ static int parse_object(struct json_object *jo, XWSceneObject *o, XWError *err) 
   }
   if (json_object_object_get_ex(jo, "visible", &v) && v)
     o->visible = json_object_get_boolean(v) ? 1 : 0;
+  o->type = infer_type(jo);
+  if (parse_dynfloat(jo, "alpha", &o->alpha, 1.0f) != 0) {
+    XW_ERROR_SET(err, 1, "object alpha must be a number or {user,expression}");
+    return -1;
+  }
+  if (json_object_object_get_ex(jo, "emitter", &v) && v) {
+    if (json_object_get_type(v) != json_type_object) {
+      XW_ERROR_SET(err, 1, "emitter must be an object");
+      return -1;
+    }
+    struct json_object *e = NULL;
+    if (json_object_object_get_ex(v, "rate", &e) && e)
+      o->particle.rate = (float)json_object_get_double(e);
+    if (json_object_object_get_ex(v, "max_count", &e) && e)
+      o->particle.max_count = json_object_get_int(e);
+    if (json_object_object_get_ex(v, "sprite", &e) && e)
+      copy_str(o->particle.sprite, sizeof(o->particle.sprite),
+               json_object_get_string(e));
+  }
+  if (json_object_object_get_ex(jo, "text", &v) && v) {
+    if (json_object_get_type(v) != json_type_object) {
+      XW_ERROR_SET(err, 1, "text must be an object");
+      return -1;
+    }
+    struct json_object *e = NULL;
+    if (json_object_object_get_ex(v, "content", &e) && e)
+      copy_str(o->text.content, sizeof(o->text.content),
+               json_object_get_string(e));
+    if (json_object_object_get_ex(v, "font", &e) && e)
+      copy_str(o->text.font, sizeof(o->text.font), json_object_get_string(e));
+    if (json_object_object_get_ex(v, "size", &e) && e)
+      o->text.size = (float)json_object_get_double(e);
+    o->text.color[0] = 1.0f;
+    o->text.color[1] = 1.0f;
+    o->text.color[2] = 1.0f;
+    o->text.color[3] = 1.0f;
+    if (get_vec4(v, "color", o->text.color) != 0) {
+      XW_ERROR_SET(err, 1, "text color must be [r, g, b, a]");
+      return -1;
+    }
+  }
+  if (json_object_object_get_ex(jo, "sound", &v) && v) {
+    copy_str(o->sound.file, sizeof(o->sound.file), json_object_get_string(v));
+    o->sound.volume = 1.0f;
+    o->sound.loop = 1;
+    if (json_object_object_get_ex(jo, "volume", &v) && v)
+      o->sound.volume = (float)json_object_get_double(v);
+    if (json_object_object_get_ex(jo, "loop", &v) && v)
+      o->sound.loop = json_object_get_boolean(v) ? 1 : 0;
+  }
   if (json_object_object_get_ex(jo, "effects", &v) && v) {
     if (json_object_get_type(v) != json_type_array) {
       XW_ERROR_SET(err, 1, "object effects must be an array");
@@ -228,6 +336,10 @@ int xw_scene_parse(const char *dir, XWScene *out, XWError *err) {
     if (json_object_object_get_ex(cam, "parallax", &v) && v)
       out->camera.parallax = json_object_get_boolean(v) ? 1 : 0;
   }
+  struct json_object *sv = NULL;
+  if (json_object_object_get_ex(root, "script", &sv) && sv &&
+      json_object_get_type(sv) == json_type_string)
+    copy_str(out->script, sizeof(out->script), json_object_get_string(sv));
   struct json_object *objs = NULL;
   if (json_object_object_get_ex(root, "objects", &objs) && objs) {
     if (json_object_get_type(objs) != json_type_array) {
@@ -253,6 +365,10 @@ int xw_scene_parse(const char *dir, XWScene *out, XWError *err) {
     }
   }
   json_object_put(root);
+  if (parse_project_props(dir, out, err) != 0) {
+    xw_scene_free(out);
+    return -1;
+  }
   return 0;
 fail:
   json_object_put(root);
@@ -261,12 +377,88 @@ fail:
 #endif
 }
 
-void xw_scene_free(XWScene *s) {
-  if (!s || !s->objects) {
-    if (s) {
-      s->objects = NULL;
-      s->n_objects = 0;
+static int parse_project_props(const char *dir, XWScene *out, XWError *err) {
+  char path[1024];
+  snprintf(path, sizeof(path), "%s/project.json", dir);
+  FILE *f = fopen(path, "rb");
+  if (!f) return 0;
+  fseek(f, 0, SEEK_END);
+  long sz = ftell(f);
+  rewind(f);
+  if (sz <= 0 || sz > 1024 * 1024) {
+    fclose(f);
+    XW_ERROR_SET(err, 1, "bad project.json size");
+    return -1;
+  }
+  char *buf = malloc((size_t)sz + 1);
+  if (!buf) {
+    fclose(f);
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
+  if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) {
+    free(buf);
+    fclose(f);
+    XW_ERROR_SET(err, 1, "cannot read project.json");
+    return -1;
+  }
+  fclose(f);
+  buf[sz] = '\0';
+  struct json_object *root = json_tokener_parse(buf);
+  free(buf);
+  if (!root || json_object_get_type(root) != json_type_object) {
+    if (root) json_object_put(root);
+    XW_ERROR_SET(err, 1, "project.json is not a JSON object");
+    return -1;
+  }
+  int rc = 0;
+  struct json_object *gen = NULL, *props = NULL;
+  if (json_object_object_get_ex(root, "general", &gen) && gen &&
+      json_object_get_type(gen) == json_type_object &&
+      json_object_object_get_ex(gen, "properties", &props) && props) {
+    if (json_object_get_type(props) != json_type_object) {
+      XW_ERROR_SET(err, 1, "properties must be an object");
+      rc = -1;
+    } else {
+      size_t n = 0;
+      json_object_object_foreach(props, key, val) {
+        (void)key;
+        (void)val;
+        n++;
+      }
+      out->props = calloc(n ? n : 1, sizeof(XWUserProp));
+      if (!out->props) {
+        XW_ERROR_SET(err, 1, "out of memory");
+        rc = -1;
+      } else {
+        json_object_object_foreach(props, key, val) {
+          XWUserProp *p = &out->props[out->n_props++];
+          copy_str(p->name, sizeof(p->name), key);
+          if (json_object_get_type(val) == json_type_object) {
+            struct json_object *t = NULL, *vv = NULL;
+            if (json_object_object_get_ex(val, "type", &t) && t)
+              copy_str(p->type, sizeof(p->type), json_object_get_string(t));
+            if (json_object_object_get_ex(val, "value", &vv) && vv)
+              copy_str(p->value, sizeof(p->value),
+                       json_object_get_string(vv));
+          } else {
+            copy_str(p->value, sizeof(p->value), json_object_get_string(val));
+          }
+        }
+      }
     }
+  }
+  json_object_put(root);
+  return rc;
+}
+
+void xw_scene_free(XWScene *s) {
+  if (!s) return;
+  free(s->props);
+  s->props = NULL;
+  s->n_props = 0;
+  if (!s->objects) {
+    s->n_objects = 0;
     return;
   }
   for (int i = 0; i < s->n_objects; i++) {

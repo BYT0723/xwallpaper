@@ -42,6 +42,67 @@ static void test_parse_fixture(void) {
   xw_scene_free(&s);
 }
 
+static void test_full_types(void) {
+  TEST_BEGIN("full dir parses 4 typed objects with payloads");
+  XWScene s;
+  memset(&s, 0, sizeof(s));
+  XWError err = {0};
+  int rc = xw_scene_parse("tests/data/scene/full", &s, &err);
+  TEST_CHECK_EQ_INT(rc, 0);
+  if (rc != 0) return;
+  TEST_CHECK_EQ_INT(s.n_objects, 4);
+  if (s.n_objects != 4) {
+    xw_scene_free(&s);
+    return;
+  }
+  TEST_CHECK_EQ_INT(s.objects[0].type, XW_OBJ_IMAGE);
+  TEST_CHECK_EQ_INT(s.objects[0].alpha.kind, XW_DYN_USER);
+  TEST_CHECK_EQ_STR(s.objects[0].alpha.ref, "opacity");
+  TEST_CHECK_EQ_INT(s.objects[1].type, XW_OBJ_PARTICLE);
+  TEST_CHECK_EQ_STR(s.objects[1].id, "sparks");
+  TEST_CHECK(s.objects[1].particle.rate > 59.0 &&
+             s.objects[1].particle.rate < 61.0);
+  TEST_CHECK_EQ_INT(s.objects[1].particle.max_count, 500);
+  TEST_CHECK_EQ_STR(s.objects[1].particle.sprite, "particles/spark.png");
+  TEST_CHECK_EQ_INT(s.objects[1].alpha.kind, XW_DYN_CONSTANT);
+  TEST_CHECK_EQ_INT(s.objects[2].type, XW_OBJ_TEXT);
+  TEST_CHECK_EQ_STR(s.objects[2].text.content, "Hello");
+  TEST_CHECK_EQ_STR(s.objects[2].text.font, "fonts/roboto.ttf");
+  TEST_CHECK_EQ_INT(s.objects[3].type, XW_OBJ_SOUND);
+  TEST_CHECK_EQ_STR(s.objects[3].sound.file, "audio/bgm.ogg");
+  TEST_CHECK_EQ_INT(s.objects[3].sound.loop, 1);
+  xw_scene_free(&s);
+}
+
+static void test_full_props_script(void) {
+  TEST_BEGIN("project.json props + scene script entry");
+  XWScene s;
+  memset(&s, 0, sizeof(s));
+  XWError err = {0};
+  int rc = xw_scene_parse("tests/data/scene/full", &s, &err);
+  TEST_CHECK_EQ_INT(rc, 0);
+  if (rc != 0) return;
+  TEST_CHECK_EQ_STR(s.script, "main.js");
+  TEST_CHECK_EQ_INT(s.n_props, 3);
+  if (s.n_props == 3) {
+    TEST_CHECK_EQ_STR(s.props[0].name, "opacity");
+    TEST_CHECK_EQ_STR(s.props[0].type, "slider");
+    TEST_CHECK_EQ_STR(s.props[2].name, "schemecolor");
+    TEST_CHECK_EQ_STR(s.props[2].value, "0.15 0.23 0.4");
+  }
+  xw_scene_free(&s);
+
+  TEST_BEGIN("dir without project.json parses with empty props");
+  memset(&s, 0, sizeof(s));
+  rc = xw_scene_parse("tests/data/scene", &s, &err);
+  TEST_CHECK_EQ_INT(rc, 0);
+  if (rc != 0) return;
+  TEST_CHECK_EQ_INT(s.n_props, 0);
+  TEST_CHECK_EQ_STR(s.script, "");
+  TEST_CHECK_EQ_INT(s.objects[0].alpha.kind, XW_DYN_CONSTANT);
+  xw_scene_free(&s);
+}
+
 static void test_bad_inputs(void) {
   TEST_BEGIN("missing dir/file rejected, no crash");
   XWScene s;
@@ -58,5 +119,7 @@ int main(void) {
   TEST_SUITE("scene_parse");
   test_parse_fixture();
   test_bad_inputs();
+  test_full_types();
+  test_full_props_script();
   TEST_SUMMARY();
 }
