@@ -88,6 +88,30 @@ static void test_encode_set_scene(void) {
   TEST_CHECK(has_field(msg, n, "walldir"));
 }
 
+static void test_encode_props(void) {
+  TEST_BEGIN("list-props/set-prop encode target and pair");
+  reset();
+  cfg.command = XW_CMD_LIST_PROPS;
+  cfg.target = XW_TARGET_PRIMARY;
+
+  char msg[XW_MSG_MAX];
+  int n = xw_proto_encode_list_props(&cfg, msg, sizeof(msg));
+  TEST_CHECK(n > 0);
+  TEST_CHECK(strncmp(msg, "list-props\0", 11) == 0);
+  TEST_CHECK(has_field(msg, n, "primary"));
+
+  reset();
+  cfg.command = XW_CMD_SET_PROP;
+  cfg.target = XW_TARGET_OUTPUT;
+  snprintf(cfg.output, sizeof(cfg.output), "DP-1");
+  snprintf(cfg.prop, sizeof(cfg.prop), "rain=0");
+  n = xw_proto_encode_set_prop(&cfg, msg, sizeof(msg));
+  TEST_CHECK(n > 0);
+  TEST_CHECK(strncmp(msg, "set-prop\0", 9) == 0);
+  TEST_CHECK(has_field(msg, n, "DP-1"));
+  TEST_CHECK(has_field(msg, n, "rain=0"));
+}
+
 static void test_encode_set_video_fps(void) {
   TEST_BEGIN("set --fps encodes fps field; default omits it");
   reset();
@@ -404,6 +428,7 @@ int main(void) {
   test_encode_set_basic();
   test_encode_set_output();
   test_encode_set_scene();
+  test_encode_props();
   test_encode_set_geom();
   test_encode_set_span();
   test_encode_clear();

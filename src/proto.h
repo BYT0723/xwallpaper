@@ -20,6 +20,8 @@
  *    clear\0<target>\n       target: all | <output-name>
  *      optional field keep=1: remove windows but retain their last state
  *      (screen full-wallpaper clearing; `restore` brings them back)
+ *    list-props\0<target>\n  target: primary | <output-name>
+ *    set-prop\0<target>\0<name=value>\n
  *    list\n
  *    restore\n              rebuild windows kept by `clear --keep`
  *    exit\n
@@ -45,6 +47,8 @@ void xw_daemon_socket_path(char *out, size_t n);
 int xw_proto_encode_set(const XWConfig *cfg, char *msg, size_t n);
 int xw_proto_encode_clear(const XWConfig *cfg, char *msg, size_t n);
 int xw_proto_encode_list(char *msg, size_t n);
+int xw_proto_encode_list_props(const XWConfig *cfg, char *msg, size_t n);
+int xw_proto_encode_set_prop(const XWConfig *cfg, char *msg, size_t n);
 int xw_proto_encode_restore(char *msg, size_t n);
 int xw_proto_encode_exit(char *msg, size_t n);
 

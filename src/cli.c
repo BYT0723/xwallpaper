@@ -125,6 +125,8 @@ void xw_cli_usage(FILE *f) {
     "  xwallpaper restore\n"
     "  xwallpaper --list\n"
     "  xwallpaper --state\n"
+    "  xwallpaper --list-properties [-m <output>]\n"
+    "  xwallpaper --set-property <name=value> [-m <output>]\n"
     "  xwallpaper exit\n"
     "  xwallpaper --daemon   (debug: run the daemon in the foreground)\n"
     "\n"
@@ -184,6 +186,37 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
     cfg->command = (strcmp(cmd, "--list") == 0) ? XW_CMD_LIST : XW_CMD_STATE;
     if (i < argc) {
       XW_ERROR_SET(err, 1, "unexpected argument after %s", cmd);
+      return -1;
+    }
+    return 0;
+  }
+
+  if (strcmp(cmd, "--list-properties") == 0 ||
+      strcmp(cmd, "--set-property") == 0) {
+    cfg->command = (strcmp(cmd, "--list-properties") == 0) ? XW_CMD_LIST_PROPS
+                                                          : XW_CMD_SET_PROP;
+    cfg->target = XW_TARGET_PRIMARY;
+    for (; i < argc; i++) {
+      const char *a = argv[i];
+      if (strcmp(a, "-m") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "-m requires an output name");
+          return -1;
+        }
+        snprintf(cfg->output, sizeof(cfg->output), "%s", argv[i]);
+        cfg->target = XW_TARGET_OUTPUT;
+      } else if (cfg->command == XW_CMD_SET_PROP && cfg->prop[0] == '\0' &&
+                 strchr(a, '=')) {
+        snprintf(cfg->prop, sizeof(cfg->prop), "%s", a);
+      } else {
+        XW_ERROR_SET(err, 1, "unexpected argument '%s' (%s takes only "
+                     "[-m <output>]%s)", a, cmd,
+                     cfg->command == XW_CMD_SET_PROP ? " name=value" : "");
+        return -1;
+      }
+    }
+    if (cfg->command == XW_CMD_SET_PROP && cfg->prop[0] == '\0') {
+      XW_ERROR_SET(err, 1, "--set-property requires name=value");
       return -1;
     }
     return 0;

@@ -102,6 +102,16 @@ void xw_app_tick_backends(XWApp *app);
  * on_event hook. Returns 1 if consumed. */
 int xw_app_handle_event(XWApp *app, XEvent *ev);
 
+/* List user properties of the window addressed by cfg (primary or -m):
+ * writes "name\ttype\tvalue\n" lines. Returns the count, -1 on error
+ * (unknown window, backend without properties). */
+int xw_app_list_props(XWApp *app, const XWConfig *cfg, char *out, size_t n,
+                      XWError *err);
+
+/* Override a user property on the live window addressed by cfg. */
+int xw_app_set_prop(XWApp *app, const XWConfig *cfg, const char *name,
+                    const char *value, XWError *err);
+
 /* Poll the X DPMS power state (throttled internally, ~500ms) and pause or
  * resume rendering backends when the display enters/exits a powered-off
  * state. Rendering backends keep presenting frames while DPMS is off, which

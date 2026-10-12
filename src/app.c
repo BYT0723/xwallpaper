@@ -928,6 +928,63 @@ int xw_app_handle_event(XWApp *app, XEvent *ev) {
   return 0;
 }
 
+/* Resolve the backend addressed by a props command (primary resolves to
+ * the primary output, -m names an output or -g name). */
+static int props_backend(XWApp *app, const XWConfig *cfg, XWError *err) {
+  int x, y;
+  unsigned int w, h;
+  char resolved[XW_OUTPUT_NAME_LEN] = {0};
+  char key[XW_OUTPUT_NAME_LEN] = {0};
+  if (!app || !cfg) {
+    XW_ERROR_SET(err, 1, "invalid args");
+    return -1;
+  }
+#ifdef XW_HAVE_WAYLAND
+  if (resolve_geometry(app, cfg, &x, &y, &w, &h, resolved) != 0) {
+#else
+  if (xw_x11_resolve_geometry(app->dpy, cfg, &x, &y, &w, &h, resolved) != 0) {
+#endif
+    XW_ERROR_SET(err, 1, "cannot resolve output (use --list to see outputs)");
+    return -1;
+  }
+  window_key(cfg, resolved, key, sizeof(key));
+  return find_window_by_key(app, key);
+}
+
+int xw_app_list_props(XWApp *app, const XWConfig *cfg, char *out, size_t n,
+                      XWError *err) {
+  int idx = props_backend(app, cfg, err);
+  XWBackend *b;
+  if (idx < 0) {
+    if (err && !err->code)
+      XW_ERROR_SET(err, 1, "no wallpaper on that output");
+    return -1;
+  }
+  b = app->backends[idx];
+  if (!b || !b->list_props) {
+    XW_ERROR_SET(err, 1, "that wallpaper has no user properties");
+    return -1;
+  }
+  return b->list_props(b, out, n);
+}
+
+int xw_app_set_prop(XWApp *app, const XWConfig *cfg, const char *name,
+                    const char *value, XWError *err) {
+  int idx = props_backend(app, cfg, err);
+  XWBackend *b;
+  if (idx < 0) {
+    if (err && !err->code)
+      XW_ERROR_SET(err, 1, "no wallpaper on that output");
+    return -1;
+  }
+  b = app->backends[idx];
+  if (!b || !b->set_prop) {
+    XW_ERROR_SET(err, 1, "that wallpaper has no user properties");
+    return -1;
+  }
+  return b->set_prop(b, name, value, err);
+}
+
 #define DPMS_POLL_INTERVAL_MS 500
 
 static uint64_t now_monotonic_ms(void) {

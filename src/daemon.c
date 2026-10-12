@@ -438,7 +438,14 @@ int xw_daemon_main(void) {
         if (r <= 0) {
           reply_n = reply_error(reply, sizeof(reply), "bad request");
         } else {
-          if (strncmp(msg, "set", 3) == 0) {
+          /* exact verb match on the first field (NUL- or LF-terminated):
+           * prefix matching misroutes longer verbs (set-prop into set,
+           * list-props into list). */
+          size_t vlen = 0;
+          while (vlen < (size_t)r && msg[vlen] != '\0' && msg[vlen] != '\n')
+            vlen++;
+#define VERB_IS(s) (vlen == sizeof(s) - 1 && memcmp(msg, s, sizeof(s) - 1) == 0)
+          if (VERB_IS("set")) {
             XWConfig cfg;
             char ebuf[256];
             if (decode_set(msg, (size_t)r, &cfg, ebuf, sizeof(ebuf)) != 0) {
@@ -464,7 +471,7 @@ int xw_daemon_main(void) {
                         (double)(t1.tv_nsec - t0.tv_nsec) / 1e9);
               }
             }
-          } else if (strncmp(msg, "clear", 5) == 0) {
+          } else if (VERB_IS("clear")) {
             XWConfig cfg;
             decode_clear(msg, (size_t)r, &cfg);
             XWError aerr;
@@ -480,10 +487,10 @@ int xw_daemon_main(void) {
             xw_app_clear(cur, &cfg, &aerr);
             xw_app_save_state(cur);
             reply_n = snprintf(reply, sizeof(reply), "ok\n");
-          } else if (strncmp(msg, "restore", 7) == 0) {
+          } else if (VERB_IS("restore")) {
             xw_app_restore_kept(cur);
             reply_n = snprintf(reply, sizeof(reply), "ok\n");
-          } else if (strncmp(msg, "list", 4) == 0) {
+          } else if (VERB_IS("list")) {
             int nw = xw_app_window_count(cur);
             /* build the whole reply into one buffer, then send once */
             char *out = malloc(XW_REPLY_MAX);
@@ -534,12 +541,100 @@ int xw_daemon_main(void) {
               close(c);
               continue;
             }
-          } else if (strncmp(msg, "exit", 4) == 0) {
+          } else if (VERB_IS("list-props")) {
+            XWConfig cfg;
+            Decoded d;
+            memset(&cfg, 0, sizeof(cfg));
+            split_fields(msg, (size_t)r, &d);
+            if (d.nfields < 2) {
+              reply_n = reply_error(reply, sizeof(reply), "malformed list-props");
+            } else {
+              char *lines = malloc(XW_REPLY_MAX);
+              if (!lines) {
+                reply_n = reply_error(reply, sizeof(reply), "out of memory");
+              } else {
+                XWError aerr;
+                int cnt;
+                memset(&aerr, 0, sizeof(aerr));
+                if (strcmp(d.fields[1], "primary") == 0) {
+                  cfg.target = XW_TARGET_PRIMARY;
+                } else {
+                  cfg.target = XW_TARGET_OUTPUT;
+                  snprintf(cfg.output, sizeof(cfg.output), "%s", d.fields[1]);
+                }
+                cnt = xw_app_list_props(cur, &cfg, lines, XW_REPLY_MAX, &aerr);
+                if (cnt < 0) {
+                  reply_n = reply_error(reply, sizeof(reply), aerr.msg);
+                  free(lines);
+                } else {
+                  char *out = malloc(XW_REPLY_MAX);
+                  if (!out) {
+                    reply_n =
+                        reply_error(reply, sizeof(reply), "out of memory");
+                    free(lines);
+                  } else {
+                    size_t off = 0, blen = 0;
+                    /* byte length = through the cnt-th newline */
+                    for (int k = 0; k < cnt; k++) {
+                      char *nl = memchr(lines + blen, '\n',
+                                        XW_REPLY_MAX - blen);
+                      if (!nl)
+                        break;
+                      blen = (size_t)(nl + 1 - lines);
+                    }
+                    memcpy(out, "props", 5);
+                    off += 5;
+                    out[off++] = '\0';
+                    off += (size_t)snprintf(out + off, XW_REPLY_MAX - off,
+                                            "%d\n", cnt);
+                    if (off + blen < XW_REPLY_MAX) {
+                      memcpy(out + off, lines, blen);
+                      off += blen;
+                    }
+                    free(lines);
+                    write(c, out, off);
+                    free(out);
+                    close(c);
+                    continue;
+                  }
+                }
+              }
+            }
+          } else if (VERB_IS("set-prop")) {
+            XWConfig cfg;
+            Decoded d;
+            memset(&cfg, 0, sizeof(cfg));
+            split_fields(msg, (size_t)r, &d);
+            if (d.nfields < 3) {
+              reply_n = reply_error(reply, sizeof(reply), "malformed set-prop");
+            } else {
+              char *eq = strchr(d.fields[2], '=');
+              if (!eq || eq == d.fields[2] || !eq[1]) {
+                reply_n = reply_error(reply, sizeof(reply),
+                                      "set-prop needs name=value");
+              } else {
+                XWError aerr;
+                *eq = '\0';
+                memset(&aerr, 0, sizeof(aerr));
+                if (strcmp(d.fields[1], "primary") == 0) {
+                  cfg.target = XW_TARGET_PRIMARY;
+                } else {
+                  cfg.target = XW_TARGET_OUTPUT;
+                  snprintf(cfg.output, sizeof(cfg.output), "%s", d.fields[1]);
+                }
+                if (xw_app_set_prop(cur, &cfg, d.fields[2], eq + 1, &aerr) == 0)
+                  reply_n = snprintf(reply, sizeof(reply), "ok\n");
+                else
+                  reply_n = reply_error(reply, sizeof(reply), aerr.msg);
+              }
+            }
+          } else if (VERB_IS("exit")) {
             reply_n = snprintf(reply, sizeof(reply), "ok\n");
             do_exit = 1;
           } else {
             reply_n = reply_error(reply, sizeof(reply), "unknown command");
           }
+#undef VERB_IS
         }
         if (reply_n > 0)
           write(c, reply, (size_t)reply_n);

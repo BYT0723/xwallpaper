@@ -167,17 +167,25 @@ static uint64_t now_ms(void) {
 
 static int paint_fill(XWSceneCtx *c);
 static int render_overlays(XWSceneCtx *c, const float *alphas, XWError *rerr);
+static int scene_list_props(XWBackend *b, char *out, size_t n);
+static int scene_set_prop(XWBackend *b, const char *name, const char *value,
+                          XWError *err);
 
 static int load_script(XWSceneCtx *c, XWError *err) {
   char path[1152], *src = NULL;
   FILE *f;
   long sz;
-  if (!c->scene.script[0])
+  /* An engine exists when there is a script to run or props to resolve
+   * and override (USER refs and --set-property need the override table
+   * even on scriptless walls). Neither means zero scripting overhead. */
+  if (!c->scene.script[0] && c->scene.n_props == 0)
     return 0;
   if (xw_script_create(&c->script, err) != 0)
     return -1;
   xw_script_set_scene(c->script, &c->scene);
   xw_script_set_props(c->script, c->scene.props, c->scene.n_props);
+  if (!c->scene.script[0])
+    return 0;
   snprintf(path, sizeof(path), "%.900s/%.200s", c->dir, c->scene.script);
   f = fopen(path, "rb");
   if (!f) {
@@ -511,6 +519,8 @@ XWBackend *xw_scene_backend_new(void) {
     .tick = scene_tick,
     .set_paused = scene_set_paused,
     .retry = NULL,
+    .list_props = scene_list_props,
+    .set_prop = scene_set_prop,
   };
   return &backend;
 }
@@ -535,4 +545,61 @@ int xw_scene_has_gl(const XWBackend *b) {
 int xw_scene_script_active(const XWBackend *b) {
   const XWSceneCtx *c = b ? (const XWSceneCtx *)b->priv : NULL;
   return (c && c->script) ? 1 : 0;
+}
+
+static int scene_list_props(XWBackend *b, char *out, size_t n) {
+  XWSceneCtx *c = b ? (XWSceneCtx *)b->priv : NULL;
+  size_t off = 0;
+  int i, count = 0;
+  if (!c || !c->parsed || !out || n == 0)
+    return -1;
+  for (i = 0; i < c->scene.n_props; i++) {
+    const XWUserProp *p = &c->scene.props[i];
+    char value[256];
+    int w;
+    if (c->script && xw_script_get_user_prop(c->script, p->name, value,
+                                             sizeof(value)) == 0) {
+      /* override shadows the parsed value */
+    } else {
+      snprintf(value, sizeof(value), "%s", p->value);
+    }
+    if (strchr(p->name, '\t') || strchr(p->name, '\n') || strchr(value, '\n'))
+      continue;
+    w = snprintf(out + off, n - off, "%s\t%s\t%s\n", p->name, p->type,
+                 value);
+    if (w < 0 || (size_t)w >= n - off)
+      return -1;
+    off += (size_t)w;
+    count++;
+  }
+  return count;
+}
+
+static int scene_set_prop(XWBackend *b, const char *name, const char *value,
+                          XWError *err) {
+  XWSceneCtx *c = b ? (XWSceneCtx *)b->priv : NULL;
+  int known = 0, i;
+  if (!c || !c->parsed || !name || !name[0] || !value) {
+    XW_ERROR_SET(err, 1, "invalid args");
+    return -1;
+  }
+  if (!c->script) {
+    XW_ERROR_SET(err, 1, "wallpaper has no user properties");
+    return -1;
+  }
+  for (i = 0; i < c->scene.n_props; i++) {
+    if (strcmp(c->scene.props[i].name, name) == 0) {
+      known = 1;
+      break;
+    }
+  }
+  if (!known) {
+    XW_ERROR_SET(err, 1, "unknown property '%.64s'", name);
+    return -1;
+  }
+  if (xw_script_set_user_prop(c->script, name, value) != 0) {
+    XW_ERROR_SET(err, 1, "cannot set property '%.64s'", name);
+    return -1;
+  }
+  return 0;
 }
