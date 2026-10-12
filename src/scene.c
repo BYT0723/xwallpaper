@@ -170,6 +170,7 @@ static int render_overlays(XWSceneCtx *c, const float *alphas, XWError *rerr);
 static int scene_list_props(XWBackend *b, char *out, size_t n);
 static int scene_set_prop(XWBackend *b, const char *name, const char *value,
                           XWError *err);
+static int scene_on_event(XWBackend *b, XEvent *ev);
 
 static int load_script(XWSceneCtx *c, XWError *err) {
   char path[1152], *src = NULL;
@@ -510,7 +511,7 @@ XWBackend *xw_scene_backend_new(void) {
     .start = scene_start,
     .stop = scene_stop,
     .destroy = scene_destroy,
-    .on_event = NULL,
+    .on_event = scene_on_event,
     .reload = scene_reload,
     .init_wl = NULL,
     .reload_wl = NULL,
@@ -545,6 +546,25 @@ int xw_scene_has_gl(const XWBackend *b) {
 int xw_scene_script_active(const XWBackend *b) {
   const XWSceneCtx *c = b ? (const XWSceneCtx *)b->priv : NULL;
   return (c && c->script) ? 1 : 0;
+}
+
+struct XWScript *xw_scene_script(const XWBackend *b) {
+  const XWSceneCtx *c = b ? (const XWSceneCtx *)b->priv : NULL;
+  return (c && c->script) ? c->script : NULL;
+}
+
+static int scene_on_event(XWBackend *b, XEvent *ev) {
+  XWSceneCtx *c = b ? (XWSceneCtx *)b->priv : NULL;
+  if (!c || !ev)
+    return 0;
+  /* Feed pointer position to scripts; never consume: x11 still forwards
+   * the event to the root window so icons stay clickable. Coordinates
+   * are root (screen) pixels, stable across wallpaper windows. */
+  if (ev->type == MotionNotify && c->script) {
+    xw_script_set_mouse(c->script, (float)ev->xmotion.x_root,
+                        (float)ev->xmotion.y_root);
+  }
+  return 0;
 }
 
 static int scene_list_props(XWBackend *b, char *out, size_t n) {

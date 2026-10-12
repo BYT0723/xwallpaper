@@ -14,6 +14,7 @@
 #include "../../src/backend.h"
 #include "../../src/backends.h"
 #include "../../src/scene.h"
+#include "../../src/scene_script.h"
 #include "../../src/x11.h"
 #include "../../src/cli.h"
 
@@ -146,10 +147,63 @@ static void test_bad_script_fails(void) {
   xw_x11_destroy_window(win);
 }
 
+static void test_mouse_feed(void) {
+  TEST_BEGIN("motion events reach scripts, nothing is consumed");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+  XWWindow *win = open_window(dpy, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_SCENE;
+  opt.path = "tests/data/scene/scripted";
+  opt.fps = 1000.0;
+
+  XWBackend backend = *xw_scene_backend_new();
+  memset(&err, 0, sizeof(err));
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  if (err.code != 0) {
+    TEST_FAIL("init: %s", err.msg);
+    return;
+  }
+  TEST_CHECK(backend.on_event != NULL);
+  XEvent ev;
+  memset(&ev, 0, sizeof(ev));
+  ev.type = MotionNotify;
+  ev.xmotion.x_root = 111;
+  ev.xmotion.y_root = 222;
+  TEST_CHECK_EQ_INT(backend.on_event(&backend, &ev), 0);
+
+  struct XWScript *s = xw_scene_script(&backend);
+  TEST_CHECK(s != NULL);
+  if (s) {
+    double v = 0;
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(
+        xw_script_eval(s, "mx = input.getMouseX(); my = input.getMouseY();",
+                       "t.js", &err),
+        0);
+    TEST_CHECK_EQ_INT(xw_script_get_number(s, "mx", &v), 0);
+    TEST_CHECK_EQ_INT((int)v, 111);
+    TEST_CHECK_EQ_INT(xw_script_get_number(s, "my", &v), 0);
+    TEST_CHECK_EQ_INT((int)v, 222);
+  }
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("scene scripting (Xvfb)");
   test_scripted_runs();
   test_unscripted_idle();
   test_bad_script_fails();
+  test_mouse_feed();
   TEST_SUMMARY();
 }
