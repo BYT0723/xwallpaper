@@ -1,0 +1,57 @@
+#ifndef XW_SCENE_GL_H
+#define XW_SCENE_GL_H
+
+#include <X11/Xlib.h>
+
+#include "xw_err.h"
+
+/* Desktop-GL runtime for scene wallpapers (daemon-only).
+ *
+ * Context: GLX direct context bound to the wallpaper X window, created on
+ * the FBConfig matching the window visual (same approach as the mpv --wid
+ * backend). All calls run on the daemon main thread (tick path).
+ *
+ * Fragment contract: sources pass through xw_shader_translate, so WE
+ * dialect (gl_FragColor/texture2D/varying/#include) is accepted. The
+ * renderer binds textures and time by uniform name, trying WE names
+ * first (g_Texture0, g_Time) then xw_ names (xw_tex0, xw_time); a missing
+ * time uniform is fine, a missing sampler renders black. The builtin
+ * vertex shader feeds v_TexCoord/vUv/v_uv; FBO ping-pong runs at window
+ * size (object-size FBOs are a later task); blending stays off (opaque).
+ */
+
+typedef struct XWGl XWGl;
+
+/* Create + make current on win. Graceful -1 when GLX is unavailable
+ * (caller falls back to the clear-color fill). */
+int xw_gl_create(XWGl **out, Display *dpy, Window win, int w, int h,
+                 XWError *err);
+void xw_gl_destroy(XWGl *g);
+
+/* Upload a PNG file (imlib2), cached by path. */
+int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err);
+
+/* Compile+link a WE-dialect fragment file with the builtin vertex shader,
+ * cached by path. */
+int xw_gl_program_we(XWGl *g, const char *frag_path, unsigned int *prog,
+                     XWError *err);
+
+/* Builtin base-copy program (samples xw_tex0). */
+int xw_gl_program_copy(XWGl *g, unsigned int *prog, XWError *err);
+
+/* Bind render target: -1 = window backbuffer, 0/1 = internal FBO. */
+int xw_gl_bind_target(XWGl *g, int fbo);
+
+/* Clear the bound target to an opaque color. */
+int xw_gl_clear(XWGl *g, float r, float gg, float b);
+
+/* Draw the fullscreen quad with prog/tex/time. */
+int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time);
+
+/* Texture id backing internal FBO idx (for ping-pong sources). */
+int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex);
+
+/* Swap window buffers. */
+int xw_gl_present(XWGl *g);
+
+#endif /* XW_SCENE_GL_H */

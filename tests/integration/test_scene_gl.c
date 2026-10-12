@@ -1,0 +1,90 @@
+/* Integration test: scene GL rendering under Xvfb.
+ * Loads tests/data/scene/gl (red base texture, WE-dialect pulse effect),
+ * renders one frame, then reads back the center pixel. Without GLX the
+ * backend stays on its clear-color fallback and the test SKIP-passes. */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+
+#include "../harness.h"
+#include "../../src/backend.h"
+#include "../../src/backends.h"
+#include "../../src/scene.h"
+#include "../../src/x11.h"
+#include "../../src/cli.h"
+
+int main(void) {
+  TEST_SUITE("scene GL (Xvfb)");
+  TEST_BEGIN("renders pulsing red texture, or SKIP without GLX");
+
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    TEST_SUMMARY();
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_PRIMARY;
+
+  int x, y;
+  unsigned int w, h;
+  if (xw_x11_resolve_geometry(dpy, &cfg, &x, &y, &w, &h, NULL) != 0) {
+    TEST_FAIL("cannot resolve primary geometry");
+    TEST_SUMMARY();
+  }
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, x, y, w, h, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    TEST_SUMMARY();
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_SCENE;
+  opt.path = "tests/data/scene/gl";
+  opt.fps = 1000.0; /* unthrottled for the test */
+
+  XWBackend backend = *xw_scene_backend_new();
+  memset(&err, 0, sizeof(err));
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  if (err.code != 0) {
+    TEST_FAIL("init: %s", err.msg);
+    TEST_SUMMARY();
+  }
+  if (!xw_scene_has_gl(&backend)) {
+    printf("  SKIP: no GLX, backend on clear-color fallback\n");
+    backend.destroy(&backend);
+    xw_x11_destroy_window(win);
+    TEST_SUMMARY();
+  }
+
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  usleep(2000);
+  backend.tick(&backend);
+  XSync(dpy, False);
+
+  int cx = w / 2, cy = h / 2;
+  XImage *img = XGetImage(dpy, win->win, cx, cy, 1, 1, AllPlanes, ZPixmap);
+  TEST_CHECK(img != NULL);
+  if (img) {
+    unsigned long px = XGetPixel(img, 0, 0);
+    XDestroyImage(img);
+    int r = (px >> 16) & 0xff;
+    int g = (px >> 8) & 0xff;
+    int b = px & 0xff;
+    /* red texture dimmed by the pulse factor (~0.5 at t=0): mid red */
+    TEST_CHECK(r >= 80 && r <= 180);
+    TEST_CHECK(g < 60 && b < 60);
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+  TEST_SUMMARY();
+}

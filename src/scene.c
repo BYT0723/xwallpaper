@@ -9,6 +9,8 @@
 #include "backend.h"
 #include "backends.h"
 #include "scene.h"
+#include "scene_gl.h"
+#include "scene_image.h"
 #include "scene_model.h"
 #include "scene_parse.h"
 #include "x11.h"
@@ -24,8 +26,11 @@ typedef struct XWSceneCtx {
   int paused;
   double fps;
   uint64_t last_ms;
+  uint64_t t0_ms;
+  uint64_t last_gl_try_ms;
   unsigned long frames;
   GC gc;
+  XWGl *gl;
 } XWSceneCtx;
 
 static uint64_t now_ms(void) {
@@ -34,7 +39,40 @@ static uint64_t now_ms(void) {
   return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
+static int paint_fill(XWSceneCtx *c);
+
+static int paint_gl(XWSceneCtx *c) {
+  XWError rerr;
+  float t;
+  memset(&rerr, 0, sizeof(rerr));
+  if (!c->gl) {
+    uint64_t now = now_ms();
+    if (now - c->last_gl_try_ms < 1000)
+      return -1;
+    c->last_gl_try_ms = now;
+    if (xw_gl_create(&c->gl, c->win->dpy, c->win->win, (int)c->win->width,
+                     (int)c->win->height, &rerr) != 0) {
+      c->gl = NULL;
+      return -1;
+    }
+  }
+  t = (float)(now_ms() - c->t0_ms) / 1000.0f;
+  if (xw_scene_image_render(c->gl, &c->scene, c->dir, t, &rerr) != 0)
+    return -1;
+  if (xw_gl_present(c->gl) != 0)
+    return -1;
+  c->frames++;
+  c->last_ms = now_ms();
+  return 0;
+}
+
 static int paint(XWSceneCtx *c) {
+  if (paint_gl(c) == 0)
+    return 0;
+  return paint_fill(c);
+}
+
+static int paint_fill(XWSceneCtx *c) {
   XWWindow *win = c->win;
   float *cc = c->scene.camera.clearcolor;
   XColor xc;
@@ -80,6 +118,7 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     return -1;
   }
   b->priv = c;
+  c->t0_ms = now_ms();
   if (paint(c) != 0) {
     XW_ERROR_SET(err, 1, "cannot paint scene background");
     return -1;
@@ -100,6 +139,8 @@ static void scene_destroy(XWBackend *b) {
   XWSceneCtx *c;
   if (!b || !(c = (XWSceneCtx *)b->priv))
     return;
+  if (c->gl)
+    xw_gl_destroy(c->gl);
   if (c->gc)
     XFreeGC(c->win->dpy, c->gc);
   xw_scene_free(&c->scene);
@@ -175,4 +216,9 @@ int xw_scene_object_count(const XWBackend *b) {
   if (!c || !c->parsed)
     return -1;
   return c->scene.n_objects;
+}
+
+int xw_scene_has_gl(const XWBackend *b) {
+  const XWSceneCtx *c = b ? (const XWSceneCtx *)b->priv : NULL;
+  return (c && c->gl) ? 1 : 0;
 }

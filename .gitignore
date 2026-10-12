@@ -24,6 +24,7 @@ xwallpaperd
 /tests/integration/test_fill
 /tests/integration/test_restore
 /tests/integration/test_scene
+/tests/integration/test_scene_gl
 /tests/integration/test_wl_surface
 
 # wayland scanner outputs (regenerate: make proto-wayland)

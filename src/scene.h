@@ -12,4 +12,7 @@ unsigned long xw_scene_frames(const XWBackend *b);
 /* Parsed object count (-1 when uninitialized). */
 int xw_scene_object_count(const XWBackend *b);
 
+/* Whether the GL renderer is active (0 = clear-color fallback). */
+int xw_scene_has_gl(const XWBackend *b);
+
 #endif /* XW_SCENE_H */
