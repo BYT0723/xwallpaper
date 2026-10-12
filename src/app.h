@@ -89,6 +89,15 @@ XWWlWindow *xw_app_wl_window(XWApp *app, int i);
  * while this is true so a screen-off pauses the renderer. */
 int xw_app_dpms_watch_required(XWApp *app);
 
+/* Whether any live backend wants a periodic frame tick (has a tick hook,
+ * i.e. scene). The daemon loop clamps its poll timeout so animation is
+ * never starved; the backend itself throttles to its fps. */
+int xw_app_scene_tick_required(XWApp *app);
+
+/* Call every live backend's tick hook once (NULL-safe). Call once per
+ * main-loop iteration, after dpms_poll. */
+void xw_app_tick_backends(XWApp *app);
+
 /* Route an X event to the owning window: pointer forwarding + backend
  * on_event hook. Returns 1 if consumed. */
 int xw_app_handle_event(XWApp *app, XEvent *ev);

@@ -348,6 +348,11 @@ int xw_daemon_main(void) {
       /* WE audio wallpapers need a 20Hz fan-out tick; never block past it. */
       if (timeout < 0 || timeout > 50)
         timeout = 50;
+    } else if (xw_app_scene_tick_required(cur)) {
+      /* scene wallpapers animate on tick (default 30fps); the backend
+       * throttles itself, so clamping here only guarantees wakeups. */
+      if (timeout < 0 || timeout > 33)
+        timeout = 33;
     } else if (xw_app_dpms_watch_required(cur) || now_ms - startup_ms < 120000) {
       /* 需要退化为 500ms 节拍: (a) 有持续出帧的渲染后端 (video) — 必须轮询
        * DPMS, 熄屏时暂停它防止点亮显示器; (b) 启动自愈窗口 (前 2 分钟) — 原
@@ -372,6 +377,10 @@ int xw_daemon_main(void) {
     /* WE audio fan-out to web wallpapers (50ms internally throttled;
      * starts/stops the Pulse capture by want-refcount) */
     xw_web_we_tick();
+
+    /* scene frame tick (fps-throttled inside each backend; paused
+     * backends no-op so DPMS-off costs nothing extra) */
+    xw_app_tick_backends(cur);
 
     if (now_ms - startup_ms < 120000) {
       if (now_ms - last_selfheal_ms >= 500) {

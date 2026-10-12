@@ -1,6 +1,15 @@
 #ifndef XW_SCENE_H
 #define XW_SCENE_H
 
-int xw_scene_stub(void);
+#include "backend.h"
 
-#endif
+/* Default frame rate when opt->fps is 0 (auto). */
+#define XW_SCENE_FPS_DEFAULT 30.0
+
+/* Painted-frame counter (0 when uninitialized). For tests/debug. */
+unsigned long xw_scene_frames(const XWBackend *b);
+
+/* Parsed object count (-1 when uninitialized). */
+int xw_scene_object_count(const XWBackend *b);
+
+#endif /* XW_SCENE_H */
