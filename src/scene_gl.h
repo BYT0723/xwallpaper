@@ -33,6 +33,13 @@ void xw_gl_destroy(XWGl *g);
 /* Upload a PNG file (imlib2), cached by path. */
 int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err);
 
+/* Upload raw RGBA pixels (top row first), uncached. */
+int xw_gl_upload_rgba(XWGl *g, const unsigned char *px, int w, int h,
+                      unsigned int *tex, XWError *err);
+
+/* Delete an uploaded texture (0 is a no-op). */
+int xw_gl_delete_texture(XWGl *g, unsigned int tex);
+
 /* Compile+link a WE-dialect fragment file with the builtin vertex shader,
  * cached by path. */
 int xw_gl_program_we(XWGl *g, const char *frag_path, unsigned int *prog,
@@ -69,6 +76,12 @@ int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time);
 
 /* Texture id backing internal FBO idx (for ping-pong sources). */
 int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex);
+
+/* Draw prog/tex as an opaque window-pixel rect (top-left dx/dy, size dw/dh).
+ * Used for text and other UI-space quads; effect chains keep their own
+ * fullscreen path. */
+int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                    int dx, int dy, int dw, int dh);
 
 /* Swap window buffers. */
 int xw_gl_present(XWGl *g);

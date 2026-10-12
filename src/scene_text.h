@@ -10,4 +10,15 @@
 int xw_text_rasterize(const char *font_path, const char *content, float size_px,
                       unsigned char **rgba, int *w, int *h, XWError *err);
 
+/* Per-object raster cache (owned by the backend). Re-rasterizes only when
+ * font/size/content change; the texture is drawn at origin (top-left). */
+typedef struct XWTextItem {
+  char font[256];
+  char content[256];
+  float size;
+  unsigned int tex;
+  int w, h;
+  int valid;
+} XWTextItem;
+
 #endif

@@ -26,6 +26,8 @@ struct XWGl {
   GLuint quad_vbo;
   GLuint points_vao;
   GLuint points_vbo;
+  GLuint rect_vao;
+  GLuint rect_vbo;
   GLuint fbos[2];
   GLuint fbo_tex[2];
   struct {
@@ -205,6 +207,16 @@ int xw_gl_create(XWGl **out, Display *dpy, Window win, int w, int h,
   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
                         (void *)(2 * sizeof(float)));
   glBindVertexArray(0);
+  glGenVertexArrays(1, &g->rect_vao);
+  glGenBuffers(1, &g->rect_vbo);
+  glBindVertexArray(g->rect_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, g->rect_vbo);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                        (void *)(2 * sizeof(float)));
+  glBindVertexArray(0);
   if (make_fbo(g, 0, err) != 0 || make_fbo(g, 1, err) != 0) {
     xw_gl_destroy(g);
     return -1;
@@ -227,6 +239,8 @@ void xw_gl_destroy(XWGl *g) {
     glDeleteVertexArrays(1, &g->quad_vao);
     glDeleteBuffers(1, &g->points_vbo);
     glDeleteVertexArrays(1, &g->points_vao);
+    glDeleteBuffers(1, &g->rect_vbo);
+    glDeleteVertexArrays(1, &g->rect_vao);
     glXMakeCurrent(g->dpy, None, NULL);
     glXDestroyContext(g->dpy, g->ctx);
   }
@@ -599,6 +613,78 @@ int xw_gl_blend_end(XWGl *g) {
   return 0;
 }
 
+int xw_gl_upload_rgba(XWGl *g, const unsigned char *px, int w, int h,
+                      unsigned int *tex, XWError *err) {
+  GLuint t;
+  if (!g || !px || !tex || w <= 0 || h <= 0 || w > 8192 || h > 8192)
+    return gl_error("invalid args", err);
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glGenTextures(1, &t);
+  glBindTexture(GL_TEXTURE_2D, t);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+               px);
+  *tex = t;
+  return 0;
+}
+
+int xw_gl_delete_texture(XWGl *g, unsigned int tex) {
+  if (!g || !tex)
+    return -1;
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glDeleteTextures(1, &tex);
+  return 0;
+}
+
+int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                    int dx, int dy, int dw, int dh) {
+  float x0, x1, y0, y1, verts[16];
+  GLint sloc, tloc;
+  if (!g || !prog || dw <= 0 || dh <= 0 || g->w <= 0 || g->h <= 0)
+    return -1;
+  x0 = (float)dx / (float)g->w * 2.0f - 1.0f;
+  x1 = (float)(dx + dw) / (float)g->w * 2.0f - 1.0f;
+  y0 = 1.0f - (float)dy / (float)g->h * 2.0f;
+  y1 = 1.0f - (float)(dy + dh) / (float)g->h * 2.0f;
+  verts[0] = x0;
+  verts[1] = y1;
+  verts[2] = 0.0f;
+  verts[3] = 1.0f;
+  verts[4] = x1;
+  verts[5] = y1;
+  verts[6] = 1.0f;
+  verts[7] = 1.0f;
+  verts[8] = x0;
+  verts[9] = y0;
+  verts[10] = 0.0f;
+  verts[11] = 0.0f;
+  verts[12] = x1;
+  verts[13] = y0;
+  verts[14] = 1.0f;
+  verts[15] = 0.0f;
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glUseProgram(prog);
+  sloc = sampler_location(prog);
+  if (sloc >= 0 && tex) {
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glUniform1i(sloc, 0);
+  }
+  tloc = time_location(prog);
+  if (tloc >= 0)
+    glUniform1f(tloc, time);
+  glBindVertexArray(g->rect_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, g->rect_vbo);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_DYNAMIC_DRAW);
+  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+  glBindVertexArray(0);
+  glUseProgram(0);
+  return 0;
+}
+
 int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex) {
   if (!g || !tex || idx < 0 || idx > 1)
     return -1;
@@ -691,6 +777,36 @@ int xw_gl_blend_begin(XWGl *g, XWBlend mode) {
 
 int xw_gl_blend_end(XWGl *g) {
   (void)g;
+  return -1;
+}
+
+int xw_gl_upload_rgba(XWGl *g, const unsigned char *px, int w, int h,
+                      unsigned int *tex, XWError *err) {
+  (void)g;
+  (void)px;
+  (void)w;
+  (void)h;
+  (void)tex;
+  XW_ERROR_SET(err, 1, "scene GL support not compiled in (need gl/glew)");
+  return -1;
+}
+
+int xw_gl_delete_texture(XWGl *g, unsigned int tex) {
+  (void)g;
+  (void)tex;
+  return -1;
+}
+
+int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                    int dx, int dy, int dw, int dh) {
+  (void)g;
+  (void)prog;
+  (void)tex;
+  (void)time;
+  (void)dx;
+  (void)dy;
+  (void)dw;
+  (void)dh;
   return -1;
 }
 

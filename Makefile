@@ -23,8 +23,9 @@ DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/web_dir.c src/wl.c src/we_audio.c src/we_pulse.c \
               src/scene_pkg.c src/scene_tex.c src/scene_shader.c \
               src/scene_parse.c src/scene_core.c src/scene_gl.c \
-              src/scene_image.c \
-              src/scene_particle.c src/scene_text.c src/scene_sound.c \
+              src/scene_image.c src/scene_text_gl.c \
+              src/scene_particle.c src/scene_text.c \
+              src/scene_sound.c \
               src/scene_script.c src/scene.c
 DAEMON_OBJ := $(DAEMON_SRC:.c=.o)
 
@@ -143,6 +144,7 @@ INTEG_BIN := tests/integration/test_x11 tests/integration/test_image \
              tests/integration/test_scene \
              tests/integration/test_scene_gl \
              tests/integration/test_scene_particles \
+             tests/integration/test_scene_text \
              tests/integration/test_app_geom tests/integration/test_app_all \
              tests/integration/test_fill tests/integration/test_restore
 
@@ -172,6 +174,7 @@ HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/wl.h src/daemon.h src/web_dir.h src/we_audio.h src/we_pulse.h \
   src/scene_pkg.h src/scene_tex.h src/scene_shader.h src/scene_parse.h \
   src/scene_model.h src/scene_core.h src/scene_gl.h src/scene_image.h \
+  src/scene_text_gl.h \
   src/scene.h $(wildcard src/proto/*-client-protocol.h)
 $(CLI_OBJ) $(DAEMON_OBJ) $(TEST_BIN) $(INTEG_BIN) $(WL_INTEG_BIN): $(HEADER_DEPS)
 

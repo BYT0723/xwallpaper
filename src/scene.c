@@ -14,6 +14,8 @@
 #include "scene_model.h"
 #include "scene_parse.h"
 #include "scene_particle.h"
+#include "scene_text.h"
+#include "scene_text_gl.h"
 #include "x11.h"
 
 /* Scene backend shell (Task 7): parses the wallpaper directory, paints the
@@ -33,6 +35,7 @@ typedef struct XWSceneCtx {
   GC gc;
   XWGl *gl;
   XWEmitter *emitters;
+  XWTextItem *texts;
 } XWSceneCtx;
 
 static void free_emitters(XWSceneCtx *c) {
@@ -42,6 +45,16 @@ static void free_emitters(XWSceneCtx *c) {
   for (i = 0; i < c->scene.n_objects; i++) xw_emitter_free(&c->emitters[i]);
   free(c->emitters);
   c->emitters = NULL;
+}
+
+static void free_texts(XWSceneCtx *c) {
+  int i;
+  if (!c || !c->texts)
+    return;
+  for (i = 0; i < c->scene.n_objects; i++)
+    xw_text_item_free(c->gl, &c->texts[i]);
+  free(c->texts);
+  c->texts = NULL;
 }
 
 static int init_emitters(XWSceneCtx *c, XWError *err) {
@@ -97,7 +110,7 @@ static int paint_gl(XWSceneCtx *c) {
     dt = 0.0f;
   if (dt > 0.25f)
     dt = 0.25f;
-  if (!c->emitters)
+  if (!c->emitters || !c->texts)
     return -1;
   for (i = 0; i < c->scene.n_objects; i++) {
     const XWSceneObject *o = &c->scene.objects[i];
@@ -105,6 +118,15 @@ static int paint_gl(XWSceneCtx *c) {
       continue;
     if (xw_scene_particle_render(c->gl, o, &c->emitters[i], c->dir, dt,
                                  &rerr) != 0)
+      return -1;
+  }
+  /* text pass: per-type loops until the multi-object composite task;
+   * object-order compositing comes with scene-space FBOs. */
+  for (i = 0; i < c->scene.n_objects; i++) {
+    const XWSceneObject *o = &c->scene.objects[i];
+    if (!o->visible || o->type != XW_OBJ_TEXT)
+      continue;
+    if (xw_scene_text_draw(c->gl, o, c->dir, &c->texts[i], &rerr) != 0)
       return -1;
   }
   if (xw_gl_present(c->gl) != 0)
@@ -163,9 +185,20 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     free(c);
     return -1;
   }
+  c->texts = calloc(c->scene.n_objects > 0 ? (size_t)c->scene.n_objects : 1,
+                    sizeof(XWTextItem));
+  if (!c->texts) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    free_emitters(c);
+    xw_scene_free(&c->scene);
+    free(c);
+    return -1;
+  }
   c->gc = XCreateGC(win->dpy, win->win, 0, NULL);
   if (!c->gc) {
     XW_ERROR_SET(err, 1, "cannot create scene GC");
+    free(c->texts);
+    free_emitters(c);
     xw_scene_free(&c->scene);
     free(c);
     return -1;
@@ -192,8 +225,10 @@ static void scene_destroy(XWBackend *b) {
   XWSceneCtx *c;
   if (!b || !(c = (XWSceneCtx *)b->priv))
     return;
+  free_texts(c);
   if (c->gl)
     xw_gl_destroy(c->gl);
+  c->gl = NULL;
   free_emitters(c);
   if (c->gc)
     XFreeGC(c->win->dpy, c->gc);
@@ -212,11 +247,18 @@ static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   memset(&next, 0, sizeof(next));
   if (xw_scene_parse(opt->path, &next, err) != 0)
     return -1;
+  free_texts(c);
   xw_scene_free(&c->scene);
   c->scene = next;
   snprintf(c->dir, sizeof(c->dir), "%s", opt->path);
   if (init_emitters(c, err) != 0)
     return -1;
+  c->texts = calloc(c->scene.n_objects > 0 ? (size_t)c->scene.n_objects : 1,
+                    sizeof(XWTextItem));
+  if (!c->texts) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
   if (opt->fps > 0.0)
     c->fps = opt->fps;
   return paint(c);

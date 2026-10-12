@@ -7,7 +7,6 @@
 #endif
 
 #include "scene_text.h"
-
 #ifdef XW_HAVE_FT
 
 int xw_text_rasterize(const char *font_path, const char *content, float size_px,
