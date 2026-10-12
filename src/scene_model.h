@@ -77,6 +77,7 @@ typedef struct XWSceneObject {
   XWObjType type;
   char model[XW_SCENE_PATH_MAX];
   char material[XW_SCENE_PATH_MAX];
+  char texture[XW_SCENE_PATH_MAX]; /* image base texture, "" = none */
   float origin[2];
   float scale[2];
   float size[2];

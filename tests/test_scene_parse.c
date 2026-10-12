@@ -105,6 +105,29 @@ static void test_full_props_script(void) {
   xw_scene_free(&s);
 }
 
+static void test_gl_texture(void) {
+  TEST_BEGIN("gl fixture parses texture ref and effect shader path");
+  XWScene s;
+  memset(&s, 0, sizeof(s));
+  XWError err = {0};
+  int rc = xw_scene_parse("tests/data/scene/gl", &s, &err);
+  TEST_CHECK_EQ_INT(rc, 0);
+  if (rc != 0) return;
+  TEST_CHECK_EQ_INT(s.n_objects, 1);
+  if (s.n_objects != 1) {
+    xw_scene_free(&s);
+    return;
+  }
+  TEST_CHECK_EQ_INT(s.objects[0].type, XW_OBJ_IMAGE);
+  TEST_CHECK_EQ_STR(s.objects[0].texture, "textures/bg.png");
+  TEST_CHECK_EQ_INT(s.objects[0].n_effects, 1);
+  TEST_CHECK_EQ_STR(s.objects[0].effects[0].name, "pulse");
+  TEST_CHECK_EQ_INT(s.objects[0].effects[0].n_passes, 1);
+  TEST_CHECK_EQ_STR(s.objects[0].effects[0].passes[0].shader,
+                    "shaders/pulse.frag");
+  xw_scene_free(&s);
+}
+
 static void test_bad_inputs(void) {
   TEST_BEGIN("missing dir/file rejected, no crash");
   XWScene s;
@@ -123,5 +146,6 @@ int main(void) {
   test_bad_inputs();
   test_full_types();
   test_full_props_script();
+  test_gl_texture();
   TEST_SUMMARY();
 }

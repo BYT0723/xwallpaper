@@ -191,6 +191,9 @@ static int parse_object(struct json_object *jo, XWSceneObject *o, XWError *err) 
     copy_str(o->model, sizeof(o->model), json_object_get_string(v));
   if (json_object_object_get_ex(jo, "material", &v) && v)
     copy_str(o->material, sizeof(o->material), json_object_get_string(v));
+  if (json_object_object_get_ex(jo, "texture", &v) && v &&
+      json_object_get_type(v) == json_type_string)
+    copy_str(o->texture, sizeof(o->texture), json_object_get_string(v));
   if (get_vec2(jo, "origin", &o->origin[0], &o->origin[1], 0, 0) != 0 ||
       get_vec2(jo, "scale", &o->scale[0], &o->scale[1], 1, 1) != 0 ||
       get_vec2(jo, "size", &o->size[0], &o->size[1], 0, 0) != 0) {
