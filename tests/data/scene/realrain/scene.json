@@ -1,0 +1,503 @@
+{
+	"camera" : 
+	{
+		"center" : "22.194 -0.757 -1.000",
+		"eye" : "22.194 -0.757 0.000",
+		"up" : "0.000 1.000 0.000"
+	},
+	"general" : 
+	{
+		"ambientcolor" : "0.300 0.300 0.300",
+		"bloom" : false,
+		"bloomstrength" : 2.0,
+		"bloomthreshold" : 0.64999997615814209,
+		"camerafade" : true,
+		"cameraparallax" : false,
+		"cameraparallaxamount" : 0.5,
+		"cameraparallaxdelay" : 0.10000000149011612,
+		"cameraparallaxmouseinfluence" : 0.0,
+		"camerapreview" : true,
+		"camerashake" : false,
+		"camerashakeamplitude" : 0.5,
+		"camerashakeroughness" : 1.0,
+		"camerashakespeed" : 3.0,
+		"clearcolor" : "0.700 0.700 0.700",
+		"clearenabled" : true,
+		"farz" : 10000.0,
+		"fov" : 50.0,
+		"nearz" : 0.0099999997764825821,
+		"orthogonalprojection" : 
+		{
+			"height" : 1080,
+			"width" : 1920
+		},
+		"skylightcolor" : "0.300 0.300 0.300"
+	},
+	"objects" : 
+	[
+		{
+			"alignment" : "center",
+			"alpha" : 1.0,
+			"angles" : "0.000 0.000 0.000",
+			"color" : "1.000 1.000 1.000",
+			"colorBlendMode" : 0,
+			"copybackground" : true,
+			"effects" : 
+			[
+				{
+					"file" : "effects/waterripple/effect.json",
+					"id" : 348,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"constantshadervalues" : 
+							{
+								"animationspeed" : 0.059999999999999998,
+								"ratio" : 7.6900000000000004,
+								"ripplestrength" : 0.070000000000000007,
+								"scale" : 10
+							},
+							"textures" : 
+							[
+								null,
+								"masks/waterripple_mask_14baecd88cd86197979e9592a3614e57bbd01235",
+								"effects/waterripplenormal"
+							]
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 162,
+			"image" : "models/night blue.json",
+			"ledsource" : false,
+			"locktransforms" : true,
+			"name" : "night blue",
+			"origin" : "948.114 540.000 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"perspective" : false,
+			"scale" : "1.000 1.000 1.000",
+			"size" : "1920.000 1080.000",
+			"solid" : true,
+			"visible" : true
+		},
+		{
+			"alignment" : "center",
+			"alpha" : 1.0,
+			"angles" : "0.000 0.000 0.000",
+			"color" : "1.000 1.000 1.000",
+			"colorBlendMode" : 0,
+			"copybackground" : true,
+			"id" : 164,
+			"image" : "models/night alpha.json",
+			"ledsource" : false,
+			"locktransforms" : false,
+			"name" : "night alpha",
+			"origin" : "960.000 540.000 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"perspective" : false,
+			"scale" : "1.000 1.000 1.000",
+			"size" : "1920.000 1080.000",
+			"solid" : true,
+			"visible" : false
+		},
+		{
+			"alignment" : "center",
+			"alpha" : 1.0,
+			"angles" : "0.000 0.000 0.000",
+			"color" : "0.898 0.898 0.898",
+			"colorBlendMode" : 0,
+			"copybackground" : true,
+			"effects" : 
+			[
+				{
+					"file" : "effects/scroll/effect.json",
+					"id" : 331,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"constantshadervalues" : 
+							{
+								"speedx" : -0.070000000000000007,
+								"speedy" : 0.050000000000000003
+							}
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 172,
+			"image" : "models/clouds 1.json",
+			"ledsource" : false,
+			"locktransforms" : false,
+			"name" : "clouds 1",
+			"origin" : "960.000 540.000 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"perspective" : false,
+			"scale" : "1.000 1.000 1.000",
+			"size" : "4272.000 2848.000",
+			"solid" : true,
+			"visible" : false
+		},
+		{
+			"alignment" : "center",
+			"alpha" : 1.0,
+			"angles" : "0.000 0.000 0.000",
+			"color" : "0.196 0.439 0.478",
+			"colorBlendMode" : 0,
+			"copybackground" : true,
+			"effects" : 
+			[
+				{
+					"file" : "effects/scroll/effect.json",
+					"id" : 256,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"constantshadervalues" : 
+							{
+								"speedx" : -0.089999999999999997,
+								"speedy" : 0.089999999999999997
+							}
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 168,
+			"image" : "models/clouds 2.json",
+			"ledsource" : false,
+			"locktransforms" : false,
+			"name" : "clouds 2",
+			"origin" : "960.000 540.000 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"perspective" : false,
+			"scale" : "1.000 1.000 1.000",
+			"size" : "4272.000 2848.000",
+			"solid" : true,
+			"visible" : false
+		},
+		{
+			"alignment" : "center",
+			"alpha" : 1.0,
+			"angles" : "0.000 0.000 0.000",
+			"color" : "1.000 1.000 1.000",
+			"colorBlendMode" : 0,
+			"config" : 
+			{
+				"passthrough" : true
+			},
+			"copybackground" : true,
+			"dependencies" : [ 162 ],
+			"effects" : 
+			[
+				{
+					"file" : "effects/blend/effect.json",
+					"id" : 223,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"combos" : 
+							{
+								"BLENDMODE" : 0
+							},
+							"textures" : [ null, "_rt_imageLayerComposite_162_a" ]
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 221,
+			"image" : "models/util/composelayer.json",
+			"ledsource" : false,
+			"locktransforms" : false,
+			"name" : "Compose",
+			"origin" : "960.000 540.000 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"perspective" : false,
+			"scale" : "1.000 1.000 1.000",
+			"size" : "1920.000 1080.000",
+			"solid" : true,
+			"visible" : true
+		},
+		{
+			"alignment" : "center",
+			"alpha" : 1.0,
+			"angles" : "0.000 0.000 0.000",
+			"color" : "1.000 1.000 1.000",
+			"colorBlendMode" : 0,
+			"config" : 
+			{
+				"passthrough" : true
+			},
+			"copybackground" : true,
+			"dependencies" : [ 164, 168 ],
+			"effects" : 
+			[
+				{
+					"file" : "effects/blend/effect.json",
+					"id" : 202,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"combos" : 
+							{
+								"BLENDMODE" : 7
+							},
+							"constantshadervalues" : 
+							{
+								"multiply" : 0.44
+							},
+							"textures" : 
+							[
+								null,
+								"_rt_imageLayerComposite_168_a",
+								"_rt_imageLayerComposite_164_a"
+							]
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 200,
+			"image" : "models/util/composelayer.json",
+			"ledsource" : false,
+			"locktransforms" : false,
+			"name" : "Compose clouds 2",
+			"origin" : "960.000 540.000 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"perspective" : false,
+			"scale" : "1.000 1.000 1.000",
+			"size" : "1920.000 1080.000",
+			"solid" : true,
+			"visible" : true
+		},
+		{
+			"alignment" : "center",
+			"alpha" : 1.0,
+			"angles" : "0.000 0.000 0.000",
+			"color" : "1.000 1.000 1.000",
+			"colorBlendMode" : 0,
+			"config" : 
+			{
+				"passthrough" : true
+			},
+			"copybackground" : true,
+			"dependencies" : [ 164, 172 ],
+			"effects" : 
+			[
+				{
+					"file" : "effects/blend/effect.json",
+					"id" : 210,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"combos" : 
+							{
+								"BLENDMODE" : 2
+							},
+							"constantshadervalues" : 
+							{
+								"multiply" : 0.98999999999999999
+							},
+							"textures" : 
+							[
+								null,
+								"_rt_imageLayerComposite_172_a",
+								"_rt_imageLayerComposite_164_a"
+							]
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 209,
+			"image" : "models/util/composelayer.json",
+			"ledsource" : false,
+			"locktransforms" : false,
+			"name" : "Compose clouds 1",
+			"origin" : "960.000 540.000 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"perspective" : false,
+			"scale" : "1.000 1.000 1.000",
+			"size" : "1920.000 1080.000",
+			"solid" : true,
+			"visible" : true
+		},
+		{
+			"angles" : "0.000 0.000 0.000",
+			"id" : 416,
+			"instanceoverride" : 
+			{
+				"alpha" : 
+				{
+					"script" : null,
+					"user" : "opacity",
+					"value" : 1
+				},
+				"count" : 
+				{
+					"user" : "rain_intensity",
+					"value" : 1
+				},
+				"id" : 22,
+				"lifetime" : 
+				{
+					"user" : "rain_intensity",
+					"value" : 0.39000000000000001
+				},
+				"speed" : 
+				{
+					"script" : null,
+					"user" : "rain_speed",
+					"value" : 1
+				}
+			},
+			"locktransforms" : false,
+			"name" : "Rain Downfall light",
+			"origin" : "960.000 540.000 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"particle" : "particles/Rain_downfall_light_copy1.json",
+			"scale" : "1.000 1.000 1.000",
+			"visible" : true
+		},
+		{
+			"angles" : "0.000 0.000 0.000",
+			"id" : 859,
+			"instanceoverride" : 
+			{
+				"alpha" : 
+				{
+					"script" : null,
+					"user" : "opacity",
+					"value" : 1
+				},
+				"count" : 
+				{
+					"user" : "rain_intensity",
+					"value" : 1
+				},
+				"id" : 98,
+				"lifetime" : 
+				{
+					"user" : "rain_intensity",
+					"value" : 1
+				},
+				"speed" : 
+				{
+					"script" : null,
+					"user" : "rain_speed",
+					"value" : 1
+				}
+			},
+			"locktransforms" : false,
+			"name" : "Rain Downfall heavy",
+			"origin" : "989.128 791.271 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"particle" : "particles/Rain_downfall_heavy_copy1.json",
+			"scale" : "1.000 1.000 1.000",
+			"visible" : true
+		},
+		{
+			"angles" : "0.000 0.000 0.000",
+			"id" : 50,
+			"instanceoverride" : 
+			{
+				"count" : 
+				{
+					"user" : "rain_intensity",
+					"value" : 1
+				},
+				"id" : 102,
+				"size" : 
+				{
+					"user" : "size_changer",
+					"value" : 2
+				}
+			},
+			"locktransforms" : false,
+			"name" : "Rain speckles smallest",
+			"origin" : "960.000 540.000 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"particle" : "particles/Rain_speckles_smallest_copy1.json",
+			"scale" : "1.000 1.000 1.000",
+			"visible" : true
+		},
+		{
+			"angles" : "0.000 0.000 0.000",
+			"id" : 91,
+			"instanceoverride" : 
+			{
+				"count" : 
+				{
+					"user" : "rain_intensity",
+					"value" : 1
+				},
+				"id" : 92,
+				"size" : 
+				{
+					"user" : "size_changer",
+					"value" : 2
+				}
+			},
+			"locktransforms" : false,
+			"name" : "Rain speckles small",
+			"origin" : "960.000 540.000 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"particle" : "particles/Rain_speckles_small_copy1.json",
+			"scale" : "1.000 1.000 1.000",
+			"visible" : true
+		},
+		{
+			"angles" : "0.000 0.000 0.000",
+			"id" : 44,
+			"instanceoverride" : 
+			{
+				"count" : 
+				{
+					"user" : "rain_intensity",
+					"value" : 1
+				},
+				"id" : 110,
+				"size" : 
+				{
+					"user" : "size_changer",
+					"value" : 2
+				}
+			},
+			"locktransforms" : false,
+			"name" : "Rain speckles streaming",
+			"origin" : "960.000 540.000 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"particle" : "particles/Rain_speckle_streaming_copy1.json",
+			"scale" : "1.000 1.000 1.000",
+			"visible" : true
+		},
+		{
+			"angles" : "0.000 0.000 0.000",
+			"id" : 153,
+			"locktransforms" : false,
+			"maxtime" : 5.0,
+			"mintime" : 1.0,
+			"muteineditor" : false,
+			"name" : "the-rain-sound_102bpm.wav",
+			"origin" : "0.000 0.000 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"playbackmode" : "loop",
+			"scale" : "1.000 1.000 1.000",
+			"sound" : [ "sounds/the-rain-sound_102bpm.wav" ],
+			"startsilent" : false,
+			"volume" : 
+			{
+				"user" : "rain_sound",
+				"value" : 0.5
+			}
+		}
+	]
+}

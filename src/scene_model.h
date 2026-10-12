@@ -6,6 +6,12 @@
 #define XW_SCENE_COMBOS_MAX 8
 #define XW_SCENE_BINDS_MAX 8
 
+typedef enum {
+  XW_BLEND_NORMAL = 0,
+  XW_BLEND_TRANSLUCENT,
+  XW_BLEND_ADDITIVE,
+} XWBlend;
+
 typedef struct XWSceneCombo {
   char key[32];
   char value[32];
@@ -85,6 +91,8 @@ typedef struct XWSceneObject {
   char model[XW_SCENE_PATH_MAX];
   char material[XW_SCENE_PATH_MAX];
   char texture[XW_SCENE_PATH_MAX]; /* image base texture, "" = none */
+  char mat_tex[XW_SCENE_PATH_MAX]; /* material texture ref (real walls) */
+  XWBlend blend;                   /* material blending (real walls) */
   float origin[2];
   float scale[2];
   float size[2];

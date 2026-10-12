@@ -141,6 +141,56 @@ static void test_gl_texture(void) {
   xw_scene_free(&s);
 }
 
+static void test_realrain(void) {
+  TEST_BEGIN("real workshop dialect: 13 objects, camera, chains");
+  XWScene s;
+  memset(&s, 0, sizeof(s));
+  XWError err = {0};
+  int rc = xw_scene_parse("tests/data/scene/realrain", &s, &err);
+  TEST_CHECK_EQ_INT(rc, 0);
+  if (rc != 0)
+    return;
+  TEST_CHECK_EQ_INT(s.n_objects, 13);
+  TEST_CHECK_EQ_INT((int)s.camera.ortho_w, 1920);
+  TEST_CHECK_EQ_INT((int)s.camera.ortho_h, 1080);
+  TEST_CHECK(s.camera.clearcolor[0] > 0.69 && s.camera.clearcolor[0] < 0.71);
+  TEST_CHECK_EQ_INT(s.camera.bloom, 0);
+  /* night blue: name id, model->material chain, tex ref, blend */
+  TEST_CHECK_EQ_STR(s.objects[0].id, "night blue");
+  TEST_CHECK_EQ_INT(s.objects[0].type, XW_OBJ_IMAGE);
+  TEST_CHECK_EQ_STR(s.objects[0].model, "models/night blue.json");
+  TEST_CHECK_EQ_STR(s.objects[0].material, "materials/night blue.json");
+  TEST_CHECK_EQ_STR(s.objects[0].mat_tex, "night blue");
+  TEST_CHECK_EQ_INT(s.objects[0].blend, XW_BLEND_TRANSLUCENT);
+  TEST_CHECK_EQ_INT((int)s.objects[0].origin[0], 948);
+  TEST_CHECK_EQ_INT((int)s.objects[0].origin[1], 540);
+  TEST_CHECK_EQ_INT((int)s.objects[0].size[0], 1920);
+  /* rain particle + sound shape */
+  {
+    const XWSceneObject *rain = NULL, *snd = NULL;
+    for (int i = 0; i < s.n_objects; i++) {
+      if (strcmp(s.objects[i].id, "Rain Downfall light") == 0)
+        rain = &s.objects[i];
+      if (strcmp(s.objects[i].id, "the-rain-sound_102bpm.wav") == 0)
+        snd = &s.objects[i];
+    }
+    TEST_CHECK(rain != NULL && snd != NULL);
+    if (rain) {
+      TEST_CHECK_EQ_INT(rain->type, XW_OBJ_PARTICLE);
+      TEST_CHECK_EQ_INT(rain->visible, 1);
+    }
+    if (snd) {
+      TEST_CHECK_EQ_INT(snd->type, XW_OBJ_SOUND);
+      TEST_CHECK_EQ_STR(snd->sound.file, "sounds/the-rain-sound_102bpm.wav");
+      TEST_CHECK_EQ_INT(snd->sound.loop, 1);
+      TEST_CHECK(snd->sound.volume > 0.49 && snd->sound.volume < 0.51);
+    }
+  }
+  /* project.json props incl. user defaults */
+  TEST_CHECK(s.n_props >= 3);
+  xw_scene_free(&s);
+}
+
 static void test_bad_inputs(void) {
   TEST_BEGIN("missing dir/file rejected, no crash");
   XWScene s;
@@ -160,5 +210,6 @@ int main(void) {
   test_full_types();
   test_full_props_script();
   test_gl_texture();
+  test_realrain();
   TEST_SUMMARY();
 }

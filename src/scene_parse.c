@@ -17,12 +17,39 @@ static void copy_str(char *dst, size_t n, const char *src) {
 static int parse_project_props(const char *dir, XWScene *out, XWError *err);
 
 #ifdef XW_HAVE_JSONC
+static int parse_vec_str(const char *s, float *v, int n) {
+  int i;
+  if (!s)
+    return -1;
+  for (i = 0; i < n; i++) {
+    char *end;
+    while (*s == ' ' || *s == '\t') s++;
+    if (*s == '\0')
+      return -1;
+    v[i] = strtof(s, &end);
+    if (end == s)
+      return -1;
+    s = end;
+  }
+  return 0;
+}
+
+/* Real workshop files store vectors as "x y [z]" strings; our fixtures
+ * use JSON arrays. Both accepted. */
 static int get_vec2(struct json_object *o, const char *key, float *x, float *y,
                     float dx, float dy) {
   struct json_object *a = NULL;
+  float v[2];
   *x = dx;
   *y = dy;
   if (!json_object_object_get_ex(o, key, &a) || !a) return 0;
+  if (json_object_get_type(a) == json_type_string) {
+    const char *s = json_object_get_string(a);
+    if (!s || parse_vec_str(s, v, 2) != 0) return -1;
+    *x = v[0];
+    *y = v[1];
+    return 0;
+  }
   if (json_object_get_type(a) != json_type_array) return -1;
   if (json_object_array_length(a) < 2) return -1;
   struct json_object *e0 = json_object_array_get_idx(a, 0);
@@ -36,6 +63,11 @@ static int get_vec2(struct json_object *o, const char *key, float *x, float *y,
 static int get_vec3(struct json_object *o, const char *key, float *v) {
   struct json_object *a = NULL;
   if (!json_object_object_get_ex(o, key, &a) || !a) return 0;
+  if (json_object_get_type(a) == json_type_string) {
+    const char *s = json_object_get_string(a);
+    if (!s || parse_vec_str(s, v, 3) != 0) return -1;
+    return 0;
+  }
   if (json_object_get_type(a) != json_type_array) return -1;
   if (json_object_array_length(a) < 3) return -1;
   for (int i = 0; i < 3; i++) {
@@ -49,6 +81,11 @@ static int get_vec3(struct json_object *o, const char *key, float *v) {
 static int get_vec4(struct json_object *o, const char *key, float *v) {
   struct json_object *a = NULL;
   if (!json_object_object_get_ex(o, key, &a) || !a) return 0;
+  if (json_object_get_type(a) == json_type_string) {
+    const char *s = json_object_get_string(a);
+    if (!s || parse_vec_str(s, v, 4) != 0) return -1;
+    return 0;
+  }
   if (json_object_get_type(a) != json_type_array) return -1;
   if (json_object_array_length(a) < 4) return -1;
   for (int i = 0; i < 4; i++) {
@@ -74,8 +111,14 @@ static int parse_dynfloat(struct json_object *o, const char *key,
   if (t != json_type_object) return -1;
   struct json_object *u = NULL;
   if (json_object_object_get_ex(v, "user", &u) && u) {
+    struct json_object *w = NULL;
     d->kind = XW_DYN_USER;
     copy_str(d->ref, sizeof(d->ref), json_object_get_string(u));
+    /* real walls carry the default in "value" */
+    if (json_object_object_get_ex(v, "value", &w) && w &&
+        (json_object_get_type(w) == json_type_double ||
+         json_object_get_type(w) == json_type_int))
+      d->constant = (float)json_object_get_double(w);
     return 0;
   }
   if (json_object_object_get_ex(v, "expression", &u) && u) {
@@ -99,6 +142,10 @@ static XWObjType infer_type(struct json_object *jo) {
   if (json_object_object_get_ex(jo, "text", &v) && v) return XW_OBJ_TEXT;
   if (json_object_object_get_ex(jo, "sound", &v) && v) return XW_OBJ_SOUND;
   if (json_object_object_get_ex(jo, "emitter", &v) && v) return XW_OBJ_PARTICLE;
+  /* real workshop particle objects carry a config ref, not an emitter */
+  if (json_object_object_get_ex(jo, "particle", &v) && v &&
+      json_object_get_type(v) == json_type_string)
+    return XW_OBJ_PARTICLE;
   return XW_OBJ_IMAGE;
 }
 
@@ -179,21 +226,141 @@ static int parse_effect(struct json_object *jo, XWSceneEffect *e, XWError *err) 
   return 0;
 }
 
-static int parse_object(struct json_object *jo, XWSceneObject *o, XWError *err) {
+static int parse_object_at(const char *dir, struct json_object *jo,
+                           XWSceneObject *o, XWError *err);
+
+/* Real workshop ids are numbers with a separate name; prefer the name. */
+static void parse_id(struct json_object *jo, XWSceneObject *o) {
+  struct json_object *v = NULL;
+  if (json_object_object_get_ex(jo, "name", &v) && v &&
+      json_object_get_type(v) == json_type_string) {
+    copy_str(o->id, sizeof(o->id), json_object_get_string(v));
+    return;
+  }
+  if (json_object_object_get_ex(jo, "id", &v) && v) {
+    if (json_object_get_type(v) == json_type_string) {
+      copy_str(o->id, sizeof(o->id), json_object_get_string(v));
+    } else if (json_object_get_type(v) == json_type_int) {
+      snprintf(o->id, sizeof(o->id), "%d", json_object_get_int(v));
+    }
+  }
+}
+
+/* Read a small JSON doc from dir/relpath; NULL when missing/unreadable.
+ * Referenced chain files (models/materials) resolve lazily: absent files
+ * leave refs stored but empty, they must not fail the whole parse. */
+static struct json_object *slurp_json(const char *dir, const char *rel) {
+  char path[1152], *buf;
+  FILE *f;
+  long sz;
+  struct json_object *o;
+  if (!dir || !rel || !rel[0] || strstr(rel, "..") != NULL)
+    return NULL;
+  snprintf(path, sizeof(path), "%s/%s", dir, rel);
+  f = fopen(path, "rb");
+  if (!f)
+    return NULL;
+  fseek(f, 0, SEEK_END);
+  sz = ftell(f);
+  rewind(f);
+  if (sz <= 0 || sz > 1024 * 1024) {
+    fclose(f);
+    return NULL;
+  }
+  buf = malloc((size_t)sz + 1);
+  if (!buf) {
+    fclose(f);
+    return NULL;
+  }
+  if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) {
+    free(buf);
+    fclose(f);
+    return NULL;
+  }
+  fclose(f);
+  buf[sz] = '\0';
+  o = json_tokener_parse(buf);
+  free(buf);
+  if (!o || json_object_get_type(o) != json_type_object) {
+    if (o)
+      json_object_put(o);
+    return NULL;
+  }
+  return o;
+}
+
+static XWBlend blend_from_name(const char *s) {
+  if (!s)
+    return XW_BLEND_NORMAL;
+  if (strcmp(s, "translucent") == 0)
+    return XW_BLEND_TRANSLUCENT;
+  if (strcmp(s, "additive") == 0)
+    return XW_BLEND_ADDITIVE;
+  return XW_BLEND_NORMAL;
+}
+
+/* Follow models/X.json -> {"material": ...} -> material passes[0] for the
+ * base blend mode and texture ref. Missing links stay empty (lazy). */
+static void resolve_material(const char *dir, XWSceneObject *o) {
+  struct json_object *model, *mat, *v, *p0;
+  if (!o->model[0])
+    return;
+  model = slurp_json(dir, o->model);
+  if (!model)
+    return;
+  if (json_object_object_get_ex(model, "material", &v) && v &&
+      json_object_get_type(v) == json_type_string)
+    copy_str(o->material, sizeof(o->material), json_object_get_string(v));
+  json_object_put(model);
+  if (!o->material[0])
+    return;
+  mat = slurp_json(dir, o->material);
+  if (!mat)
+    return;
+  if (!json_object_object_get_ex(mat, "passes", &v) || !v ||
+      json_object_get_type(v) != json_type_array ||
+      json_object_array_length(v) < 1) {
+    json_object_put(mat);
+    return;
+  }
+  p0 = json_object_array_get_idx(v, 0);
+  if (!p0 || json_object_get_type(p0) != json_type_object) {
+    json_object_put(mat);
+    return;
+  }
+  if (json_object_object_get_ex(p0, "blending", &v) && v &&
+      json_object_get_type(v) == json_type_string)
+    o->blend = blend_from_name(json_object_get_string(v));
+  if (json_object_object_get_ex(p0, "textures", &v) && v &&
+      json_object_get_type(v) == json_type_array &&
+      json_object_array_length(v) >= 1) {
+    struct json_object *t0 = json_object_array_get_idx(v, 0);
+    if (t0 && json_object_get_type(t0) == json_type_string)
+      copy_str(o->mat_tex, sizeof(o->mat_tex), json_object_get_string(t0));
+  }
+  json_object_put(mat);
+}
+
+static int parse_object_at(const char *dir, struct json_object *jo,
+                           XWSceneObject *o, XWError *err) {
   struct json_object *v = NULL;
   memset(o, 0, sizeof(*o));
   o->visible = 1;
   o->scale[0] = 1.0f;
   o->scale[1] = 1.0f;
-  if (json_object_object_get_ex(jo, "id", &v) && v)
-    copy_str(o->id, sizeof(o->id), json_object_get_string(v));
+  parse_id(jo, o);
   if (json_object_object_get_ex(jo, "model", &v) && v)
+    copy_str(o->model, sizeof(o->model), json_object_get_string(v));
+  /* real workshop image objects reference "image" instead of "model" */
+  if (!o->model[0] && json_object_object_get_ex(jo, "image", &v) && v &&
+      json_object_get_type(v) == json_type_string)
     copy_str(o->model, sizeof(o->model), json_object_get_string(v));
   if (json_object_object_get_ex(jo, "material", &v) && v)
     copy_str(o->material, sizeof(o->material), json_object_get_string(v));
   if (json_object_object_get_ex(jo, "texture", &v) && v &&
       json_object_get_type(v) == json_type_string)
     copy_str(o->texture, sizeof(o->texture), json_object_get_string(v));
+  resolve_material(dir, o);
   if (get_vec2(jo, "origin", &o->origin[0], &o->origin[1], 0, 0) != 0 ||
       get_vec2(jo, "scale", &o->scale[0], &o->scale[1], 1, 1) != 0 ||
       get_vec2(jo, "size", &o->size[0], &o->size[1], 0, 0) != 0) {
@@ -264,13 +431,37 @@ static int parse_object(struct json_object *jo, XWSceneObject *o, XWError *err) 
     }
   }
   if (json_object_object_get_ex(jo, "sound", &v) && v) {
-    copy_str(o->sound.file, sizeof(o->sound.file), json_object_get_string(v));
+    /* real walls: ["sounds/x.wav"]; ours: "path" */
+    if (json_object_get_type(v) == json_type_array) {
+      struct json_object *e0 = json_object_array_length(v) >= 1
+                                   ? json_object_array_get_idx(v, 0)
+                                   : NULL;
+      if (e0 && json_object_get_type(e0) == json_type_string)
+        copy_str(o->sound.file, sizeof(o->sound.file),
+                 json_object_get_string(e0));
+    } else {
+      copy_str(o->sound.file, sizeof(o->sound.file),
+               json_object_get_string(v));
+    }
     o->sound.volume = 1.0f;
     o->sound.loop = 1;
-    if (json_object_object_get_ex(jo, "volume", &v) && v)
-      o->sound.volume = (float)json_object_get_double(v);
+    if (json_object_object_get_ex(jo, "volume", &v) && v) {
+      if (json_object_get_type(v) == json_type_object) {
+        /* real walls: {"user": ..., "value": ...} */
+        XWDynFloat dv;
+        memset(&dv, 0, sizeof(dv));
+        if (parse_dynfloat(jo, "volume", &dv, 1.0f) == 0)
+          o->sound.volume = dv.constant;
+      } else {
+        o->sound.volume = (float)json_object_get_double(v);
+      }
+    }
     if (json_object_object_get_ex(jo, "loop", &v) && v)
       o->sound.loop = json_object_get_boolean(v) ? 1 : 0;
+    /* real walls: "playbackmode": "loop" */
+    if (json_object_object_get_ex(jo, "playbackmode", &v) && v &&
+        json_object_get_type(v) == json_type_string)
+      o->sound.loop = strcmp(json_object_get_string(v), "loop") == 0 ? 1 : 0;
   }
   if (json_object_object_get_ex(jo, "effects", &v) && v) {
     if (json_object_get_type(v) != json_type_array) {
@@ -350,8 +541,33 @@ int xw_scene_parse(const char *dir, XWScene *out, XWError *err) {
     return -1;
   }
   struct json_object *cam = NULL;
-  if (json_object_object_get_ex(root, "camera", &cam) && cam &&
-      json_object_get_type(cam) == json_type_object) {
+  struct json_object *gen = NULL;
+  /* real workshop files carry projection under "general"; our fixtures
+   * use a "camera" object. General wins when both exist. */
+  if (json_object_object_get_ex(root, "general", &gen) && gen &&
+      json_object_get_type(gen) == json_type_object) {
+    struct json_object *v = NULL, *op = NULL;
+    float cc[3] = {0.7f, 0.7f, 0.7f};
+    if (get_vec3(gen, "clearcolor", cc) != 0) {
+      json_object_put(root);
+      XW_ERROR_SET(err, 1, "general clearcolor must be [r, g, b]");
+      return -1;
+    }
+    memcpy(out->camera.clearcolor, cc, sizeof(cc));
+    if (json_object_object_get_ex(gen, "orthogonalprojection", &op) && op &&
+        json_object_get_type(op) == json_type_object) {
+      struct json_object *w = NULL, *h = NULL;
+      if (json_object_object_get_ex(op, "width", &w) && w)
+        out->camera.ortho_w = (float)json_object_get_int(w);
+      if (json_object_object_get_ex(op, "height", &h) && h)
+        out->camera.ortho_h = (float)json_object_get_int(h);
+    }
+    if (json_object_object_get_ex(gen, "bloom", &v) && v)
+      out->camera.bloom = json_object_get_boolean(v) ? 1 : 0;
+    if (json_object_object_get_ex(gen, "cameraparallax", &v) && v)
+      out->camera.parallax = json_object_get_boolean(v) ? 1 : 0;
+  } else if (json_object_object_get_ex(root, "camera", &cam) && cam &&
+             json_object_get_type(cam) == json_type_object) {
     struct json_object *v = NULL;
     float w = 0, h = 0;
     if (get_vec2(cam, "orthogonalprojection", &w, &h, 0, 0) != 0) {
@@ -395,7 +611,7 @@ int xw_scene_parse(const char *dir, XWScene *out, XWError *err) {
         XW_ERROR_SET(err, 1, "object must be an object");
         goto fail;
       }
-      if (parse_object(oj, &out->objects[i], err) != 0) goto fail;
+      if (parse_object_at(dir, oj, &out->objects[i], err) != 0) goto fail;
       out->n_objects++;
     }
   }

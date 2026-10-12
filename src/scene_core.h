@@ -32,11 +32,7 @@ void xw_camera_ortho(float l, float r, float b, float tt, float *m16);
 void xw_camera_auto_size(const XWSceneObject *objs, int n, float fb_w,
                          float fb_h, float *w, float *h);
 
-typedef enum {
-  XW_BLEND_NORMAL = 0,
-  XW_BLEND_TRANSLUCENT,
-  XW_BLEND_ADDITIVE,
-} XWBlend;
+/* blend enum lives in scene_model.h */
 
 #define XW_GL_ONE 1
 #define XW_GL_ZERO 0
