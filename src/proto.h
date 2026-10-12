@@ -16,7 +16,7 @@
  *        [opacity=0.5]\0[below=1]\0[sticky=1]\0[skip_taskbar=1]\0
  *        [skip_pager=1]\0[no_focus=1]\0[geom=WxH+X+Y]\n
  *      target: all | <output-name> | geom
- *      type:   image | video | web
+ *      type:   image | video | web | scene
  *    clear\0<target>\n       target: all | <output-name>
  *      optional field keep=1: remove windows but retain their last state
  *      (screen full-wallpaper clearing; `restore` brings them back)

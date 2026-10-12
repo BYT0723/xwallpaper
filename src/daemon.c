@@ -89,6 +89,7 @@ static int type_from_name(const char *n) {
   if (strcmp(n, "image") == 0) return XW_BACKEND_IMAGE;
   if (strcmp(n, "video") == 0) return XW_BACKEND_VIDEO;
   if (strcmp(n, "web") == 0)   return XW_BACKEND_WEB;
+  if (strcmp(n, "scene") == 0) return XW_BACKEND_SCENE;
   return -1;
 }
 
@@ -494,6 +495,7 @@ int xw_daemon_main(void) {
                 case XW_BACKEND_IMAGE: strcpy(type, "image"); break;
                 case XW_BACKEND_VIDEO: strcpy(type, "video"); break;
                 case XW_BACKEND_WEB:   strcpy(type, "web"); break;
+                case XW_BACKEND_SCENE: strcpy(type, "scene"); break;
                 default: strcpy(type, "unknown"); break;
                 }
                 /* identity: output name, --name for -g windows */

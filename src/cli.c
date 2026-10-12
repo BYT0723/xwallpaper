@@ -82,10 +82,20 @@ int xw_cli_detect_backend(const char *path) {
     return XW_BACKEND_WEB;
 
   /* an existing directory is unambiguously a web wallpaper (checked
-   * before extension so "foo.png/" dirs aren't mistaken for images) */
+   * before extension so "foo.png/" dirs aren't mistaken for images),
+   * unless it holds a scene marker (scene.pkg / scene.json). Marker
+   * presence is stat-only so the thin CLI never reads package content. */
   struct stat st;
-  if (stat(path, &st) == 0 && S_ISDIR(st.st_mode))
+  if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+    char marker[1152];
+    snprintf(marker, sizeof(marker), "%s/scene.pkg", path);
+    if (stat(marker, &st) == 0)
+      return XW_BACKEND_SCENE;
+    snprintf(marker, sizeof(marker), "%s/scene.json", path);
+    if (stat(marker, &st) == 0)
+      return XW_BACKEND_SCENE;
     return XW_BACKEND_WEB;
+  }
 
   const char *dot = strrchr(path, '.');
   if (!dot || dot == path || dot[1] == '\0')
@@ -110,7 +120,7 @@ int xw_cli_detect_backend(const char *path) {
 void xw_cli_usage(FILE *f) {
   fprintf(f,
     "Usage:\n"
-    "  xwallpaper set [--image|--video|--web] [target] [opts] <path>\n"
+    "  xwallpaper set [--image|--video|--web|--scene] [target] [opts] <path>\n"
     "  xwallpaper clear [-m <name|output>] [--keep]\n"
     "  xwallpaper restore\n"
     "  xwallpaper --list\n"
@@ -126,7 +136,7 @@ void xw_cli_usage(FILE *f) {
   "  --span WxH+X+Y          span one image across outputs (Wayland, image only)\n"
     "\n"
     "Options:\n"
-    "  --image --video --web   force backend (default: by file extension)\n"
+    "  --image --video --web --scene   force backend (default: by file extension)\n"
     "  --scale <mode>          image/video: fill(default)|contain|stretch|tile\n"
     "  --rotate <0|90|180|270> video: static rotation (e.g. portrait clips)\n"
     "  --keybinds <file>       video: mpv input.conf-style keybindings\n"
@@ -248,6 +258,8 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
         cfg->backend_explicit = XW_BACKEND_VIDEO;
       } else if (strcmp(a, "--web") == 0) {
         cfg->backend_explicit = XW_BACKEND_WEB;
+      } else if (strcmp(a, "--scene") == 0) {
+        cfg->backend_explicit = XW_BACKEND_SCENE;
       } else if (strcmp(a, "--all") == 0) {
         if (cfg->have_span) {
           XW_ERROR_SET(err, 1, "--span cannot be combined with --all");
