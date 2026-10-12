@@ -14,6 +14,8 @@
 #include "scene_model.h"
 #include "scene_parse.h"
 #include "scene_particle.h"
+#include "scene_particle_gl.h"
+#include "scene_sound.h"
 #include "scene_text.h"
 #include "scene_text_gl.h"
 #include "x11.h"
@@ -36,6 +38,10 @@ typedef struct XWSceneCtx {
   XWGl *gl;
   XWEmitter *emitters;
   XWTextItem *texts;
+  struct XWSound **sounds;
+  int sound_sys;
+  int mute;
+  double volume;
 } XWSceneCtx;
 
 static void free_emitters(XWSceneCtx *c) {
@@ -55,6 +61,81 @@ static void free_texts(XWSceneCtx *c) {
     xw_text_item_free(c->gl, &c->texts[i]);
   free(c->texts);
   c->texts = NULL;
+}
+
+/* Load every SOUND object with a file. Degrades: a dead device or a bad
+ * file skips that object and the wallpaper runs mute. */
+static void init_sounds(XWSceneCtx *c) {
+  int i, want = 0;
+  XWError serr;
+  if (!c)
+    return;
+  for (i = 0; i < c->scene.n_objects; i++)
+    if (c->scene.objects[i].type == XW_OBJ_SOUND &&
+        c->scene.objects[i].sound.file[0])
+      want = 1;
+  if (!want)
+    return;
+  memset(&serr, 0, sizeof(serr));
+  if (xw_sound_sys_init(&serr) != 0)
+    return;
+  c->sound_sys = 1;
+  c->sounds = calloc(c->scene.n_objects > 0 ? (size_t)c->scene.n_objects : 1,
+                     sizeof(struct XWSound *));
+  if (!c->sounds)
+    return;
+  for (i = 0; i < c->scene.n_objects; i++) {
+    const XWSceneObject *o = &c->scene.objects[i];
+    char path[1152];
+    if (o->type != XW_OBJ_SOUND || !o->sound.file[0])
+      continue;
+    snprintf(path, sizeof(path), "%.900s/%.200s", c->dir, o->sound.file);
+    if (xw_sound_load(&c->sounds[i], path, &serr) != 0)
+      c->sounds[i] = NULL;
+  }
+}
+
+static void free_sounds(XWSceneCtx *c) {
+  int i;
+  if (!c || !c->sounds)
+    return;
+  for (i = 0; i < c->scene.n_objects; i++) {
+    if (c->sounds[i])
+      xw_sound_free(c->sounds[i]);
+  }
+  free(c->sounds);
+  c->sounds = NULL;
+  if (c->sound_sys) {
+    xw_sound_sys_free();
+    c->sound_sys = 0;
+  }
+}
+
+static void start_sounds(XWSceneCtx *c) {
+  int i;
+  XWError serr;
+  if (!c || !c->sounds || c->mute)
+    return;
+  memset(&serr, 0, sizeof(serr));
+  for (i = 0; i < c->scene.n_objects; i++) {
+    const XWSceneObject *o = &c->scene.objects[i];
+    if (!c->sounds[i])
+      continue;
+    if (xw_sound_play(c->sounds[i], o->sound.volume, c->volume,
+                      o->sound.loop, &serr) != 0)
+      continue;
+    if (c->paused)
+      xw_sound_pause(c->sounds[i], 1);
+  }
+}
+
+static void pause_sounds(XWSceneCtx *c, int paused) {
+  int i;
+  if (!c || !c->sounds)
+    return;
+  for (i = 0; i < c->scene.n_objects; i++)
+    if (c->sounds[i])
+      xw_sound_pause(c->sounds[i], paused);
 }
 
 static int init_emitters(XWSceneCtx *c, XWError *err) {
@@ -175,6 +256,8 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
   c->win = win;
   snprintf(c->dir, sizeof(c->dir), "%s", opt->path);
   c->fps = opt->fps > 0.0 ? opt->fps : XW_SCENE_FPS_DEFAULT;
+  c->mute = opt->mute ? 1 : 0;
+  c->volume = opt->volume;
   if (xw_scene_parse(c->dir, &c->scene, err) != 0) {
     free(c);
     return -1;
@@ -194,10 +277,12 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     free(c);
     return -1;
   }
+  init_sounds(c);
   c->gc = XCreateGC(win->dpy, win->win, 0, NULL);
   if (!c->gc) {
     XW_ERROR_SET(err, 1, "cannot create scene GC");
     free(c->texts);
+    free_sounds(c);
     free_emitters(c);
     xw_scene_free(&c->scene);
     free(c);
@@ -205,6 +290,7 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
   }
   b->priv = c;
   c->t0_ms = now_ms();
+  init_sounds(c);
   if (paint(c) != 0) {
     XW_ERROR_SET(err, 1, "cannot paint scene background");
     return -1;
@@ -214,12 +300,20 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
 
 static int scene_start(XWBackend *b) {
   XWSceneCtx *c = b ? (XWSceneCtx *)b->priv : NULL;
+  int r;
   if (!c || !c->parsed)
     return -1;
-  return paint(c);
+  r = paint(c);
+  if (r == 0)
+    start_sounds(c);
+  return r;
 }
 
-static void scene_stop(XWBackend *b) { (void)b; }
+static void scene_stop(XWBackend *b) {
+  XWSceneCtx *c = b ? (XWSceneCtx *)b->priv : NULL;
+  if (c)
+    pause_sounds(c, 1);
+}
 
 static void scene_destroy(XWBackend *b) {
   XWSceneCtx *c;
@@ -229,6 +323,7 @@ static void scene_destroy(XWBackend *b) {
   if (c->gl)
     xw_gl_destroy(c->gl);
   c->gl = NULL;
+  free_sounds(c);
   free_emitters(c);
   if (c->gc)
     XFreeGC(c->win->dpy, c->gc);
@@ -248,11 +343,15 @@ static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   if (xw_scene_parse(opt->path, &next, err) != 0)
     return -1;
   free_texts(c);
+  free_sounds(c);
   xw_scene_free(&c->scene);
   c->scene = next;
   snprintf(c->dir, sizeof(c->dir), "%s", opt->path);
+  c->mute = opt->mute ? 1 : 0;
+  c->volume = opt->volume;
   if (init_emitters(c, err) != 0)
     return -1;
+  init_sounds(c);
   c->texts = calloc(c->scene.n_objects > 0 ? (size_t)c->scene.n_objects : 1,
                     sizeof(XWTextItem));
   if (!c->texts) {
@@ -261,13 +360,20 @@ static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   }
   if (opt->fps > 0.0)
     c->fps = opt->fps;
-  return paint(c);
+  {
+    int r = paint(c);
+    if (r == 0 && !c->mute)
+      start_sounds(c);
+    return r;
+  }
 }
 
 static void scene_set_paused(XWBackend *b, int paused) {
   XWSceneCtx *c = b ? (XWSceneCtx *)b->priv : NULL;
-  if (c)
-    c->paused = paused ? 1 : 0;
+  if (!c)
+    return;
+  c->paused = paused ? 1 : 0;
+  pause_sounds(c, paused);
 }
 
 static void scene_tick(XWBackend *b) {

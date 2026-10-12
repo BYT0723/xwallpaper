@@ -15,6 +15,7 @@
 #include "../../src/scene_gl.h"
 #include "../../src/scene_model.h"
 #include "../../src/scene_particle.h"
+#include "../../src/scene_particle_gl.h"
 #include "../../src/x11.h"
 #include "../../src/cli.h"
 
