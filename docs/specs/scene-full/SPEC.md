@@ -26,7 +26,7 @@ wl.c 复用既有窗口抽象后补）。
 
 - C11，desktop GL 3.3（复用 x11 窗口，不另开 X 连接），json-c（parse），
   imlib2（PNG/JPG 解码复用），freetype2（text），SDL_mixer 或 mpv 复用二选一（sound，
-  spec 阶段定案），quickjs vendored amalgamated（scripting，无外部包依赖）。
+  spec 阶段定案），quickjs 最小嵌入集 vendored（scripting，无外部包依赖）。
 - Build: `make` + `pkg-config`；CLI 对象与 daemon 对象分离不变。
 - Test: 纯 C assert harness（无外部框架），沿用 `tests/test_*.c` + `tests/integration/`。
 
@@ -51,7 +51,8 @@ Manual smoke:
   ./xwallpaperd &
   ./xwallpaper set <scene-dir>                  # 目录含 project.json + scene.pkg
   ./xwallpaper --list
-  ./xwallpaper --list-properties -m DP-1        # 用户属性（待定 CLI 形态，plan 阶段定）
+  ./xwallpaper --list-properties -m DP-1        # 用户属性（live override）
+  ./xwallpaper --set-property rain=0 -m DP-1     # 覆写后即时生效，不落盘
   ./xwallpaper clear
   ./xwallpaper exit
 ```
@@ -72,7 +73,7 @@ src/
   scene_sound.c/.h    → 音频对象（scene-sound）
   scene_script.c/.h   → quickjs 引擎（scene-script）
   scene.c/.h          → XWBackend 壳（scene-backend）
-  vendor/quickjs/     → quickjs amalgamated（若采用 vendored）
+  vendor/quickjs/     → quickjs 最小嵌入集（core+unicode/regexp/bignum）
 tests/
   test_scene_pkg.c / test_scene_tex.c / test_scene_shader.c / test_scene_parse.c
   test_scene_core.c（纯逻辑：FBO 表/camera/blend/combo 推断）
@@ -129,10 +130,22 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
 - `make test` / `make test-xvfb` / `make check-client-libs` 全绿。
 - 无 fork 外部播放器；CLI 启动仍 <1ms 量级（无重型库）。
 
-## Open Questions
+## Open Questions（已决议，见 Decisions）
 
-1. sound 用 SDL_mixer 新增依赖，还是复用现有 mpv？（默认前者，plan 前定案）
-2. 用户属性 CLI 形态：复用 `--list-properties`/`--set-property`（对标参考）还是新子命令？
-3. 粒子/脚本代表壁纸选哪几个 Workshop ID 做验收？（需用户提供或授权下载）
-4. Wayland scene 是否纳入首版验收？（默认不纳入，X11 先行）
-5. quickjs vendor 路径与升级策略（copy 源码 vs submodule）？
+1. sound 用 SDL_mixer 新增依赖，还是复用现有 mpv？→ **SDL_mixer**（daemon 专属 chunk 循环，与 mpv 视频隔离）。
+2. 用户属性 CLI 形态 → **`xwallpaper --list-properties [-m]` / `--set-property name=value [-m]`**（live override，不落盘；daemon 精确 verb 匹配）。
+3. 粒子/脚本代表壁纸选哪几个 Workshop ID 做验收？→ **未取真实壁纸**，以合成 fixture（`tests/data/scene/`）+ xvfb 像素回读验收；真机冒烟待用户提供目录。
+4. Wayland scene 是否纳入首版验收？→ **不纳入**（X11 先行；scene 后端 `init_wl` 为 NULL，daemon 明确报错）。
+5. quickjs vendor 路径与升级策略 → **`vendor/quickjs/` 直接 copy 上游 2024-01-13 最小嵌入集**（core+unicode/regexp/bignum，MIT LICENSE 保留；升级时整目录替换）。
+
+## Decisions（实现中落定的补充决议）
+
+- **渲染走 GLX compat 上下文**（非 core profile）：WE 方言 shader（`gl_FragColor`/`texture2D`/`varying`）经转译后可编译；Mesa/NVIDIA 均支持。
+- **Uniform 绑定按名回退**：sampler 取 `xw_tex0`→`g_Texture0`→`tex0`→首个 sampler；time 取 `xw_time`→`g_Time`；alpha 统一走合成 pass 的 `xw_alpha`。
+- **失败策略**：解析/脚本/纹理缺失 fail fast（`set` 直接报错）；帧内渲染失败回落 clear 色（壁纸活着）；音频缺设备/坏文件降级 mute。
+- **合成顺序**：image → text → particle 的 per-type 循环；object-order 与 scene-space FBO 合成是后续任务。
+- **粒子排序**：未做（swap-remove 打乱顺序；当前 blend 下可接受，记录为后续项）。
+- **文本**：Latin-1 单行；UTF-8/CJK shaping 后续。
+- **props 不持久化**：override 只活在 daemon 内存，重启/切换丢失（后续可加 state 列）。
+- **`--disable-mouse`/`--disable-parallax`**：未实现（输入恒为 root 像素：脚本可用；decorrelation 开关后续）。
+- **真机同帧对比**：未执行（无参考壁纸目录）；xvfb 像素回读 + 动画推进断言代替。

@@ -73,6 +73,7 @@ int main(void) {
   int cx = w / 2, cy = h / 2;
   XImage *img = XGetImage(dpy, win->win, cx, cy, 1, 1, AllPlanes, ZPixmap);
   TEST_CHECK(img != NULL);
+  int r0 = -1;
   if (img) {
     unsigned long px = XGetPixel(img, 0, 0);
     XDestroyImage(img);
@@ -82,6 +83,20 @@ int main(void) {
     /* red texture dimmed by the pulse factor (~0.5 at t=0): mid red */
     TEST_CHECK(r >= 80 && r <= 180);
     TEST_CHECK(g < 60 && b < 60);
+    r0 = r;
+  }
+
+  /* animation progresses: ~1.6s later the pulse phase nears 1.0 (bright) */
+  usleep(1600000);
+  backend.tick(&backend);
+  XSync(dpy, False);
+  img = XGetImage(dpy, win->win, cx, cy, 1, 1, AllPlanes, ZPixmap);
+  TEST_CHECK(img != NULL);
+  if (img) {
+    unsigned long px = XGetPixel(img, 0, 0);
+    XDestroyImage(img);
+    int r = (px >> 16) & 0xff;
+    TEST_CHECK(r > r0 + 60);
   }
 
   backend.destroy(&backend);
