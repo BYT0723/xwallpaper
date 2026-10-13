@@ -253,3 +253,10 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   粒子材质自己的 pass（如 `rainrefractive` 的折射、`halo_50` 用 blank sprite + 法线做玻璃感）。
   因此 3003908979 的雨滴显示为白色方块（预览里是微弱折射）。要修需实现粒子材质的 pass 渲染
   （实例化四边形 + 粒子 shader），属较大一块。
+- **WE 资源目录（2026-10-13）**：`genericparticle` 等**引擎内建 shader 不在 pkg 里**（和 `common.h` 一样），
+  参考实现也依赖用户的 WE 安装。本机 `steamapps/common/wallpaper_engine/` 只有 UI/config，**没有 assets/**。
+  已加 `XW_ASSETS_DIR` 环境变量：设置后 `#include` 解析与内建 shader 查找都优先用
+  `<assets>/shaders/...`（用真的 `common.h`/`common_blending.h` 替掉我们的重写版），未设置则回退到现有行为。
+  `tests/test_scene_shader.c` 用合成 assets 目录覆盖（覆盖内建头 + 解析 `genericparticle` + 复位回退）。
+- **待做**：拿到 WE 资源后，实现**粒子材质 pass 渲染**（参考的 17 float/顶点布局：`a_Position`/
+  `a_TexCoordVec4`/`a_Color`/`a_TexCoordVec4C1`/`a_TexCoordC2`），才能跑真 `genericparticle` 的折射粒子。

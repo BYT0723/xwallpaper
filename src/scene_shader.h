@@ -52,6 +52,16 @@ int xw_shader_fix_linked_varyings(const char *frag, char *vert, size_t n);
  * "common_vertex.h", "common_blending.h"), or NULL when unknown. */
 const char *xw_shader_builtin_header(const char *name);
 
+/* Optional Wallpaper Engine asset directory (its shaders/ folder holds the
+ * genuine common.h and the built-in effect shaders such as
+ * genericparticle). When set, #include resolution prefers it over our
+ * reimplemented headers. Set once at daemon start. */
+void xw_shader_set_assets_dir(const char *dir);
+const char *xw_shader_assets_dir(void);
+/* Resolve a built-in shader name ("genericparticle") to a file under the
+ * assets directory; returns 0 and fills out when found. */
+int xw_shader_assets_shader(const char *name, char *out, size_t n);
+
 #define XW_SHADER_DEFS_MAX 32
 
 /* One annotated uniform:

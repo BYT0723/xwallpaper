@@ -1,9 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "harness.h"
 #include "../src/scene_shader.h"
+
+static int mkdir2(const char *base, const char *sub) {
+  char path[512];
+  snprintf(path, sizeof(path), "%s/%s", base, sub);
+  return mkdir(path, 0755);
+}
 
 static char *slurp(const char *path) {
   FILE *f = fopen(path, "rb");
@@ -229,6 +238,57 @@ static void test_sampler_combo(void) {
   TEST_CHECK(strstr(dst, "#define MASK 1") == NULL);
 }
 
+static void test_assets_dir(void) {
+  TEST_BEGIN("engine asset dir overrides builtins and resolves shaders");
+  char tmpl[] = "/tmp/xw-assets-XXXXXX";
+  char path[512];
+  FILE *f;
+  TEST_CHECK(mkdtemp(tmpl) != NULL);
+  TEST_CHECK_EQ_INT(mkdir2(tmpl, "shaders"), 0);
+  snprintf(path, sizeof(path), "%s/shaders/common.h", tmpl);
+  f = fopen(path, "wb");
+  TEST_CHECK(f != NULL);
+  if (f) {
+    fputs("// ASSETS MARKER\n#define M_PI 3.0\n", f);
+    fclose(f);
+  }
+  snprintf(path, sizeof(path), "%s/shaders/genericparticle.frag", tmpl);
+  f = fopen(path, "wb");
+  TEST_CHECK(f != NULL);
+  if (f) {
+    fputs("void main() {}\n", f);
+    fclose(f);
+  }
+
+  xw_shader_set_assets_dir(tmpl);
+  {
+    char dst[8192];
+    const char *src = "#include \"common.h\"\nvoid main() {}\n";
+    TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
+    TEST_CHECK(strstr(dst, "ASSETS MARKER") != NULL);
+    /* the engine copy wins over our reimplementation */
+    TEST_CHECK(strstr(dst, "XW_WE_COMMON_H") == NULL);
+  }
+  {
+    char out[512];
+    TEST_CHECK_EQ_INT(xw_shader_assets_shader("genericparticle", out,
+                                              sizeof(out)),
+                      0);
+    TEST_CHECK(strstr(out, "genericparticle.frag") != NULL);
+    TEST_CHECK_EQ_INT(xw_shader_assets_shader("nope_missing", out,
+                                              sizeof(out)),
+                      -1);
+  }
+  xw_shader_set_assets_dir(NULL);
+  {
+    char dst[8192];
+    const char *src = "#include \"common.h\"\nvoid main() {}\n";
+    TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
+    TEST_CHECK(strstr(dst, "ASSETS MARKER") == NULL);
+    TEST_CHECK(strstr(dst, "XW_WE_COMMON_H") != NULL);
+  }
+}
+
 static void test_bad_inputs(void) {
   TEST_BEGIN("NULL/small-dst rejected");
   char dst[8];
@@ -313,6 +373,7 @@ int main(void) {
   test_linked_varyings();
   test_vertex_attrib_locations();
   test_sampler_combo();
+  test_assets_dir();
   test_bad_inputs();
   test_builtin_lookup();
   test_sample_translates();

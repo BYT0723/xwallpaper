@@ -5,6 +5,7 @@
 
 #include "scene_gl.h"
 #include "scene_image.h"
+#include "scene_shader.h"
 #include "scene_tex.h"
 
 static int resolve_shader(const char *dir, const char *ref, char *out,
@@ -33,6 +34,10 @@ static int resolve_shader(const char *dir, const char *ref, char *out,
       }
     }
   }
+  /* built-in effect shaders (genericparticle and friends) live in the
+   * engine's asset directory when one is configured */
+  if (xw_shader_assets_shader(ref, out, n) == 0)
+    return 0;
   return -1;
 }
 

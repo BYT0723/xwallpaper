@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "scene_shader.h"
 
@@ -126,6 +128,68 @@ static const char *hdr_common_blending =
     "  return mix(a, r, clamp(blend, 0.0, 1.0));\n"
     "}\n"
     "#endif\n";
+
+static char g_assets_dir[1024];
+
+void xw_shader_set_assets_dir(const char *dir) {
+  snprintf(g_assets_dir, sizeof(g_assets_dir), "%s", dir ? dir : "");
+}
+
+const char *xw_shader_assets_dir(void) { return g_assets_dir; }
+
+/* Read a header from <assets>/shaders/<name>; caller frees. */
+static char *assets_header(const char *name) {
+  char path[1152];
+  FILE *f;
+  long sz;
+  char *b;
+  if (!g_assets_dir[0] || !name || !name[0] || strstr(name, ".."))
+    return NULL;
+  snprintf(path, sizeof(path), "%.900s/shaders/%.150s", g_assets_dir, name);
+  f = fopen(path, "rb");
+  if (!f)
+    return NULL;
+  fseek(f, 0, SEEK_END);
+  sz = ftell(f);
+  rewind(f);
+  if (sz <= 0 || sz > 256 * 1024) {
+    fclose(f);
+    return NULL;
+  }
+  b = malloc((size_t)sz + 1);
+  if (!b) {
+    fclose(f);
+    return NULL;
+  }
+  if (fread(b, 1, (size_t)sz, f) != (size_t)sz) {
+    free(b);
+    fclose(f);
+    return NULL;
+  }
+  fclose(f);
+  b[sz] = '\0';
+  return b;
+}
+
+int xw_shader_assets_shader(const char *name, char *out, size_t n) {
+  static const char *exts[] = {"", ".frag"};
+  struct stat st;
+  size_t i;
+  if (!g_assets_dir[0] || !name || !name[0] || !out || n == 0)
+    return -1;
+  if (strstr(name, ".."))
+    return -1;
+  for (i = 0; i < sizeof(exts) / sizeof(exts[0]); i++) {
+    char path[1152];
+    snprintf(path, sizeof(path), "%.900s/shaders/%.150s%s", g_assets_dir, name,
+             exts[i]);
+    if (stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
+      snprintf(out, n, "%.1000s", path);
+      return 0;
+    }
+  }
+  return -1;
+}
 
 const char *xw_shader_builtin_header(const char *name) {
   if (!name)
@@ -394,20 +458,28 @@ static int emit_source(char **tmp, size_t *len, size_t *cap, const char *text,
     char name[256];
     if (match_include(p, name, sizeof(name))) {
       const char *content = inc ? inc(user, name) : NULL;
-      if (!content)
-        content = xw_shader_builtin_header(name);
+      char *owned = NULL;
+      if (!content) {
+        /* the engine's own assets (when pointed at) win over our copies */
+        owned = assets_header(name);
+        content = owned ? owned : xw_shader_builtin_header(name);
+      }
       if (content && depth < XW_INCLUDE_DEPTH_MAX) {
-        if (append_cstr(tmp, len, cap, "// begin include ") != 0 ||
-            append_cstr(tmp, len, cap, name) != 0 ||
-            append_cstr(tmp, len, cap, "\n") != 0 ||
-            emit_source(tmp, len, cap, content, is_vertex, inc, user,
-                        depth + 1) != 0 ||
-            append_cstr(tmp, len, cap, "// end include\n") != 0)
+        int bad = append_cstr(tmp, len, cap, "// begin include ") != 0 ||
+                  append_cstr(tmp, len, cap, name) != 0 ||
+                  append_cstr(tmp, len, cap, "\n") != 0 ||
+                  emit_source(tmp, len, cap, content, is_vertex, inc, user,
+                              depth + 1) != 0 ||
+                  append_cstr(tmp, len, cap, "// end include\n") != 0;
+        free(owned);
+        if (bad)
           return -1;
-      } else if (append_cstr(tmp, len, cap, "// include not found: ") != 0 ||
-                 append_cstr(tmp, len, cap, name) != 0 ||
-                 append_cstr(tmp, len, cap, "\n") != 0) {
-        return -1;
+      } else {
+        free(owned);
+        if (append_cstr(tmp, len, cap, "// include not found: ") != 0 ||
+            append_cstr(tmp, len, cap, name) != 0 ||
+            append_cstr(tmp, len, cap, "\n") != 0)
+          return -1;
       }
     } else if (line_len >= 8 && strncmp(p, "#version", 8) == 0) {
       /* the generated header owns #version; drop any in the source */

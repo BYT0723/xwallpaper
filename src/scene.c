@@ -20,6 +20,7 @@
 #include "scene_particle.h"
 #include "scene_particle_gl.h"
 #include "scene_pkg.h"
+#include "scene_shader.h"
 #include "scene_script.h"
 #include "scene_sound.h"
 #include "scene_text.h"
@@ -426,6 +427,12 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     return -1;
   }
   c->win = win;
+  /* Wallpaper Engine's own assets (shaders/common.h) when pointed at them */
+  {
+    const char *assets = getenv("XW_ASSETS_DIR");
+    if (assets && assets[0])
+      xw_shader_set_assets_dir(assets);
+  }
   if (resolve_dir(c, opt->path, err) != 0) {
     free(c);
     return -1;
