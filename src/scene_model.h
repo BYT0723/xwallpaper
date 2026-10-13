@@ -116,6 +116,9 @@ typedef struct XWParticleCfg {
   float trail_max;    /* renderer maxlength in pixels (trail length) */
   char animation_mode[24]; /* "sequence" | "" (sprite-sheet animation) */
   float seq_mult;          /* sequencemultiplier: sheet animation speed */
+  float size_exponent;     /* sizerandom exponent (1 = linear) */
+  int has_alpha_fade;      /* alphafade operator present */
+  float fade_in, fade_out; /* alphafade fadeintime / fadeouttime (0..1) */
 } XWParticleCfg;
 
 typedef struct XWTextCfg {

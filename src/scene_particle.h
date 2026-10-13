@@ -13,6 +13,8 @@ typedef struct XWParticle {
   float vx, vy;
   float age, life, size;
   float r, g, b, a;
+  float a0;    /* alpha before the alphafade operator */
+  float frame; /* sprite-sheet frame index (set by the renderer) */
 } XWParticle;
 
 typedef struct XWEmitter {

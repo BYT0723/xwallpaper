@@ -515,11 +515,14 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
       if (!name)
         continue;
       if (strcmp(name, "sizerandom") == 0) {
-        struct json_object *lo = NULL, *hi = NULL;
+        struct json_object *lo = NULL, *hi = NULL, *ex = NULL;
         if (json_object_object_get_ex(it, "min", &lo) && lo)
           o->particle.size_min = (float)json_object_get_double(lo);
         if (json_object_object_get_ex(it, "max", &hi) && hi)
           o->particle.size_max = (float)json_object_get_double(hi);
+        /* the engine shapes the random draw with this exponent */
+        if (json_object_object_get_ex(it, "exponent", &ex) && ex)
+          o->particle.size_exponent = (float)json_object_get_double(ex);
       } else if (strcmp(name, "lifetimerandom") == 0) {
         struct json_object *lo = NULL, *hi = NULL;
         float lmin = 1.0f, lmax = 1.0f;
@@ -560,6 +563,17 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
         continue;
       if (!json_object_object_get_ex(it, "name", &nm) || !nm)
         continue;
+      if (strcmp(json_object_get_string(nm), "alphafade") == 0) {
+        struct json_object *fi = NULL, *fo = NULL;
+        o->particle.has_alpha_fade = 1;
+        o->particle.fade_in = 0.0f;
+        o->particle.fade_out = 1.0f;
+        if (json_object_object_get_ex(it, "fadeintime", &fi) && fi)
+          o->particle.fade_in = (float)json_object_get_double(fi);
+        if (json_object_object_get_ex(it, "fadeouttime", &fo) && fo)
+          o->particle.fade_out = (float)json_object_get_double(fo);
+        continue;
+      }
       if (strcmp(json_object_get_string(nm), "movement") != 0)
         continue;
       if (json_object_object_get_ex(it, "gravity", &g) && g &&

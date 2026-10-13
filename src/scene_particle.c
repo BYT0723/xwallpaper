@@ -73,12 +73,21 @@ static void spawn_one(XWEmitter *e) {
           speed;
   p->age = 0.0f;
   p->life = e->cfg.life;
-  p->size = e->cfg.size_min +
-            next_unit(&e->rng) * (e->cfg.size_max - e->cfg.size_min);
+  /* sizerandom: exponent-shaped draw, halved like the engine does */
+  {
+    float t = next_unit(&e->rng);
+    float exp = e->cfg.size_exponent > 0.0f ? e->cfg.size_exponent : 1.0f;
+    float adj = powf(t, exp);
+    p->size = (e->cfg.size_min +
+               adj * (e->cfg.size_max - e->cfg.size_min)) /
+              2.0f;
+  }
   p->r = e->cfg.color[0];
   p->g = e->cfg.color[1];
   p->b = e->cfg.color[2];
   p->a = e->cfg.color[3];
+  p->a0 = p->a;
+  p->frame = 0.0f;
   e->alive++;
 }
 
@@ -114,6 +123,19 @@ int xw_emitter_update(XWEmitter *e, float dt) {
       p->vy *= df;
     }
     p->age += dt;
+    /* alphafade operator: fade in / out across the lifetime position */
+    if (e->cfg.has_alpha_fade && p->life > 0.0f) {
+      float lf = p->age / p->life;
+      float fi = e->cfg.fade_in;
+      float fo = e->cfg.fade_out;
+      if (lf <= fi && fi > 0.0f) {
+        p->a = p->a0 * (lf / fi);
+      } else if (lf > fo && fo < 1.0f) {
+        p->a = p->a0 * (1.0f - (lf - fo) / (1.0f - fo));
+      } else {
+        p->a = p->a0;
+      }
+    }
     if (p->age > p->life) {
       e->alive--;
       if (i != e->alive)

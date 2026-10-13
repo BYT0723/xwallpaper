@@ -59,7 +59,8 @@ static void test_box_spawn(void) {
     TEST_CHECK(e.parts[i].y >= -270.0f && e.parts[i].y <= -130.0f);
     /* velocityrandom Y is flipped: -1000..-2000 becomes +1000..+2000 */
     TEST_CHECK(e.parts[i].vy >= 1000.0f && e.parts[i].vy <= 2000.0f);
-    TEST_CHECK(e.parts[i].size >= 2.0f && e.parts[i].size <= 4.0f);
+    /* sizerandom halves the draw like the engine does: 2..4 -> 1..2 */
+    TEST_CHECK(e.parts[i].size >= 1.0f && e.parts[i].size <= 2.0f);
   }
   xw_emitter_free(&e);
 }

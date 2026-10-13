@@ -233,3 +233,13 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   动画时钟 = 发射器累计时间 × `sequencemultiplier`。2178468632 的雨点由"整张 sheet 大方块"变为逐帧圆点。
 - **M4 待做**：`fadeSize`/`fadeAlpha` 曲线、每帧独立时长（当前按帧数均分）、`rope`/`ropetrail`、
   控制点、振荡器、湍流、音频驱动发射、子粒子系统。
+- **M4 第三片（2026-10-13）**：按参考补齐粒子生命周期语义——
+  ① 逐帧时长按各帧 `frametime` 累加（不再均分）；
+  ② 帧索引由**粒子 age** 驱动（`fmod(age*sequencemultiplier, sheetDuration)`，参考 `CParticle` 的做法），
+     改为每粒子一个 frame 索引（`XWPoint.frame`/`XWStreak.frame` + 着色器 `uniform vec4 xw_frames[16]`）；
+  ③ `alphafade` 算子（`fadeintime`/`fadeouttime` 在生命周期位置内淡入淡出），并去掉我原先自造的
+     "线性淡出"——参考在没有 alphafade 时 alpha 恒定；
+  ④ `sizerandom` 的 `exponent` 曲线与 `/2` 缩放。
+  2178468632 的雨点由大圆点变为细小白色雨滴，观感正常。
+- **M4 待做**：`rope`/`ropetrail`、`randomframe`/`once` 动画模式、控制点、振荡器、湍流、
+  音频驱动发射、子粒子系统、`fadeAlpha`/`fadeSize`（参考里是 renderer 字段，仅 rope 用）。
