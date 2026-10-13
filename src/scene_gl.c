@@ -1487,7 +1487,9 @@ int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
                               const float *verts, int nverts,
                               const XWSceneConst *consts, int n_consts,
                               const float render_var0[4],
-                              const float render_var1[4]) {
+                              const float render_var1[4],
+                              const float mvp[16]) {
+  (void)mvp;
   (void)render_var0;
   (void)render_var1;
   (void)g;
@@ -1554,6 +1556,15 @@ int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex) {
   (void)g;
   (void)tex;
   return -1;
+}
+
+void xw_gl_particle_perspective(XWGl *g, float fov_deg, float nearz,
+                                float farz, float out[16]) {
+  (void)g;
+  (void)fov_deg;
+  (void)nearz;
+  (void)farz;
+  (void)out;
 }
 
 int xw_gl_program_sampler_default(XWGl *g, unsigned int prog,
@@ -1846,6 +1857,34 @@ int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex) {
   return 0;
 }
 
+/* Particles whose flags have bit 2 set run a dedicated perspective camera:
+ * perspective(fov, aspect, near, far) * lookAt((0,0,1000) -> origin, +Y up),
+ * which is a perspective matrix translated -1000 along Z. */
+void xw_gl_particle_perspective(XWGl *g, float fov_deg, float nearz,
+                                float farz, float out[16]) {
+  float aspect = (g && g->w > 0 && g->h > 0) ? (float)g->w / (float)g->h : 1.0f;
+  float f, nf;
+  int i;
+  if (fov_deg < 1.0f || fov_deg > 179.0f)
+    fov_deg = 50.0f;
+  if (nearz <= 0.0f)
+    nearz = 0.01f;
+  if (farz <= nearz)
+    farz = nearz + 1000.0f;
+  f = 1.0f / tanf(fov_deg * (float)M_PI / 360.0f);
+  nf = 1.0f / (nearz - farz);
+  for (i = 0; i < 16; i++)
+    out[i] = 0.0f;
+  out[0] = f / aspect;
+  out[5] = f;
+  out[10] = (farz + nearz) * nf;
+  out[11] = -1.0f;
+  out[14] = 2.0f * farz * nearz * nf;
+  /* the view translates Z by -1000: fold it into the last column */
+  out[14] += out[10] * -1000.0f;
+  out[15] += out[11] * -1000.0f;
+}
+
 int xw_gl_program_sampler_default(XWGl *g, unsigned int prog,
                                   const char *uniform, char *out, size_t n) {
   int p, i;
@@ -1972,7 +2011,8 @@ int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
                               const float *verts, int nverts,
                               const XWSceneConst *consts, int n_consts,
                               const float render_var0[4],
-                              const float render_var1[4]) {
+                              const float render_var1[4],
+                              const float mvp[16]) {
   char uname[48];
   GLint loc;
   int i;
@@ -2008,12 +2048,13 @@ int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
   if (g->w > 0 && g->h > 0) {
     float ortho[16] = {2.0f / (float)g->w, 0, 0, 0, 0, 2.0f / (float)g->h,
                        0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    const float *m = mvp ? mvp : ortho;
     loc = glGetUniformLocation(prog, "g_ModelViewProjectionMatrix");
     if (loc >= 0)
-      glUniformMatrix4fv(loc, 1, GL_FALSE, ortho);
+      glUniformMatrix4fv(loc, 1, GL_FALSE, m);
     loc = glGetUniformLocation(prog, "g_ViewProjectionMatrix");
     if (loc >= 0)
-      glUniformMatrix4fv(loc, 1, GL_FALSE, ortho);
+      glUniformMatrix4fv(loc, 1, GL_FALSE, m);
   }
   /* common_particles.h environment: the orthographic camera sits at z=1000
    * so the trail's cross(eyeDir, velocity) yields a visible XY direction,

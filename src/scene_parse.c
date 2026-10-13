@@ -470,6 +470,8 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
   o->particle.drag = 0.0f;
   if (json_object_object_get_ex(cfg, "maxcount", &w) && w)
     o->particle.max_count = json_object_get_int(w);
+  if (json_object_object_get_ex(cfg, "flags", &w) && w)
+    o->particle.flags = json_object_get_int(w);
   if (json_object_object_get_ex(cfg, "renderer", &w) && w &&
       json_object_get_type(w) == json_type_array &&
       json_object_array_length(w) >= 1) {
@@ -1081,10 +1083,23 @@ int xw_scene_parse(const char *dir, XWScene *out, XWError *err) {
   struct json_object *gen = NULL;
   /* real workshop files carry projection under "general"; our fixtures
    * use a "camera" object. General wins when both exist. */
+  /* perspective parameters for flags & 4 particles (engine defaults) */
+  out->camera.fov = 50.0f;
+  out->camera.nearz = 0.01f;
+  out->camera.farz = 10000.0f;
   if (json_object_object_get_ex(root, "general", &gen) && gen &&
       json_object_get_type(gen) == json_type_object) {
     struct json_object *v = NULL, *op = NULL;
     float cc[3] = {0.7f, 0.7f, 0.7f};
+    {
+      struct json_object *fv = NULL;
+      if (json_object_object_get_ex(gen, "fov", &fv) && fv)
+        out->camera.fov = (float)json_object_get_double(fv);
+      if (json_object_object_get_ex(gen, "nearz", &fv) && fv)
+        out->camera.nearz = (float)json_object_get_double(fv);
+      if (json_object_object_get_ex(gen, "farz", &fv) && fv)
+        out->camera.farz = (float)json_object_get_double(fv);
+    }
     if (get_vec3(gen, "clearcolor", cc) != 0) {
       json_object_put(root);
       XW_ERROR_SET(err, 1, "general clearcolor must be [r, g, b]");

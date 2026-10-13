@@ -13,4 +13,11 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
                              const char *dir, float dt, float alpha,
                              XWError *err);
 
+/* Same, plus the scene camera so flags & 4 particles can use the engine's
+ * perspective projection (NULL falls back to the orthographic default). */
+int xw_scene_particle_render_cam(XWGl *g, const XWSceneObject *o,
+                                 XWEmitter *e, const char *dir, float dt,
+                                 float alpha, XWError *err,
+                                 const XWSceneCamera *cam);
+
 #endif

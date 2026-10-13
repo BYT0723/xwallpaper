@@ -126,6 +126,7 @@ typedef struct XWParticleCfg {
   XWSceneConst pconsts[XW_SCENE_CONSTS_MAX];
   int n_pconsts;
   XWBlend pblend;
+  int flags;          /* engine particle flags; bit 2 = perspective */
   char renderer[32];  /* "sprite" | "spritetrail" | "rope" ... */
   float trail_max;    /* renderer maxlength in pixels (trail length) */
   /* spritetrail renders through genericparticle's TRAILRENDERER path: the
@@ -194,6 +195,10 @@ typedef struct XWSceneCamera {
   float clearcolor[3];
   int bloom;
   int parallax;
+  /* perspective parameters, used by particles whose flags have bit 2 set */
+  float fov;
+  float nearz;
+  float farz;
 } XWSceneCamera;
 
 typedef struct XWUserProp {

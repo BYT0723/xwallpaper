@@ -178,6 +178,11 @@ static void test_realrain(void) {
     if (rain) {
       TEST_CHECK_EQ_INT(rain->type, XW_OBJ_PARTICLE);
       TEST_CHECK_EQ_INT(rain->visible, 1);
+      /* the engine renders flags & 4 particles with its own perspective */
+      TEST_CHECK_EQ_INT(rain->particle.flags & 4, 4);
+      TEST_CHECK(s.camera.fov > 49.0f && s.camera.fov < 51.0f);
+      TEST_CHECK(s.camera.nearz > 0.0f && s.camera.nearz < 0.02f);
+      TEST_CHECK(s.camera.farz > 9999.0f);
       /* spritetrail renderer params feed the TRAILRENDERER shader path */
       TEST_CHECK_EQ_INT(rain->particle.has_trail, 1);
       TEST_CHECK(rain->particle.trail_length > 4.99f &&

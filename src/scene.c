@@ -390,8 +390,8 @@ static int render_overlays(XWSceneCtx *c, const float *alphas, XWError *rerr) {
     int r;
     if (!o->visible || o->type != XW_OBJ_PARTICLE)
       continue;
-    r = xw_scene_particle_render(c->gl, o, &c->emitters[i], c->dir, dt, a,
-                                 rerr);
+    r = xw_scene_particle_render_cam(c->gl, o, &c->emitters[i], c->dir, dt, a,
+                                     rerr, &c->scene.camera);
     if (r < 0)
       return -1;
   }

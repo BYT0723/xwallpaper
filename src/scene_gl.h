@@ -98,7 +98,13 @@ int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
                               const float *verts, int nverts,
                               const XWSceneConst *consts, int n_consts,
                               const float render_var0[4],
-                              const float render_var1[4]);
+                              const float render_var1[4],
+                              const float mvp[16]);
+
+/* The engine renders particles whose flags have bit 2 set through a
+ * dedicated perspective camera at z=1000; fills `out` (column major). */
+void xw_gl_particle_perspective(XWGl *g, float fov_deg, float nearz,
+                                float farz, float out[16]);
 
 /* Current sprite-sheet frame of a texture at `time`, normalised. Returns
  * {0,0,1,1} for textures without a TEXS animation block. */

@@ -400,3 +400,11 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
      强制把 clamp 从 30 改到 300 **画面无变化** → 拖尾几何没有体现出来（待查：属性绑定/顶点数据/绘制顺序）。
   下一步候选：粒子对象间的绘制顺序与叠加（斑点把拖尾盖掉）、斑点的 alpha/不透明度、以及 WE 的
   `translucent` 是否为预乘（我们现在是 SRC_ALPHA/ONE_MINUS_SRC_ALPHA）。
+- **flags & 4 粒子的透视投影（2026-10-14 已实现）**：引擎对 `flags` 带 bit2 的粒子另用一套相机
+  （`perspective(fov, aspect, near, far) * lookAt((0,0,1000)→原点, up=+Y)`，eye=(0,0,1000)），
+  其余粒子用场景相机的正交投影。现已解析 `general.fov/nearz/farz`（默认 50/0.01/10000）与粒子的 `flags`，
+  并在粒子绘制时按该位选择投影（`xw_gl_particle_perspective()` + 绘制函数的 mvp 覆盖）。实测确认生效：
+  2178468632 的 `Rain_downfall_light/heavy`（flags=7）走透视分支、斑点（flags=0）走正交。
+  **但这一帧观感仍未对齐**：当前可见的雨以正交斑点（圆斑）为主，拖尾粒子只贡献很淡的调制；把 fov 从 50
+  强改到 8 画面几乎不变 → 说明这些粒子本身在图上的存在感极低，与"是否透视"无关，仍需继续定位
+  （候选：斑点后画不透明覆盖、斑点强度、以及拖尾几何未光栅化）。

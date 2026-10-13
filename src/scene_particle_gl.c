@@ -12,6 +12,12 @@
 int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
                              const char *dir, float dt, float alpha,
                              XWError *err) {
+  return xw_scene_particle_render_cam(g, o, e, dir, dt, alpha, err, NULL);
+}
+
+int xw_scene_particle_render_cam(XWGl *g, const XWSceneObject *o, XWEmitter *e,
+                                 const char *dir, float dt, float alpha,
+                                 XWError *err, const XWSceneCamera *cam) {
   char path[1152];
   unsigned int tex = 0, prog = 0;
   XWPoint *pts = NULL;
@@ -196,11 +202,22 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
       }
       if (xw_gl_blend_begin(g, o->particle.pblend) != 0)
         goto out_pq;
-      if (xw_gl_draw_particle_quads(g, pp, texs, XW_GL_WE_SLOTS, verts, nv,
-                                    o->particle.pconsts,
-                                    o->particle.n_pconsts, rv0, rv1) != 0) {
-        xw_gl_blend_end(g);
-        goto out_pq;
+      {
+        float persp[16];
+        const float *mvp = NULL;
+        if ((o->particle.flags & 4) != 0) {
+          xw_gl_particle_perspective(g, cam ? cam->fov : 50.0f,
+                                     cam ? cam->nearz : 0.01f,
+                                     cam ? cam->farz : 10000.0f, persp);
+          mvp = persp;
+        }
+        if (xw_gl_draw_particle_quads(g, pp, texs, XW_GL_WE_SLOTS, verts, nv,
+                                      o->particle.pconsts,
+                                      o->particle.n_pconsts, rv0, rv1,
+                                      mvp) != 0) {
+          xw_gl_blend_end(g);
+          goto out_pq;
+        }
       }
       xw_gl_blend_end(g);
       rc = 0;
