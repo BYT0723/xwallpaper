@@ -108,12 +108,13 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
             /* only a grid atlas (frames smaller than the texture) is a
              * spritesheet: sequences that store one frame per texture are
              * switched by texture id and must keep sampling the whole one */
-            if (fr[2] < (float)tw || fr[3] < (float)th) {
+            if (fr[2] < 1.0f || fr[3] < 1.0f) {
+              /* the cached rect is normalised UV already; g_RenderVar1 wants
+               * the frame size in the same units */
               extra[nextra++] = "SPRITESHEET";
               rv1[2] = (float)nframes;
-              /* the cache stores frame rects in pixels; the shader wants UV */
-              rv1[0] = fr[2] / (float)tw;
-              rv1[1] = fr[3] / (float)th;
+              rv1[0] = fr[2];
+              rv1[1] = fr[3];
             } else {
               nframes = 1;
             }
