@@ -175,3 +175,9 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   target/`bind: previous|_rt_*`（`CPass`/`CFBO` 行为）与粒子系统。
 - **未验证项**：内建头里 `DecompressNormal*`/`ConvertTexture0Format`/`BuildTangentSpace` 等
   函数体官方只公布签名未公布公式，按标准实现，需真机比对。
+- **M1.5（已完成）**：`linked varying` 兼容——WE 自家 shader 对会出现 vert 声明 `varying vec2 X`、
+  frag 声明 `varying vec4 X`（`glitter_prepare` 就是）；预处理时把 vert 声明就地加宽并把裸赋值
+  补成 `vec4(expr, 0.0, 1.0)`。3497575235 的 effect 编译从 9/10 提升到 10/10。
+- **render target 降级（已完成）**：解析 pass 的 `target`（`_rt_*`）；因尚未支持离屏路由，命中
+  target 的 pass 让**整个 effect 降级**（保留上一良好结果），避免把离屏 pass 的输出混进主链
+  （否则 3497575235 会被 glitter_prepare 冲成黑屏）。真离屏支持（CFBO/`bind: previous`）留待 M3。

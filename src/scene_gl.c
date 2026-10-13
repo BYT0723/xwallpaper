@@ -702,7 +702,6 @@ int xw_gl_program_we(XWGl *g, const char *frag_path,
     XW_ERROR_SET(err, 1, "cannot translate shader '%s'", frag_path);
     return -1;
   }
-  free(src);
   /* WE effects ship a sibling vertex file (same basename, .vert) with
    * custom varyings; use it when present, else the builtin quad shader. */
   snprintf(vert_path, sizeof(vert_path), "%.1000s", frag_path);
@@ -712,10 +711,14 @@ int xw_gl_program_we(XWGl *g, const char *frag_path,
     memset(&verr, 0, sizeof(verr));
     memcpy(vert_path + flen - 5, ".vert", 6);
     if (slurp(vert_path, &vsrc, &verr) == 0) {
+      /* the shipped pair may disagree on varying widths; align the vertex
+       * side with the fragment before preprocessing */
+      xw_shader_fix_linked_varyings(src, vsrc, strlen(vsrc) + 4096);
       vcap = strlen(vsrc) + 65536;
       vdst = malloc(vcap);
       if (!vdst) {
         free(vsrc);
+        free(src);
         free(dst);
         return gl_error("out of memory", err);
       }
@@ -723,6 +726,7 @@ int xw_gl_program_we(XWGl *g, const char *frag_path,
                                NULL) != 0) {
         free(vsrc);
         free(vdst);
+        free(src);
         free(dst);
         XW_ERROR_SET(err, 1, "cannot translate shader '%s'", vert_path);
         return -1;
@@ -731,6 +735,7 @@ int xw_gl_program_we(XWGl *g, const char *frag_path,
       vert_use = vdst;
     }
   }
+  free(src);
   /* collect annotated uniform defaults for the draw path */
   g->progs[slot].ndefs = 0;
   xw_shader_collect_defaults(vert_use, g->progs[slot].defs,

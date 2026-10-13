@@ -347,6 +347,119 @@ int xw_shader_translate(const char *src, char *dst, size_t n) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Linked varying compatibility                                        */
+/* ------------------------------------------------------------------ */
+
+static int wordch(char c) {
+  return c == '_' || (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+         (c >= 'a' && c <= 'z');
+}
+
+int xw_shader_fix_linked_varyings(const char *frag, char *vert, size_t n) {
+  char names[16][64];
+  int nnames = 0, i;
+  char *buf = NULL;
+  size_t len = 0, cap = 0;
+  const char *p;
+  if (!frag || !vert || n == 0)
+    return -1;
+
+  /* collect `varying vec4 NAME;` declarations from the fragment unit */
+  p = frag;
+  while ((p = strstr(p, "varying")) != NULL) {
+    const char *q = p + 7;
+    char type[16], name[64];
+    size_t tl = 0, nl = 0;
+    while (*q == ' ' || *q == '\t') q++;
+    while (q[tl] && wordch(q[tl]) && tl < sizeof(type) - 1) tl++;
+    if (tl == 0) {
+      p = q + 1;
+      continue;
+    }
+    memcpy(type, q, tl);
+    type[tl] = '\0';
+    q += tl;
+    while (*q == ' ' || *q == '\t') q++;
+    while (q[nl] && wordch(q[nl]) && nl < sizeof(name) - 1) nl++;
+    if (nl == 0) {
+      p = q + 1;
+      continue;
+    }
+    memcpy(name, q, nl);
+    name[nl] = '\0';
+    if (strcmp(type, "vec4") == 0 && nnames < 16)
+      snprintf(names[nnames++], sizeof(names[0]), "%s", name);
+    p = q + nl;
+  }
+  if (nnames == 0)
+    return 0;
+
+  /* 1) widen the matching `varying vec2 NAME` declarations in place */
+  for (i = 0; i < nnames; i++) {
+    char pat[128];
+    char *hit;
+    snprintf(pat, sizeof(pat), "varying vec2 %.64s", names[i]);
+    hit = strstr(vert, pat);
+    if (hit)
+      memcpy(hit + 8, "vec4", 4); /* "varying " is 8 chars, same length */
+  }
+
+  /* 2) pad bare `NAME = expr;` assignments to vec4 */
+  {
+    const char *s = vert;
+    while (*s) {
+      int matched = -1;
+      size_t nl = 0;
+      for (i = 0; i < nnames; i++) {
+        size_t L = strlen(names[i]);
+        if ((s == vert || !wordch(s[-1])) && strncmp(s, names[i], L) == 0 &&
+            !wordch(s[L])) {
+          matched = i;
+          nl = L;
+          break;
+        }
+      }
+      if (matched >= 0) {
+        const char *after = s + nl;
+        const char *eq = after;
+        while (*eq == ' ' || *eq == '\t') eq++;
+        if (*eq == '=' && eq[1] != '=') {
+          const char *eol = strchr(eq, '\n');
+          const char *semi = strchr(eq, ';');
+          if (semi && (!eol || semi < eol)) {
+            const char *rhs = eq + 1;
+            const char *rend = semi;
+            while (rhs < rend && (*rhs == ' ' || *rhs == '\t')) rhs++;
+            while (rend > rhs && (rend[-1] == ' ' || rend[-1] == '\t')) rend--;
+            if (append(&buf, &len, &cap, names[matched], nl) != 0 ||
+                append_cstr(&buf, &len, &cap, " = vec4(") != 0 ||
+                append(&buf, &len, &cap, rhs, (size_t)(rend - rhs)) != 0 ||
+                append_cstr(&buf, &len, &cap, ", 0.0, 1.0);") != 0) {
+              free(buf);
+              return -1;
+            }
+            s = semi + 1;
+            continue;
+          }
+        }
+      }
+      if (append(&buf, &len, &cap, s, 1) != 0) {
+        free(buf);
+        return -1;
+      }
+      s++;
+    }
+  }
+  if (len + 1 > n) {
+    free(buf);
+    return -1;
+  }
+  memcpy(vert, buf, len + 1);
+  free(buf);
+  return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Annotated uniform defaults                                          */
 /* ------------------------------------------------------------------ */
 

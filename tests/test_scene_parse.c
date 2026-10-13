@@ -246,6 +246,25 @@ static void test_bad_inputs(void) {
   TEST_CHECK_EQ_INT(xw_scene_parse("tests/data", &s, &err), -1);
 }
 
+static void test_effect_target(void) {
+  TEST_BEGIN("offscreen render target name is captured from effect.json");
+  XWScene s;
+  memset(&s, 0, sizeof(s));
+  XWError err = {0};
+  int rc = xw_scene_parse("tests/data/scene/effecttarget", &s, &err);
+  TEST_CHECK_EQ_INT(rc, 0);
+  if (rc != 0)
+    return;
+  TEST_CHECK_EQ_INT(s.n_objects, 1);
+  TEST_CHECK(s.objects[0].n_effects >= 1);
+  if (s.objects[0].n_effects >= 1 && s.objects[0].effects[0].n_passes >= 1) {
+    const XWScenePass *p = &s.objects[0].effects[0].passes[0];
+    TEST_CHECK_EQ_STR(p->target, "_rt_Offscreen");
+    TEST_CHECK_EQ_STR(p->shader, "genericimage2");
+  }
+  xw_scene_free(&s);
+}
+
 static void test_visible_dict(void) {
   TEST_BEGIN("visible {user, value} dicts resolve via value");
   XWScene s;
@@ -270,6 +289,7 @@ int main(void) {
   test_full_props_script();
   test_gl_texture();
   test_realrain();
+  test_effect_target();
   test_visible_dict();
   TEST_SUMMARY();
 }

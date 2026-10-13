@@ -41,6 +41,9 @@ typedef struct XWScenePass {
   int n_consts;
   char textures[XW_SCENE_PASS_TEX_MAX][XW_SCENE_PATH_MAX];
   int n_textures;
+  /* render-target name when the pass writes offscreen ("_rt_..."); we do
+   * not route those yet, the renderer degrades the effect instead. */
+  char target[XW_SCENE_PATH_MAX];
 } XWScenePass;
 
 typedef struct XWSceneEffect {

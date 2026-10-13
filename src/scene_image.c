@@ -115,6 +115,12 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
       XWWeSlot slots[XW_GL_WE_SLOTS];
       float input_res[4];
       int ww = 0, hh = 0, t;
+      /* offscreen render-target passes are not routed yet; running one in
+       * the main chain would overwrite the image, so degrade the effect */
+      if (pass->target[0]) {
+        broken = 1;
+        break;
+      }
       /* builtin shader names (genericimage*) need no file */
       if (!sh[0] || strchr(sh, '/') == NULL) {
         /* empty slot: passthrough to the next pass */

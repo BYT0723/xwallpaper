@@ -249,8 +249,14 @@ static void resolve_effect_shaders(const char *dir, const char *eff_file,
     struct json_object *pj = json_object_array_get_idx(
         passes, i < n ? i : n - 1);
     struct json_object *mat = NULL, *mj = NULL, *mp = NULL, *sh = NULL;
+    struct json_object *tg = NULL;
     if (!pj || json_object_get_type(pj) != json_type_object)
       continue;
+    /* offscreen render target for this pass, if the effect uses one */
+    if (json_object_object_get_ex(pj, "target", &tg) && tg &&
+        json_object_get_type(tg) == json_type_string)
+      copy_str(e->passes[i].target, sizeof(e->passes[i].target),
+               json_object_get_string(tg));
     if (e->passes[i].shader[0])
       continue;
     if (!json_object_object_get_ex(pj, "material", &mat) || !mat ||

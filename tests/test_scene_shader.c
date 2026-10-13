@@ -143,6 +143,39 @@ static void test_version_line_dropped(void) {
   TEST_CHECK(strstr(dst, "#version 330") != NULL);
 }
 
+static void test_linked_varyings(void) {
+  TEST_BEGIN("vertex varying widens to vec4 when the fragment wants vec4");
+  const char *frag =
+      "varying vec4 v_TexCoord;\n"
+      "void main() {}\n";
+  char vert[512];
+  snprintf(vert, sizeof(vert),
+           "attribute vec2 a_TexCoord;\n"
+           "varying vec2 v_TexCoord;\n"
+           "void main() { v_TexCoord = a_TexCoord; }\n");
+  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag, vert, sizeof(vert)), 0);
+  TEST_CHECK(strstr(vert, "varying vec4 v_TexCoord;") != NULL);
+  TEST_CHECK(strstr(vert, "varying vec2 v_TexCoord;") == NULL);
+  /* a bare assignment gets padded to vec4 so the type stays valid */
+  TEST_CHECK(strstr(vert, "v_TexCoord = vec4(a_TexCoord, 0.0, 1.0);") != NULL);
+
+  /* swizzle assignments are already valid on a vec4 and stay untouched */
+  char vert2[512];
+  snprintf(vert2, sizeof(vert2),
+           "varying vec2 v_TexCoord;\n"
+           "void main() { v_TexCoord.xy = a_TexCoord.xy; }\n");
+  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag, vert2, sizeof(vert2)), 0);
+  TEST_CHECK(strstr(vert2, "varying vec4 v_TexCoord;") != NULL);
+  TEST_CHECK(strstr(vert2, "v_TexCoord.xy = a_TexCoord.xy;") != NULL);
+
+  /* matching types are left alone */
+  const char *frag2 = "varying vec2 v_TexCoord;\nvoid main() {}\n";
+  char vert3[512];
+  snprintf(vert3, sizeof(vert3), "varying vec2 v_TexCoord;\nvoid main() {}\n");
+  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag2, vert3, sizeof(vert3)), 0);
+  TEST_CHECK(strstr(vert3, "varying vec2 v_TexCoord;") != NULL);
+}
+
 static void test_bad_inputs(void) {
   TEST_BEGIN("NULL/small-dst rejected");
   char dst[8];
@@ -222,6 +255,7 @@ int main(void) {
   test_resolver_precedence();
   test_combos();
   test_version_line_dropped();
+  test_linked_varyings();
   test_bad_inputs();
   test_builtin_lookup();
   test_sample_translates();
