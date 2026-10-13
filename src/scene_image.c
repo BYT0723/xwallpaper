@@ -198,6 +198,18 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
           fill_slot(gl, dir, pass->textures[t], &slots[t]);
         else
           memset(&slots[t], 0, sizeof(slots[t]));
+        /* the engine also loads a sampler's annotated `default` texture
+         * (util/perlin_256, util/white, gradients) when the material does
+         * not provide one; named render targets come from pass binds */
+        if (!slots[t].tex) {
+          char uname[32], dref[64];
+          snprintf(uname, sizeof(uname), "g_Texture%d", t);
+          if (xw_gl_program_sampler_default(gl, ep, uname, dref,
+                                            sizeof(dref)) == 0 &&
+              dref[0] && strncmp(dref, "_rt_", 4) != 0 &&
+              strncmp(dref, "_alias_", 7) != 0)
+            fill_slot(gl, dir, dref, &slots[t]);
+        }
       }
       /* destination: a named offscreen target, else the ping-pong chain */
       if (pass->target[0]) {

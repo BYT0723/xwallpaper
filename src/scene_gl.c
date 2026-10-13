@@ -1543,6 +1543,16 @@ int xw_gl_target_size(XWGl *g, int *w, int *h) {
   return -1;
 }
 
+int xw_gl_program_sampler_default(XWGl *g, unsigned int prog,
+                                  const char *uniform, char *out, size_t n) {
+  (void)g;
+  (void)prog;
+  (void)uniform;
+  (void)out;
+  (void)n;
+  return -1;
+}
+
 int xw_gl_util_texture(XWGl *g, const char *name, unsigned int *tex,
                        float res[4]) {
   (void)g;
@@ -1790,6 +1800,25 @@ static void bind_prog_defaults(XWGl *g, GLuint prog,
     }
     return;
   }
+}
+
+int xw_gl_program_sampler_default(XWGl *g, unsigned int prog,
+                                  const char *uniform, char *out, size_t n) {
+  int p, i;
+  if (!g || !prog || !uniform || !out || n == 0)
+    return -1;
+  for (p = 0; p < g->nprogs; p++) {
+    if (g->progs[p].prog != prog)
+      continue;
+    for (i = 0; i < g->progs[p].ndefs; i++) {
+      const XWShaderDef *d = &g->progs[p].defs[i];
+      if (d->kind == 0 && d->tex[0] && strcmp(d->name, uniform) == 0) {
+        snprintf(out, n, "%s", d->tex);
+        return 0;
+      }
+    }
+  }
+  return -1;
 }
 
 int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
@@ -2047,6 +2076,25 @@ int xw_gl_util_texture(XWGl *g, const char *name, unsigned int *tex,
   else
     return -1;
   if (!g->utils[idx]) {
+    /* The engine ships its own util textures and effects depend on what
+     * they actually contain: perlin_256 is *smooth* noise, and glitter /
+     * energy passes run a smoothstep over it. A white-noise stand-in turns
+     * those into texel-frequency blobs, so prefer the real file when the
+     * assets directory is configured (the downloads are cached by path). */
+    const char *assets = xw_shader_assets_dir();
+    if (assets && assets[0] && strncmp(name, "util/", 5) == 0 && name[5] &&
+        !strchr(name + 5, '/') && !strstr(name, "..")) {
+      char upath[1200];
+      XWError uerr;
+      unsigned int ut = 0;
+      memset(&uerr, 0, sizeof(uerr));
+      snprintf(upath, sizeof(upath), "%.900s/materials/util/%.180s.tex",
+               assets, name + 5);
+      if (xw_gl_upload(g, upath, &ut, &uerr) == 0 && ut)
+        g->utils[idx] = ut;
+    }
+  }
+  if (!g->utils[idx]) {
     if (idx == 3) {
       unsigned char *px;
       int x, y;
@@ -2086,11 +2134,17 @@ int xw_gl_util_texture(XWGl *g, const char *name, unsigned int *tex,
   }
   *tex = g->utils[idx];
   if (res) {
-    if (idx == 3) {
-      res[0] = 256;
-      res[1] = 256;
-      res[2] = 256;
-      res[3] = 256;
+    int tw = 0, th = 0, rw = 0, rh = 0;
+    /* a texture taken from the assets knows its real size */
+    if (g->utils[idx] &&
+        xw_gl_texture_size(g, g->utils[idx], &tw, &th, &rw, &rh) == 0 &&
+        tw > 0 && th > 0) {
+      res[0] = (float)tw;
+      res[1] = (float)th;
+      res[2] = (float)(rw > 0 ? rw : tw);
+      res[3] = (float)(rh > 0 ? rh : th);
+    } else if (idx == 3) {
+      res[0] = res[1] = res[2] = res[3] = 256;
     } else {
       res[0] = res[1] = res[2] = res[3] = 1;
     }

@@ -1057,8 +1057,10 @@ int xw_shader_collect_defaults(const char *src, XWShaderDef *defs, int *ndefs,
       kind = 3;
     else if (strcmp(type, "vec4") == 0 || strcmp(type, "mat4") == 0)
       kind = 4;
+    else if (strcmp(type, "sampler2D") == 0)
+      kind = 0; /* sampler: `default` names a texture, not a number */
     else
-      goto next; /* sampler/int/array: no scalar default to apply */
+      goto next; /* int/array: no default to apply */
     q = skip_spaces(q + tl, end);
     nl = 0;
     while (q + nl < end && nl < sizeof(name) - 1 &&
@@ -1087,6 +1089,30 @@ int xw_shader_collect_defaults(const char *src, XWShaderDef *defs, int *ndefs,
     dk = strstr(cmt, "\"default\"");
     if (!dk || dk >= end)
       goto next;
+    if (kind == 0) {
+      /* samplers default to a texture the engine loads itself (util/white,
+       * util/perlin_256, gradient/..., _rt_* render targets) */
+      const char *colon = strchr(dk, ':');
+      const char *a, *b;
+      char tref[64];
+      if (!colon || colon >= end || (a = strchr(colon, '"')) == NULL ||
+          a >= end || (b = strchr(a + 1, '"')) == NULL || b >= end ||
+          (size_t)(b - a - 1) >= sizeof(tref))
+        goto next;
+      memcpy(tref, a + 1, (size_t)(b - a - 1));
+      tref[b - a - 1] = '\0';
+      for (int i = 0; i < n; i++) {
+        if (strcmp(defs[i].name, name) == 0)
+          goto next;
+      }
+      snprintf(defs[n].name, sizeof(defs[n].name), "%s", name);
+      snprintf(defs[n].material, sizeof(defs[n].material), "%s", material);
+      snprintf(defs[n].tex, sizeof(defs[n].tex), "%s", tref);
+      defs[n].kind = 0;
+      memset(defs[n].v, 0, sizeof(defs[n].v));
+      n++;
+      goto next;
+    }
     {
       const char *colon = strchr(dk, ':');
       const char *ds;

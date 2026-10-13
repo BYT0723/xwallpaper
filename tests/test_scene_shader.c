@@ -501,6 +501,32 @@ static void test_detect_assets_vdf(void) {
   TEST_CHECK(strcmp(buf, p) == 0);
 }
 
+static void test_sampler_defaults(void) {
+  const char *src =
+      "uniform sampler2D g_Texture1; // {\"label\":\"noise\",\"default\":"
+      "\"util/perlin_256\"}\n"
+      "uniform sampler2D g_Texture2; // {\"material\":\"framebuffer\","
+      "\"hidden\":true}\n"
+      "uniform float g_Speed; // {\"default\":1}\n";
+  XWShaderDef defs[XW_SHADER_DEFS_MAX];
+  int n = 0, i;
+  const XWShaderDef *tex = NULL;
+  TEST_BEGIN("annotated sampler defaults carry their texture ref");
+  TEST_CHECK_EQ_INT(xw_shader_collect_defaults(src, defs, &n, XW_SHADER_DEFS_MAX),
+                    0);
+  for (i = 0; i < n; i++)
+    if (strcmp(defs[i].name, "g_Texture1") == 0)
+      tex = &defs[i];
+  TEST_CHECK(tex != NULL);
+  if (tex) {
+    TEST_CHECK_EQ_INT(tex->kind, 0);
+    TEST_CHECK_EQ_STR(tex->tex, "util/perlin_256");
+  }
+  /* a sampler without a default stays out of the list */
+  for (i = 0; i < n; i++)
+    TEST_CHECK(strcmp(defs[i].name, "g_Texture2") != 0);
+}
+
 int main(void) {
   TEST_SUITE("scene_shader");
   test_header_shape();
@@ -520,5 +546,6 @@ int main(void) {
   test_builtin_lookup();
   test_sample_translates();
   test_collect_defaults();
+  test_sampler_defaults();
   TEST_SUMMARY();
 }

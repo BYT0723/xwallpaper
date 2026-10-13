@@ -80,8 +80,9 @@ int xw_shader_assets_shader(const char *name, char *out, size_t n);
 typedef struct XWShaderDef {
   char name[64];
   char material[64];
-  int kind;
+  int kind; /* 0 = sampler with a texture default, else component count 1-4 */
   float v[4];
+  char tex[64]; /* kind == 0: the annotated `default` texture ref */
 } XWShaderDef;
 
 /* Scan shader source for annotated uniforms; appends up to cap entries.

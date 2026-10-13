@@ -321,3 +321,15 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   phase 与时间平移），`scale < 2` 限制偏离 `forward` 的夹角、`offset` 绕 `right` 倾斜、2D 粒子丢弃 z 漂移；
   forward/right 做 Y 翻转贴合屏幕坐标。**噪声场为引擎内部实现、未公开**，此处用标准 Perlin 改进噪声 +
   中心差分 curl，置换表由固定种子生成（未复制任何参考表）。
+- **采样器注释默认纹理（2026-10-13）**：效果 shader 的采样器常带 `// {"default":"util/perlin_256"}` 之类
+  注释（引擎全量统计：38 个采样器有字符串默认，其中 **0 个**同时带 `"combo"`），材质没给纹理时就该用这个默认。
+  我们此前完全不读它 → 该采样器未绑定 → 采样到纹理单元上的残留。glitter_prepare 即此例：它把 smoothstep
+  跑在白噪声上而不是引擎的平滑 Perlin 噪声。现在 `xw_shader_collect_defaults` 收集采样器默认（kind 0 + 纹理 ref），
+  编译后的 program 暴露之，effect 绘制时用程序默认填补材质留空的槽（`_rt_*`/`_alias_*` 交给 pass bind 处理）。
+  另：`util/<name>` 优先加载引擎自带文件 `<assets>/materials/util/<name>.tex`（perlin_256 为平滑噪声），
+  无 assets 时回退到合成纹理。
+- **3497575235 眼镜"灰块"结论（2026-10-13）**：用户报告眼镜特效疑似异常。经比对——从 pkg 解出角色原图
+  （TEXV 内嵌 PNG，3924×2208）缩放到 1920×1080 后与我们的渲染逐像素对照，透镜上的灰色圆角块**原画里就有**
+  （画师的镜面高光/反光），不是渲染缺陷；`блеск очки`（glasses shine，即 glitter 效果）能编译、能动画
+  （`_rt_GlitterTiles` 在 t≈0 与 t≈30 差异 29%），把它的 alpha 归零后画面仅差 1.7%（细微光泽），属正常。
+  真正修掉的是上面那条"采样器默认纹理未绑定"。

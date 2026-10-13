@@ -159,6 +159,12 @@ int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
 int xw_gl_target_size(XWGl *g, int *w, int *h);
 
 /* WE builtin util/ textures (black/white/noflow/perlin_256), cached. */
+/* Annotated texture `default` for a sampler uniform of a compiled WE
+ * program ("util/perlin_256", "gradient/...", "_rt_*"). Returns 0 and fills
+ * `out` when the shader declares one. */
+int xw_gl_program_sampler_default(XWGl *g, unsigned int prog,
+                                  const char *uniform, char *out, size_t n);
+
 int xw_gl_util_texture(XWGl *g, const char *name, unsigned int *tex,
                        float res[4]);
 
