@@ -238,7 +238,18 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
             memcpy(slots[t].res, dr, sizeof(dr));
           }
         }
+        /* a pass that declares an engine-managed render target we do not
+         * produce (_rt_imageLayerComposite_* and friends, used to compose
+         * cloud/effect layers) would sample whatever is left bound. Keep
+         * the base image instead of painting that garbage. */
+        if (!slots[t].tex && t < pass->n_textures &&
+            strncmp(pass->textures[t], "_rt_", 4) == 0) {
+          memset(err, 0, sizeof(*err));
+          broken = 1;
+        }
       }
+      if (broken)
+        break;
       /* destination: a named offscreen target, else the ping-pong chain */
       if (pass->target[0]) {
         const XWSceneFbo *f = find_fbo(fx, pass->target);
