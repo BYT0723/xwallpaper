@@ -25,6 +25,7 @@ typedef struct XWTexImage {
   XWTexFmt fmt;
   unsigned int w, h;
   unsigned int tex_w, tex_h;
+  unsigned int flags; /* WE TextureFlags: ClampUVs=2, NoInterpolation=1 */
   unsigned char *px;
   size_t len;
 } XWTexImage;

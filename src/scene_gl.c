@@ -14,7 +14,7 @@
 #include "scene_tex.h"
 
 #define XW_GL_PROG_MAX 16
-#define XW_GL_TEXCACHE_MAX 8
+#define XW_GL_TEXCACHE_MAX 24
 #define XW_GL_DEFS_MAX 24
 
 #ifdef XW_HAVE_GL
@@ -43,9 +43,11 @@ struct XWGl {
     char path[1024];
     GLuint tex;
     int tw, th, rw, rh;
+    unsigned int flags; /* WE TextureFlags of the uploaded texture */
   } texcache[XW_GL_TEXCACHE_MAX];
   int ntex;
   GLuint utils[4];
+  int flip; /* 1 while rendering into an FBO (see bind_target) */
 };
 
 static const char *vert_src =
@@ -55,11 +57,12 @@ static const char *vert_src =
     "out vec2 v_TexCoord;\n"
     "out vec2 vUv;\n"
     "out vec2 v_uv;\n"
+    "uniform float xw_flip;\n"
     "void main() {\n"
     "  v_TexCoord = uv;\n"
     "  vUv = uv;\n"
     "  v_uv = uv;\n"
-    "  gl_Position = vec4(pos, 0.0, 1.0);\n"
+    "  gl_Position = vec4(pos.x, pos.y * xw_flip, 0.0, 1.0);\n"
     "}\n";
 
 static const char *copy_frag_src =
@@ -85,10 +88,11 @@ static const char *points_vert_src =
     "layout(location=0) in vec2 pos;\n"
     "layout(location=1) in vec2 ps;\n"
     "out float v_alpha;\n"
+    "uniform float xw_flip;\n"
     "void main() {\n"
     "  v_alpha = ps.y;\n"
     "  gl_PointSize = ps.x;\n"
-    "  gl_Position = vec4(pos, 0.0, 1.0);\n"
+    "  gl_Position = vec4(pos.x, pos.y * xw_flip, 0.0, 1.0);\n"
     "}\n";
 
 static const char *points_frag_src =
@@ -267,7 +271,7 @@ void xw_gl_destroy(XWGl *g) {
 
 
 static int cache_store(XWGl *g, const char *path, GLuint t, int tw, int th,
-                     int rw, int rh, XWError *err) {
+                     int rw, int rh, unsigned int flags, XWError *err) {
   if (g->ntex >= XW_GL_TEXCACHE_MAX) {
     if (t)
       glDeleteTextures(1, &t);
@@ -281,6 +285,7 @@ static int cache_store(XWGl *g, const char *path, GLuint t, int tw, int th,
   g->texcache[g->ntex].th = th;
   g->texcache[g->ntex].rw = rw;
   g->texcache[g->ntex].rh = rh;
+  g->texcache[g->ntex].flags = flags;
   g->ntex++;
   return 0;
 }
@@ -292,6 +297,7 @@ static int cache_fail(XWGl *g, const char *path, XWError *err, const char *msg) 
     g->texcache[g->ntex].tex = 0;
     g->texcache[g->ntex].tw = g->texcache[g->ntex].th = 0;
     g->texcache[g->ntex].rw = g->texcache[g->ntex].rh = 0;
+    g->texcache[g->ntex].flags = 0;
     g->ntex++;
   }
   XW_ERROR_SET(err, 1, "%s '%s'", msg, path);
@@ -348,7 +354,7 @@ static int upload_imlib_current(XWGl *g, const char *path, GLuint *t,
 
 static int upload_texv(XWGl *g, const unsigned char *file, size_t flen,
                        GLuint *t, int *twp, int *thp, int *rwp, int *rhp,
-                       XWError *err) {
+                       unsigned int *flagsp, XWError *err) {
   XWTexImage img;
   int rc = -1;
   memset(&img, 0, sizeof(img));
@@ -445,6 +451,15 @@ static int upload_texv(XWGl *g, const unsigned char *file, size_t flen,
       *rwp = (int)img.w;
     if (rhp)
       *rhp = (int)img.h;
+    if (flagsp)
+      *flagsp = img.flags;
+    /* WE TextureFlags: ClampUVs (2) keeps offset effects from wrapping */
+    if (*t) {
+      GLint wrap = (img.flags & 2u) ? GL_CLAMP_TO_EDGE : GL_REPEAT;
+      glBindTexture(GL_TEXTURE_2D, *t);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+    }
   }
   xw_tex_image_free(&img);
   return rc;
@@ -501,13 +516,14 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
     return cache_fail(g, path, err, "cannot read texture");
   if (flen >= 4 && memcmp(file, "TEXV", 4) == 0) {
     int tw = 0, th = 0, rw = 0, rh = 0;
-    rc = upload_texv(g, file, flen, &t, &tw, &th, &rw, &rh, err);
+    unsigned int flags = 0;
+    rc = upload_texv(g, file, flen, &t, &tw, &th, &rw, &rh, &flags, err);
     free(file);
     if (rc != 0) {
       cache_fail(g, path, err, "cannot decode texture");
       return -1;
     }
-    if (cache_store(g, path, t, tw, th, rw, rh, err) != 0)
+    if (cache_store(g, path, t, tw, th, rw, rh, flags, err) != 0)
       return -1;
     *tex = t;
     return 0;
@@ -534,7 +550,7 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
       cache_fail(g, path, err, "cannot decode texture");
       return -1;
     }
-    if (cache_store(g, path, t, iw, ih, iw, ih, err) != 0)
+    if (cache_store(g, path, t, iw, ih, iw, ih, 2u, err) != 0)
       return -1;
   }
   *tex = t;
@@ -775,9 +791,14 @@ int xw_gl_bind_target(XWGl *g, int fbo) {
   if (fbo < 0) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, g->w, g->h);
+    g->flip = 0;
   } else if (fbo < 2) {
     glBindFramebuffer(GL_FRAMEBUFFER, g->fbos[fbo]);
     glViewport(0, 0, g->w, g->h);
+    /* FBO textures are sampled with v=0 at the top (WE convention) but the
+     * GL framebuffer origin is bottom-left: flip Y on the way in so any
+     * number of FBO round trips keeps the image upright. */
+    g->flip = 1;
   } else {
     return -1;
   }
@@ -844,6 +865,9 @@ static int draw_full(XWGl *g, unsigned int prog, unsigned int tex, float time,
     if (aloc >= 0)
       glUniform1f(aloc, alpha);
   }
+  aloc = glGetUniformLocation(prog, "xw_flip");
+  if (aloc >= 0)
+    glUniform1f(aloc, g->flip ? -1.0f : 1.0f);
   glBindVertexArray(g->quad_vao);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glBindVertexArray(0);
@@ -884,6 +908,9 @@ int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
     glBindTexture(GL_TEXTURE_2D, tex);
     glUniform1i(sloc, 0);
   }
+  sloc = glGetUniformLocation(prog, "xw_flip");
+  if (sloc >= 0)
+    glUniform1f(sloc, g->flip ? -1.0f : 1.0f);
   glBindVertexArray(g->points_vao);
   glBindBuffer(GL_ARRAY_BUFFER, g->points_vbo);
   glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)n * sizeof(XWPoint)), ndc,
@@ -986,6 +1013,9 @@ static int draw_rect_full(XWGl *g, unsigned int prog, unsigned int tex,
     if (aloc >= 0)
       glUniform1f(aloc, alpha);
   }
+  aloc = glGetUniformLocation(prog, "xw_flip");
+  if (aloc >= 0)
+    glUniform1f(aloc, g->flip ? -1.0f : 1.0f);
   glBindVertexArray(g->rect_vao);
   glBindBuffer(GL_ARRAY_BUFFER, g->rect_vbo);
   glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_DYNAMIC_DRAW);
@@ -1274,12 +1304,14 @@ static void bind_mvp(XWGl *g, GLuint prog) {
   };
   static const float ident[16] = {1, 0, 0, 0, 0, 1, 0, 0,
                                   0, 0, 1, 0, 0, 0, 0, 1};
+  static const float yflip[16] = {1, 0, 0, 0, 0, -1, 0, 0,
+                                  0, 0, 1, 0, 0, 0, 0, 1};
+  const float *m = (g && g->flip) ? yflip : ident;
   int i;
-  (void)g;
   for (i = 0; names[i]; i++) {
     GLint loc = glGetUniformLocation(prog, names[i]);
     if (loc >= 0)
-      glUniformMatrix4fv(loc, 1, GL_FALSE, ident);
+      glUniformMatrix4fv(loc, 1, GL_FALSE, m);
   }
 }
 
@@ -1354,11 +1386,19 @@ int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
     snprintf(uname, sizeof(uname), "g_Texture%d", i);
     loc = glGetUniformLocation(prog, uname);
     if (loc >= 0 && t) {
+      /* cached textures carry their WE flags (ClampUVs -> clamp, else
+       * repeat); FBO inputs clamp, which is how we create them */
+      GLint wrap = GL_CLAMP_TO_EDGE;
+      int ci;
+      for (ci = 0; ci < g->ntex; ci++)
+        if (g->texcache[ci].tex == t) {
+          wrap = (g->texcache[ci].flags & 2u) ? GL_CLAMP_TO_EDGE : GL_REPEAT;
+          break;
+        }
       glActiveTexture((GLenum)(GL_TEXTURE0 + i));
       glBindTexture(GL_TEXTURE_2D, t);
-      /* effect inputs repeat at the edges (reference default) */
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
       glUniform1i(loc, i);
     }
     snprintf(uname, sizeof(uname), "g_Texture%dResolution", i);
@@ -1368,6 +1408,9 @@ int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
   }
   glActiveTexture(GL_TEXTURE0);
   bind_mvp(g, prog);
+  loc = glGetUniformLocation(prog, "xw_flip");
+  if (loc >= 0)
+    glUniform1f(loc, g->flip ? -1.0f : 1.0f);
   loc = glGetUniformLocation(prog, "g_Time");
   if (loc >= 0)
     glUniform1f(loc, time);

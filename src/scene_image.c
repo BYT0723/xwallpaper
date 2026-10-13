@@ -37,10 +37,12 @@ static int resolve_shader(const char *dir, const char *ref, char *out,
 }
 
 /* Resolve + upload one pass texture ref into a WE slot. Empty refs and
- * failures leave tex=0 (draw falls back to the pass input). */
+ * failures leave tex=0 (draw falls back to the pass input). Pass texture
+ * refs are relative to the scene's materials/ directory. */
 static void fill_slot(XWGl *gl, const char *dir, const char *ref,
                       XWWeSlot *slot) {
   char path[1152];
+  char matdir[1152];
   XWError err;
   unsigned int t = 0;
   int tw = 0, th = 0, rw = 0, rh = 0;
@@ -58,7 +60,11 @@ static void fill_slot(XWGl *gl, const char *dir, const char *ref,
   }
   if (strstr(ref, "..") != NULL)
     return;
-  if (xw_tex_resolve(dir, NULL, ref, path, sizeof(path)) != 0)
+  snprintf(matdir, sizeof(matdir), "%.512s/materials", dir);
+  /* real packages resolve pass refs against materials/; synthetic scenes
+   * keep them beside the scene file, so fall back to the scene root */
+  if (xw_tex_resolve(matdir, NULL, ref, path, sizeof(path)) != 0 &&
+      xw_tex_resolve(dir, NULL, ref, path, sizeof(path)) != 0)
     return;
   if (xw_gl_upload(gl, path, &t, &err) != 0 || !t)
     return;
@@ -108,6 +114,8 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
     return -1;
   for (e = 0; e < o->n_effects; e++) {
     int broken = 0;
+    if (!o->effects[e].visible)
+      continue;
     for (i = 0; i < o->effects[e].n_passes; i++) {
       unsigned int ep = 0;
       XWScenePass *pass = &o->effects[e].passes[i];

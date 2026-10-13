@@ -181,3 +181,16 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
 - **render target 降级（已完成）**：解析 pass 的 `target`（`_rt_*`）；因尚未支持离屏路由，命中
   target 的 pass 让**整个 effect 降级**（保留上一良好结果），避免把离屏 pass 的输出混进主链
   （否则 3497575235 会被 glitter_prepare 冲成黑屏）。真离屏支持（CFBO/`bind: previous`）留待 M3。
+- **渲染三连修（2026-10-13，3497575235 实机）**：用户反馈"诡异动画/左右大幅重叠"。抓到三个真 bug：
+  1. **FBO 往返翻转**：quad 的 uv 约定是 v=0 在顶，而 GL 的 FBO 原点在左下，导致每过一次 FBO 就翻一次，
+     朝向取决于 pass 奇偶。改为渲染进 FBO 时对 Y 取反（`g_ModelViewProjectionMatrix` 用 flip 矩阵，
+     内建 vert 用 `xw_flip` uniform），FBO 纹理与源纹理朝向一致，任意 pass 数都正立。
+  2. **pass 纹理路径基错**：scene 文档里的 pass 纹理引用（`masks/xxx`）相对 **`materials/`**，我按场景根
+     解析 → 全部遮罩加载失败 → `g_Texture1` 回退成输入图 → 全图被 mask 扭曲成拖影。改为 materials 优先、
+     场景根回退（合成 fixture 用场景相对路径）。粒子 sprite 同理。
+  3. **wrap 标志被忽略**：对 effect 采样强制 `GL_REPEAT`，而主纹理带 `ClampUVs`(flags=2) → 位移效果把画面
+     环回出边缘窄条。改为按纹理 flags 决定 clamp/repeat。
+  另外：支持 per-effect `visible`（349 的 effect 6 是 false）；补 `texture2D`→`texture` 方言宏（老 shader）；
+  纹理缓存上限 8→24（349 需 1 底图 + 9 遮罩）。
+- **雨声残留（非代码 bug）**：用户 state 里 `screen` 输出仍挂着 2178468632（雨声壁纸），且其 1920x1080 与
+  DP-1 的 2560x1440+1080 在 x∈[1080,1920] 重叠——"重叠+雨声"来自另一个输出的残留壁纸。清除：`xwallpaper clear -m screen`。

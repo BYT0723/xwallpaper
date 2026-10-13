@@ -24,8 +24,16 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
     return 0;
   if (!o->particle.sprite[0])
     return 1;
-  if (xw_tex_resolve(dir, NULL, o->particle.sprite, path, sizeof(path)) != 0)
-    return 1;
+  /* sprite refs are relative to the scene's materials/ directory in real
+   * packages; synthetic scenes may store them next to the scene file */
+  {
+    char matdir[1152];
+    snprintf(matdir, sizeof(matdir), "%.512s/materials", dir);
+    if (xw_tex_resolve(matdir, NULL, o->particle.sprite, path,
+                       sizeof(path)) != 0 &&
+        xw_tex_resolve(dir, NULL, o->particle.sprite, path, sizeof(path)) != 0)
+      return 1;
+  }
   if (xw_gl_upload(g, path, &tex, err) != 0) {
     memset(err, 0, sizeof(*err));
     return 1;

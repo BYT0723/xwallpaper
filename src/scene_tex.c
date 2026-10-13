@@ -142,7 +142,7 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
     if (cur_u32(&c, &ign, err, "reserved") != 0)
       return -1;
   }
-  (void)flags;
+  img->flags = flags;
   (void)texw;
   (void)texh;
   if (cur_bytes(&c, container, 9, err, "container") != 0)

@@ -195,13 +195,15 @@ static void test_builtin_lookup(void) {
 }
 
 static void test_sample_translates(void) {
-  TEST_BEGIN("sample shader translates without banned words");
+  TEST_BEGIN("sample shader translates into GLSL 330");
   char *src = slurp("tests/data/scene/shader_sample.txt");
   TEST_CHECK(src != NULL);
   if (!src) return;
   char dst[8192];
   TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
-  TEST_CHECK(strstr(dst, "texture2D") == NULL);
+  /* legacy spellings are mapped through defines, not rewritten in place */
+  TEST_CHECK(strstr(dst, "#define texture2D texture") != NULL);
+  TEST_CHECK(strstr(dst, "#define texSample2D texture") != NULL);
   TEST_CHECK(strstr(dst, "#include") == NULL);
   TEST_CHECK(strstr(dst, "#version 330") != NULL);
   free(src);

@@ -290,6 +290,9 @@ static int parse_effect(const char *dir, struct json_object *jo,
                         XWSceneEffect *e, XWError *err) {
   struct json_object *v = NULL;
   memset(e, 0, sizeof(*e));
+  e->visible = 1;
+  if (json_object_object_get_ex(jo, "visible", &v) && v)
+    e->visible = json_object_get_boolean(v) ? 1 : 0;
   if (json_object_object_get_ex(jo, "name", &v) && v)
     copy_str(e->name, sizeof(e->name), json_object_get_string(v));
   if (json_object_object_get_ex(jo, "passes", &v) && v) {

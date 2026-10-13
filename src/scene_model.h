@@ -50,6 +50,7 @@ typedef struct XWSceneEffect {
   char name[XW_SCENE_ID_MAX];
   XWScenePass *passes;
   int n_passes;
+  int visible; /* effects can be toggled off per instance */
 } XWSceneEffect;
 
 /* Object kinds. Explicit "type" wins; otherwise inferred from payload:
