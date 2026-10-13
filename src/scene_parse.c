@@ -561,6 +561,35 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
         if (json_object_object_get_ex(it, "max", &hi) && hi)
           lmax = (float)json_object_get_double(hi);
         o->particle.life = (lmin + lmax) / 2.0f;
+      } else if (strcmp(name, "turbulentvelocityrandom") == 0) {
+        struct json_object *sv = NULL;
+        float vec[3];
+        o->particle.has_turb = 1;
+        o->particle.turb_speed_min = 0.0f;
+        o->particle.turb_speed_max = 1.0f;
+        o->particle.turb_scale = 2.0f;
+        if (json_object_object_get_ex(it, "speedmin", &sv) && sv)
+          o->particle.turb_speed_min = (float)json_object_get_double(sv);
+        if (json_object_object_get_ex(it, "speedmax", &sv) && sv)
+          o->particle.turb_speed_max = (float)json_object_get_double(sv);
+        if (json_object_object_get_ex(it, "offset", &sv) && sv)
+          o->particle.turb_offset = (float)json_object_get_double(sv);
+        if (json_object_object_get_ex(it, "scale", &sv) && sv)
+          o->particle.turb_scale = (float)json_object_get_double(sv);
+        if (json_object_object_get_ex(it, "timescale", &sv) && sv)
+          o->particle.turb_time_scale = (float)json_object_get_double(sv);
+        if (json_object_object_get_ex(it, "phasemin", &sv) && sv)
+          o->particle.turb_phase_min = (float)json_object_get_double(sv);
+        if (json_object_object_get_ex(it, "phasemax", &sv) && sv)
+          o->particle.turb_phase_max = (float)json_object_get_double(sv);
+        if (json_object_object_get_ex(it, "forward", &sv) && sv &&
+            json_object_get_type(sv) == json_type_string &&
+            parse_vec_str(json_object_get_string(sv), vec, 3) == 0)
+          memcpy(o->particle.turb_forward, vec, sizeof(vec));
+        if (json_object_object_get_ex(it, "right", &sv) && sv &&
+            json_object_get_type(sv) == json_type_string &&
+            parse_vec_str(json_object_get_string(sv), vec, 3) == 0)
+          memcpy(o->particle.turb_right, vec, sizeof(vec));
       } else if (strcmp(name, "velocityrandom") == 0) {
         struct json_object *mn = NULL, *mx = NULL;
         a[0] = a[1] = a[2] = 0.0f;

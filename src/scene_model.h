@@ -133,6 +133,15 @@ typedef struct XWParticleCfg {
   float color_min[3], color_max[3];
   float rot_min, rot_max;
   int has_color_random;
+  /* turbulentvelocityrandom: initial velocity comes from a curl-noise field
+   * (see scene_particle.c), shaped by these parameters */
+  int has_turb;
+  float turb_speed_min, turb_speed_max;
+  float turb_offset;     /* radians, tilts the result around `right` */
+  float turb_scale;      /* < 2 limits the deviation from `forward` */
+  float turb_time_scale; /* shifts the field over time */
+  float turb_phase_min, turb_phase_max;
+  float turb_forward[3], turb_right[3]; /* field basis, JSON space (Y up) */
   int has_alpha_fade;      /* alphafade operator present */
   float fade_in, fade_out; /* alphafade fadeintime / fadeouttime (0..1) */
 } XWParticleCfg;

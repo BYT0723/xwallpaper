@@ -315,3 +315,9 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   `$HOME` 下 5 个固定 Steam 根 + 各根 `steamapps/libraryfolders.vdf` 列出的其它库（兼容新旧两种写法），
   命中判定 `<候选>/shaders/common.h` 可读；`src/scene.c` 在 scene init 调用，`XW_DEBUG_DAEMON` 下打印命中路径。
   单测覆盖 env 优先 / 默认库 / vdf 第二库 / 未命中；真机不设 env 也能自动激活粒子材质 pass。
+- **turbulentvelocityrandom 已实现（2026-10-13）**：按真实用量统计选中（11 个 scene pkg 的全部 json：
+  2 个壁纸有实际参数；oscillators/ropetrail 0 次，children 全 null，controlpoint offset 全 0，
+  ledsource 全 false —— 这些先记为"数据侧无实际影响"）。实现：在生成位置采样 curl noise（含每粒子
+  phase 与时间平移），`scale < 2` 限制偏离 `forward` 的夹角、`offset` 绕 `right` 倾斜、2D 粒子丢弃 z 漂移；
+  forward/right 做 Y 翻转贴合屏幕坐标。**噪声场为引擎内部实现、未公开**，此处用标准 Perlin 改进噪声 +
+  中心差分 curl，置换表由固定种子生成（未复制任何参考表）。

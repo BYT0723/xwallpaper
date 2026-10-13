@@ -1,7 +1,22 @@
+#include <math.h>
 #include <string.h>
 
 #include "harness.h"
 #include "../src/scene_particle.h"
+
+/* angle in degrees between two 2D directions */
+static float dir_angle(float ax, float ay, float bx, float by) {
+  float la = sqrtf(ax * ax + ay * ay), lb = sqrtf(bx * bx + by * by);
+  float c;
+  if (la < 1e-6f || lb < 1e-6f)
+    return 90.0f;
+  c = (ax * bx + ay * by) / (la * lb);
+  if (c > 1.0f)
+    c = 1.0f;
+  if (c < -1.0f)
+    c = -1.0f;
+  return acosf(c) * 180.0f / 3.14159265f;
+}
 
 /* Mirrors the engine's box emitter: centered pixel space with Y up, the
  * emitter origin Y-flipped, spawn box = distanceMin/Max extent, velocity
@@ -146,6 +161,141 @@ static void test_bad_inputs(void) {
   xw_emitter_free(NULL);
 }
 
+/* one particle per ~2px of box, all spawned in a single step */
+static XWParticleCfg cfg_turb(void) {
+  XWParticleCfg c;
+  memset(&c, 0, sizeof(c));
+  c.rate = 200.0f;
+  c.max_count = 400;
+  c.life = 100.0f;
+  c.size_min = c.size_max = 1.0f;
+  c.speed_mult.kind = XW_DYN_CONSTANT;
+  c.speed_mult.constant = 1.0f;
+  c.dist_max[0] = 400.0f;
+  c.dist_max[1] = 400.0f;
+  c.dirs[0] = c.dirs[1] = c.dirs[2] = 1.0f;
+  c.has_turb = 1;
+  c.turb_speed_min = 2.0f;
+  c.turb_speed_max = 2.0f;
+  c.turb_scale = 2.0f; /* >= 2 turns the forward clamp off */
+  c.turb_forward[1] = 1.0f;
+  c.turb_right[0] = 1.0f;
+  return c;
+}
+
+static void test_turbulent_speed(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_turb();
+  int i, distinct = 0;
+  TEST_BEGIN("turbulentvelocityrandom sets the sampled speed everywhere");
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  TEST_CHECK(xw_emitter_update(&e, 1.0f) >= 0);
+  TEST_CHECK(e.alive > 20);
+  for (i = 0; i < e.alive; i++) {
+    float len = hypotf(e.parts[i].vx, e.parts[i].vy);
+    TEST_CHECK(fabsf(len - 2.0f) < 0.05f);
+    if (i && dir_angle(e.parts[i].vx, e.parts[i].vy, e.parts[0].vx,
+                       e.parts[0].vy) > 1.0f)
+      distinct++;
+  }
+  /* the field varies in space, so directions are not all identical */
+  TEST_CHECK(distinct > 10);
+  xw_emitter_free(&e);
+}
+
+static void test_turbulent_coherence(void) {
+  XWEmitter e;
+  XWParticleCfg narrow = cfg_turb(), wide = cfg_turb();
+  float far = 0.0f, near = 0.0f;
+  int i;
+  TEST_BEGIN("turbulentvelocityrandom is spatially coherent");
+  narrow.dist_max[0] = narrow.dist_max[1] = 0.05f;
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &narrow), 0);
+  TEST_CHECK(xw_emitter_update(&e, 1.0f) >= 0);
+  TEST_CHECK(e.alive > 20);
+  for (i = 1; i < e.alive; i++) {
+    float a = dir_angle(e.parts[i].vx, e.parts[i].vy, e.parts[0].vx,
+                        e.parts[0].vy);
+    if (a > near)
+      near = a;
+  }
+  xw_emitter_free(&e);
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &wide), 0);
+  TEST_CHECK(xw_emitter_update(&e, 1.0f) >= 0);
+  for (i = 1; i < e.alive; i++) {
+    float a = dir_angle(e.parts[i].vx, e.parts[i].vy, e.parts[0].vx,
+                        e.parts[0].vy);
+    if (a > far)
+      far = a;
+  }
+  xw_emitter_free(&e);
+  TEST_CHECK(near < 8.0f);  /* 1px apart: nearly the same sample */
+  TEST_CHECK(far > 30.0f);  /* 400px apart: clearly different */
+}
+
+static void test_turbulent_forward_clamp(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_turb();
+  int i, worst = 0;
+  TEST_BEGIN("turbulentvelocityrandom scale < 2 clamps to `forward`");
+  c.dist_max[0] = c.dist_max[1] = 4000.0f;
+  c.turb_scale = 0.5f; /* half of pi/2 -> 45 degrees max deviation */
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  TEST_CHECK(xw_emitter_update(&e, 1.0f) >= 0);
+  TEST_CHECK(e.alive > 20);
+  for (i = 0; i < e.alive; i++) {
+    /* forward (0,1,0) is Y-flipped into screen space -> (0,-1) */
+    float a = dir_angle(e.parts[i].vx, e.parts[i].vy, 0.0f, -1.0f);
+    if (a > worst + 0.5f)
+      worst = (int)a;
+    TEST_CHECK(a <= 45.5f);
+  }
+  TEST_CHECK(worst >= 30); /* the clamp really had to act */
+  xw_emitter_free(&e);
+}
+
+static void test_turbulent_offset_and_determinism(void) {
+  XWEmitter e1, e2, e3;
+  XWParticleCfg c = cfg_turb(), c2 = cfg_turb(), c3 = cfg_turb();
+  int i, same = 1, rotated = 0;
+  TEST_BEGIN("turbulentvelocityrandom honours offset and a fixed seed");
+  c3.turb_offset = 1.5707963f; /* pi/2 around `right` */
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e1, &c), 0);
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e2, &c2), 0);
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e3, &c3), 0);
+  TEST_CHECK(xw_emitter_update(&e1, 1.0f) >= 0);
+  TEST_CHECK(xw_emitter_update(&e2, 1.0f) >= 0);
+  TEST_CHECK(xw_emitter_update(&e3, 1.0f) >= 0);
+  for (i = 0; i < e1.alive; i++) {
+    if (e1.parts[i].vx != e2.parts[i].vx || e1.parts[i].vy != e2.parts[i].vy)
+      same = 0;
+    /* the rotation preserves length */
+    TEST_CHECK(fabsf(hypotf(e3.parts[i].vx, e3.parts[i].vy) - 2.0f) < 0.05f);
+    if (dir_angle(e1.parts[i].vx, e1.parts[i].vy, e3.parts[i].vx,
+                  e3.parts[i].vy) > 5.0f)
+      rotated++;
+  }
+  TEST_CHECK(same); /* deterministic per seed */
+  TEST_CHECK(rotated > 10);
+  xw_emitter_free(&e1);
+  xw_emitter_free(&e2);
+  xw_emitter_free(&e3);
+}
+
+static void test_no_turbulent_velocity(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_turb();
+  int i;
+  TEST_BEGIN("no turbulentvelocityrandom keeps the plain velocity");
+  c.has_turb = 0;
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  TEST_CHECK(xw_emitter_update(&e, 1.0f) >= 0);
+  TEST_CHECK(e.alive > 20);
+  for (i = 0; i < e.alive; i++)
+    TEST_CHECK(e.parts[i].vx == 0.0f && e.parts[i].vy == 0.0f);
+  xw_emitter_free(&e);
+}
+
 int main(void) {
   TEST_SUITE("scene_particle");
   test_spawn_and_die();
@@ -153,6 +303,11 @@ int main(void) {
   test_cap();
   test_gravity_and_determinism();
   test_initializers();
+  test_turbulent_speed();
+  test_turbulent_coherence();
+  test_turbulent_forward_clamp();
+  test_turbulent_offset_and_determinism();
+  test_no_turbulent_velocity();
   test_bad_inputs();
   TEST_SUMMARY();
 }

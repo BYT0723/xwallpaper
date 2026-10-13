@@ -300,6 +300,35 @@ static void test_visible_dict(void) {
   xw_scene_free(&s);
 }
 
+static void test_turbulent_parse(void) {
+  XWScene s;
+  XWError err = {0};
+  const XWParticleCfg *p;
+  TEST_BEGIN("turbulentvelocityrandom parses its field parameters");
+  memset(&s, 0, sizeof(s));
+  TEST_CHECK_EQ_INT(xw_scene_parse("tests/data/scene/turbpart", &s, &err), 0);
+  TEST_CHECK_EQ_INT(s.n_objects, 1);
+  if (s.n_objects != 1) {
+    xw_scene_free(&s);
+    return;
+  }
+  p = &s.objects[0].particle;
+  TEST_CHECK_EQ_INT(s.objects[0].type, XW_OBJ_PARTICLE);
+  TEST_CHECK_EQ_INT(p->has_turb, 1);
+  TEST_CHECK(p->turb_speed_min > 0.49f && p->turb_speed_min < 0.51f);
+  TEST_CHECK(p->turb_speed_max > 0.99f && p->turb_speed_max < 1.01f);
+  TEST_CHECK(p->turb_offset > 19.9f && p->turb_offset < 20.1f);
+  TEST_CHECK(p->turb_scale > 0.99f && p->turb_scale < 1.01f);
+  TEST_CHECK(p->turb_time_scale > 9.9f && p->turb_time_scale < 10.1f);
+  TEST_CHECK(p->turb_phase_min > 0.09f && p->turb_phase_min < 0.11f);
+  TEST_CHECK(p->turb_phase_max > 0.89f && p->turb_phase_max < 0.91f);
+  TEST_CHECK_EQ_INT((int)p->turb_forward[0], 20);
+  TEST_CHECK_EQ_INT((int)p->turb_forward[1], 20);
+  TEST_CHECK_EQ_INT((int)p->turb_right[0], 10);
+  TEST_CHECK_EQ_INT((int)p->turb_right[2], 20);
+  xw_scene_free(&s);
+}
+
 int main(void) {
   TEST_SUITE("scene_parse");
   test_parse_fixture();
@@ -310,5 +339,6 @@ int main(void) {
   test_realrain();
   test_effect_target();
   test_visible_dict();
+  test_turbulent_parse();
   TEST_SUMMARY();
 }

@@ -1,0 +1,46 @@
+{
+    "camera": {
+        "center": "22.194 -0.757 -1.000",
+        "eye": "22.194 -0.757 0.000",
+        "up": "0.000 1.000 0.000"
+    },
+    "general": {
+        "ambientcolor": "0.300 0.300 0.300",
+        "bloom": false,
+        "bloomstrength": 2.0,
+        "bloomthreshold": 0.6499999761581421,
+        "camerafade": true,
+        "cameraparallax": false,
+        "cameraparallaxamount": 0.5,
+        "cameraparallaxdelay": 0.10000000149011612,
+        "cameraparallaxmouseinfluence": 0.0,
+        "camerapreview": true,
+        "camerashake": false,
+        "camerashakeamplitude": 0.5,
+        "camerashakeroughness": 1.0,
+        "camerashakespeed": 3.0,
+        "clearcolor": "0.700 0.700 0.700",
+        "clearenabled": true,
+        "farz": 10000.0,
+        "fov": 50.0,
+        "nearz": 0.009999999776482582,
+        "orthogonalprojection": {
+            "height": 1080,
+            "width": 1920
+        },
+        "skylightcolor": "0.300 0.300 0.300"
+    },
+    "objects": [
+        {
+            "angles": "0.000 0.000 0.000",
+            "id": 416,
+            "locktransforms": false,
+            "name": "Rain speckle",
+            "origin": "960.000 540.000 0.000",
+            "parallaxDepth": "1.000 1.000",
+            "particle": "particles/speckle.json",
+            "scale": "1.000 1.000 1.000",
+            "visible": true
+        }
+    ]
+}
