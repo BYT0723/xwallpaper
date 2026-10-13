@@ -35,6 +35,7 @@ struct XWGl {
   GLuint rect_vbo;
   GLuint part_vao;
   GLuint part_vbo;
+  GLuint ffb_tex; /* screen-sized copy of the scene so far */
   GLuint fbos[2];
   GLuint fbo_tex[2];
   struct {
@@ -346,6 +347,8 @@ void xw_gl_destroy(XWGl *g) {
       glDeleteVertexArrays(1, &g->part_vao);
     if (g->part_vbo)
       glDeleteBuffers(1, &g->part_vbo);
+    if (g->ffb_tex)
+      glDeleteTextures(1, &g->ffb_tex);
     glXMakeCurrent(g->dpy, None, NULL);
     glXDestroyContext(g->dpy, g->ctx);
   }
@@ -1543,6 +1546,12 @@ int xw_gl_target_size(XWGl *g, int *w, int *h) {
   return -1;
 }
 
+int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex) {
+  (void)g;
+  (void)tex;
+  return -1;
+}
+
 int xw_gl_program_sampler_default(XWGl *g, unsigned int prog,
                                   const char *uniform, char *out, size_t n) {
   (void)g;
@@ -1806,6 +1815,30 @@ static void bind_prog_defaults(XWGl *g, GLuint prog,
     }
     return;
   }
+}
+
+/* The engine's `_rt_FullFrameBuffer` is the scene as accumulated so far;
+ * every object composites onto the window, so a copy of the back buffer
+ * taken here is that render target. */
+int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex) {
+  if (!g || !tex || g->w <= 0 || g->h <= 0)
+    return -1;
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  if (!g->ffb_tex) {
+    glGenTextures(1, &g->ffb_tex);
+    if (!g->ffb_tex)
+      return -1;
+  }
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+  glReadBuffer(GL_BACK);
+  glBindTexture(GL_TEXTURE_2D, g->ffb_tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 0, 0, g->w, g->h, 0);
+  *tex = g->ffb_tex;
+  return 0;
 }
 
 int xw_gl_program_sampler_default(XWGl *g, unsigned int prog,

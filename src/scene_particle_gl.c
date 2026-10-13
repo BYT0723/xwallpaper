@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,6 +72,27 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
                                o->particle.n_pcombos, used, &pp, err) != 0)
       ok = 0;
     if (ok) {
+      /* samplers the material leaves empty fall back to the shader's own
+       * annotated default; _rt_FullFrameBuffer is the scene so far (the
+       * refractive rain multiplies its colour by it) */
+      for (ti = 0; ti < XW_GL_WE_SLOTS; ti++) {
+        char tuname[32], dref[64];
+        if (texs[ti])
+          continue;
+        snprintf(tuname, sizeof(tuname), "g_Texture%d", ti);
+        if (xw_gl_program_sampler_default(g, pp, tuname, dref,
+                                          sizeof(dref)) != 0 ||
+            !dref[0])
+          continue;
+        if (strcmp(dref, "_rt_FullFrameBuffer") == 0) {
+          unsigned int ft = 0;
+          if (xw_gl_framebuffer_snapshot(g, &ft) == 0)
+            texs[ti] = ft;
+        } else if (strncmp(dref, "_rt_", 4) != 0 &&
+                   strncmp(dref, "_alias_", 7) != 0) {
+          xw_scene_resolve_texture(g, dir, dref, &texs[ti], NULL);
+        }
+      }
       verts = malloc((size_t)e->alive * 6 * XW_PARTICLE_FLOATS *
                      sizeof(float));
       if (!verts) {
@@ -114,7 +136,7 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
       }
       if (xw_gl_blend_begin(g, o->particle.pblend) != 0)
         goto out_pq;
-      if (xw_gl_draw_particle_quads(g, pp, texs, ntex, verts, nv,
+      if (xw_gl_draw_particle_quads(g, pp, texs, XW_GL_WE_SLOTS, verts, nv,
                                     o->particle.pconsts,
                                     o->particle.n_pconsts) != 0) {
         xw_gl_blend_end(g);
