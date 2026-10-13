@@ -74,13 +74,20 @@ typedef struct XWStreak {
 
 /* Builtin streak program (samples a vertical slice of xw_tex0). */
 int xw_gl_program_streaks(XWGl *g, unsigned int *prog, XWError *err);
-/* Draw n streaks on the bound target. */
+/* Draw n streaks on the bound target (uv_rect picks a sprite-sheet frame). */
 int xw_gl_draw_streaks(XWGl *g, unsigned int prog, unsigned int tex,
-                       const XWStreak *st, int n);
+                       const XWStreak *st, int n, const float uv_rect[4]);
 
-/* Draw n point sprites on the bound target (positions window pixels). */
+/* Draw n point sprites on the bound target (positions window pixels).
+ * uv_rect selects a sprite-sheet frame: (x, y, w, h) normalised, use
+ * {0,0,1,1} for a plain sprite. */
 int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
-                      const XWPoint *pts, int n);
+                      const XWPoint *pts, int n, const float uv_rect[4]);
+
+/* Current sprite-sheet frame of a texture at `time`, normalised. Returns
+ * {0,0,1,1} for textures without a TEXS animation block. */
+int xw_gl_texture_uv_rect(XWGl *g, unsigned int tex, float time,
+                          float rect[4]);
 
 /* Transient blending around particle draws (core blend-state mapping). */
 int xw_gl_blend_begin(XWGl *g, XWBlend mode);

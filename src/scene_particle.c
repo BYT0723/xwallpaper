@@ -86,6 +86,7 @@ int xw_emitter_update(XWEmitter *e, float dt) {
   int i, room;
   if (!e || !e->parts || dt < 0.0f)
     return -1;
+  e->t += dt;
   e->acc += e->cfg.rate * dt;
   room = e->cfg.max_count - e->alive;
   while (e->acc >= 1.0f && room > 0) {

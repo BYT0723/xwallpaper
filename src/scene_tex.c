@@ -113,6 +113,60 @@ static size_t dxt_bytes(uint32_t w, uint32_t h, int block) {
   return bw * bh * (size_t)block;
 }
 
+/* Sprite-sheet animation block (TEXS0001/0002/0003) follows the images; the
+ * engine uses it to pick a frame per tick. We only read the first mipmap,
+ * so scan for the magic instead of walking every mipmap. */
+static void parse_texs(const unsigned char *data, size_t len, XWTexImage *img) {
+  static const char *m3 = "TEXS0003", *m2 = "TEXS0002", *m1 = "TEXS0001";
+  size_t off;
+  uint32_t count, i;
+  int v1 = 0;
+  img->n_frames = 0;
+  img->frame_time = 0.0f;
+  if (!data || len < 16)
+    return;
+  for (off = 0; off + 16 <= len; off++) {
+    if (memcmp(data + off, m3, 8) == 0 || memcmp(data + off, m2, 8) == 0 ||
+        memcmp(data + off, m1, 8) == 0)
+      break;
+  }
+  if (off + 16 > len)
+    return;
+  v1 = memcmp(data + off, m1, 8) == 0;
+  count = rd32le(data + off + 9);
+  off += 13;
+  if (memcmp(data + off - 13, m3, 8) == 0) {
+    /* TEXS0003 carries the gif (frame) size after the count */
+    off += 8;
+  }
+  if (count == 0 || count > 4096)
+    return;
+  for (i = 0; i < count && img->n_frames < XW_TEX_FRAMES_MAX; i++) {
+    XWTexFrame *f = &img->frames[img->n_frames];
+    if (off + 32 > len)
+      break;
+    f->time = 0.0f;
+    if (v1) {
+      /* u32 number, float time, u32 x, y, w1, ?, ?, h1 */
+      f->time = *(const float *)(data + off + 4);
+      f->x = (float)rd32le(data + off + 8);
+      f->y = (float)rd32le(data + off + 12);
+      f->w = (float)rd32le(data + off + 16);
+      f->h = (float)rd32le(data + off + 28);
+    } else {
+      /* u32 number, float time, float x, y, w1, w2, h2, h1 */
+      f->time = *(const float *)(data + off + 4);
+      f->x = *(const float *)(data + off + 8);
+      f->y = *(const float *)(data + off + 12);
+      f->w = *(const float *)(data + off + 16);
+      f->h = *(const float *)(data + off + 28);
+    }
+    img->frame_time += f->time;
+    img->n_frames++;
+    off += 32;
+  }
+}
+
 int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
                   XWError *err) {
   XWTexCursor c = {data, len, 0};
@@ -308,6 +362,7 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
   img->h = h ? h : mh;
   img->tex_w = mw;
   img->tex_h = mh;
+  parse_texs(data, len, img);
   return 0;
 }
 

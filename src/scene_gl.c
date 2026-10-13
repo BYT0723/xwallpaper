@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +47,9 @@ struct XWGl {
     GLuint tex;
     int tw, th, rw, rh;
     unsigned int flags; /* WE TextureFlags of the uploaded texture */
+    int nframes;        /* sprite-sheet (TEXS) frames, 0 = plain sprite */
+    float frame_time;
+    float frames[XW_TEX_FRAMES_MAX][4]; /* normalised x, y, w, h */
   } texcache[XW_GL_TEXCACHE_MAX];
   int ntex;
   GLuint utils[4];
@@ -128,9 +132,11 @@ static const char *streaks_frag_src =
     "in float v_alpha;\n"
     "in float v_along;\n"
     "uniform sampler2D xw_tex0;\n"
+    "uniform vec4 xw_uv_rect;\n"
     "out vec4 xw_out;\n"
     "void main() {\n"
-    "  vec4 c = texture(xw_tex0, vec2(0.5, v_along));\n"
+    "  vec2 uv = xw_uv_rect.xy + vec2(0.5, v_along) * xw_uv_rect.zw;\n"
+    "  vec4 c = texture(xw_tex0, uv);\n"
     "  xw_out = vec4(c.rgb, c.a * v_alpha);\n"
     "}\n";
 
@@ -138,10 +144,12 @@ static const char *points_frag_src =
     "#version 330 core\n"
     "in float v_alpha;\n"
     "uniform sampler2D xw_tex0;\n"
+    "uniform vec4 xw_uv_rect;\n"
     "out vec4 xw_out;\n"
     "void main() {\n"
     "  vec2 pc = vec2(gl_PointCoord.x, 1.0 - gl_PointCoord.y);\n"
-    "  vec4 c = texture(xw_tex0, pc);\n"
+    "  vec2 uv = xw_uv_rect.xy + pc * xw_uv_rect.zw;\n"
+    "  vec4 c = texture(xw_tex0, uv);\n"
     "  xw_out = vec4(c.rgb, c.a * v_alpha);\n"
     "}\n";
 
@@ -314,7 +322,8 @@ void xw_gl_destroy(XWGl *g) {
 
 
 static int cache_store(XWGl *g, const char *path, GLuint t, int tw, int th,
-                     int rw, int rh, unsigned int flags, XWError *err) {
+                     int rw, int rh, unsigned int flags,
+                     const XWTexImage *img, XWError *err) {
   if (g->ntex >= XW_GL_TEXCACHE_MAX) {
     if (t)
       glDeleteTextures(1, &t);
@@ -329,6 +338,19 @@ static int cache_store(XWGl *g, const char *path, GLuint t, int tw, int th,
   g->texcache[g->ntex].rw = rw;
   g->texcache[g->ntex].rh = rh;
   g->texcache[g->ntex].flags = flags;
+  g->texcache[g->ntex].nframes = 0;
+  g->texcache[g->ntex].frame_time = 0.0f;
+  if (img && img->n_frames > 0 && img->tex_w > 0 && img->tex_h > 0) {
+    int fi;
+    g->texcache[g->ntex].nframes = img->n_frames;
+    g->texcache[g->ntex].frame_time = img->frame_time;
+    for (fi = 0; fi < img->n_frames && fi < XW_TEX_FRAMES_MAX; fi++) {
+      g->texcache[g->ntex].frames[fi][0] = img->frames[fi].x / (float)img->tex_w;
+      g->texcache[g->ntex].frames[fi][1] = img->frames[fi].y / (float)img->tex_h;
+      g->texcache[g->ntex].frames[fi][2] = img->frames[fi].w / (float)img->tex_w;
+      g->texcache[g->ntex].frames[fi][3] = img->frames[fi].h / (float)img->tex_h;
+    }
+  }
   g->ntex++;
   return 0;
 }
@@ -341,6 +363,7 @@ static int cache_fail(XWGl *g, const char *path, XWError *err, const char *msg) 
     g->texcache[g->ntex].tw = g->texcache[g->ntex].th = 0;
     g->texcache[g->ntex].rw = g->texcache[g->ntex].rh = 0;
     g->texcache[g->ntex].flags = 0;
+    g->texcache[g->ntex].nframes = 0;
     g->ntex++;
   }
   XW_ERROR_SET(err, 1, "%s '%s'", msg, path);
@@ -397,7 +420,8 @@ static int upload_imlib_current(XWGl *g, const char *path, GLuint *t,
 
 static int upload_texv(XWGl *g, const unsigned char *file, size_t flen,
                        GLuint *t, int *twp, int *thp, int *rwp, int *rhp,
-                       unsigned int *flagsp, XWError *err) {
+                       unsigned int *flagsp, XWTexImage *frames_out,
+                       XWError *err) {
   XWTexImage img;
   int rc = -1;
   memset(&img, 0, sizeof(img));
@@ -496,6 +520,8 @@ static int upload_texv(XWGl *g, const unsigned char *file, size_t flen,
       *rhp = (int)img.h;
     if (flagsp)
       *flagsp = img.flags;
+    if (frames_out)
+      *frames_out = img; /* px is about to be freed; frames stay valid */
     /* WE TextureFlags: ClampUVs (2) keeps offset effects from wrapping */
     if (*t) {
       GLint wrap = (img.flags & 2u) ? GL_CLAMP_TO_EDGE : GL_REPEAT;
@@ -560,13 +586,16 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
   if (flen >= 4 && memcmp(file, "TEXV", 4) == 0) {
     int tw = 0, th = 0, rw = 0, rh = 0;
     unsigned int flags = 0;
-    rc = upload_texv(g, file, flen, &t, &tw, &th, &rw, &rh, &flags, err);
+    XWTexImage frames;
+    memset(&frames, 0, sizeof(frames));
+    rc = upload_texv(g, file, flen, &t, &tw, &th, &rw, &rh, &flags, &frames,
+                     err);
     free(file);
     if (rc != 0) {
       cache_fail(g, path, err, "cannot decode texture");
       return -1;
     }
-    if (cache_store(g, path, t, tw, th, rw, rh, flags, err) != 0)
+    if (cache_store(g, path, t, tw, th, rw, rh, flags, &frames, err) != 0)
       return -1;
     *tex = t;
     return 0;
@@ -593,7 +622,7 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
       cache_fail(g, path, err, "cannot decode texture");
       return -1;
     }
-    if (cache_store(g, path, t, iw, ih, iw, ih, 2u, err) != 0)
+    if (cache_store(g, path, t, iw, ih, iw, ih, 2u, NULL, err) != 0)
       return -1;
   }
   *tex = t;
@@ -856,7 +885,7 @@ int xw_gl_program_streaks(XWGl *g, unsigned int *prog, XWError *err) {
 }
 
 int xw_gl_draw_streaks(XWGl *g, unsigned int prog, unsigned int tex,
-                       const XWStreak *st, int n) {
+                       const XWStreak *st, int n, const float uv_rect[4]) {
   GLint loc;
   float *verts;
   int i, rc = -1;
@@ -893,6 +922,13 @@ int xw_gl_draw_streaks(XWGl *g, unsigned int prog, unsigned int tex,
   loc = glGetUniformLocation(prog, "xw_size");
   if (loc >= 0)
     glUniform2f(loc, (float)g->w, (float)g->h);
+  loc = glGetUniformLocation(prog, "xw_uv_rect");
+  if (loc >= 0) {
+    if (uv_rect)
+      glUniform4f(loc, uv_rect[0], uv_rect[1], uv_rect[2], uv_rect[3]);
+    else
+      glUniform4f(loc, 0.0f, 0.0f, 1.0f, 1.0f);
+  }
   glBindVertexArray(g->points_vao);
   glBindBuffer(GL_ARRAY_BUFFER, g->points_vbo);
   glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)n * 8 * sizeof(float)),
@@ -1091,7 +1127,7 @@ int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
 }
 
 int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
-                      const XWPoint *pts, int n) {
+                      const XWPoint *pts, int n, const float uv_rect[4]) {
   GLint sloc;
   XWPoint *ndc = NULL;
   int i, rc = -1;
@@ -1117,6 +1153,13 @@ int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
   sloc = glGetUniformLocation(prog, "xw_flip");
   if (sloc >= 0)
     glUniform1f(sloc, g->flip ? -1.0f : 1.0f);
+  sloc = glGetUniformLocation(prog, "xw_uv_rect");
+  if (sloc >= 0) {
+    if (uv_rect)
+      glUniform4f(sloc, uv_rect[0], uv_rect[1], uv_rect[2], uv_rect[3]);
+    else
+      glUniform4f(sloc, 0.0f, 0.0f, 1.0f, 1.0f);
+  }
   glBindVertexArray(g->points_vao);
   glBindBuffer(GL_ARRAY_BUFFER, g->points_vbo);
   glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)n * sizeof(XWPoint)), ndc,
@@ -1340,6 +1383,20 @@ int xw_gl_bind_named(XWGl *g, const char *name) {
   return -1;
 }
 
+int xw_gl_texture_uv_rect(XWGl *g, unsigned int tex, float time,
+                          float rect[4]) {
+  (void)g;
+  (void)tex;
+  (void)time;
+  if (rect) {
+    rect[0] = 0.0f;
+    rect[1] = 0.0f;
+    rect[2] = 1.0f;
+    rect[3] = 1.0f;
+  }
+  return -1;
+}
+
 int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
                        int *rh) {
   (void)g;
@@ -1381,6 +1438,24 @@ int xw_gl_program_points(XWGl *g, unsigned int *prog, XWError *err) {
   return -1;
 }
 
+int xw_gl_program_streaks(XWGl *g, unsigned int *prog, XWError *err) {
+  (void)g;
+  (void)prog;
+  XW_ERROR_SET(err, 1, "scene GL support not compiled in (need gl/glew)");
+  return -1;
+}
+
+int xw_gl_draw_streaks(XWGl *g, unsigned int prog, unsigned int tex,
+                       const XWStreak *st, int n, const float uv_rect[4]) {
+  (void)g;
+  (void)prog;
+  (void)tex;
+  (void)st;
+  (void)n;
+  (void)uv_rect;
+  return -1;
+}
+
 int xw_gl_program_composite(XWGl *g, unsigned int *prog, XWError *err) {
   (void)g;
   (void)prog;
@@ -1389,7 +1464,8 @@ int xw_gl_program_composite(XWGl *g, unsigned int *prog, XWError *err) {
 }
 
 int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
-                      const XWPoint *pts, int n) {
+                      const XWPoint *pts, int n, const float uv_rect[4]) {
+  (void)uv_rect;
   (void)g;
   (void)prog;
   (void)tex;
@@ -1690,6 +1766,43 @@ int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
     }
   }
   return -1;
+}
+
+int xw_gl_texture_uv_rect(XWGl *g, unsigned int tex, float time,
+                          float rect[4]) {
+  int i;
+  if (!rect)
+    return -1;
+  rect[0] = 0.0f;
+  rect[1] = 0.0f;
+  rect[2] = 1.0f;
+  rect[3] = 1.0f;
+  if (!g || !tex)
+    return -1;
+  for (i = 0; i < g->ntex; i++) {
+    if (g->texcache[i].tex != tex)
+      continue;
+    if (g->texcache[i].nframes <= 0 || g->texcache[i].frame_time <= 0.0f)
+      return 0;
+    {
+      int nf = g->texcache[i].nframes;
+      float total = g->texcache[i].frame_time;
+      float phase = fmodf(time, total);
+      int fi = nf - 1;
+      int k;
+      if (phase < 0.0f)
+        phase += total;
+      for (k = 0; k < nf; k++) {
+        if (phase < total * (float)(k + 1) / (float)nf) {
+          fi = k;
+          break;
+        }
+      }
+      memcpy(rect, g->texcache[i].frames[fi], sizeof(float) * 4);
+    }
+    return 0;
+  }
+  return 0;
 }
 
 int xw_gl_target_size(XWGl *g, int *w, int *h) {

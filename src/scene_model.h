@@ -115,6 +115,7 @@ typedef struct XWParticleCfg {
   char renderer[32];  /* "sprite" | "spritetrail" | "rope" ... */
   float trail_max;    /* renderer maxlength in pixels (trail length) */
   char animation_mode[24]; /* "sequence" | "" (sprite-sheet animation) */
+  float seq_mult;          /* sequencemultiplier: sheet animation speed */
 } XWParticleCfg;
 
 typedef struct XWTextCfg {

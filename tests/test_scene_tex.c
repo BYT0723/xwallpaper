@@ -270,6 +270,87 @@ static void test_decode_texb0004(void) {
   }
 }
 
+/* Append a TEXS0003 sprite-sheet animation block (2 frames of 4x4 in an
+ * 8x4 sheet) after a plain TEXV payload. */
+static unsigned char *build_texv_anim(size_t *out_len) {
+  unsigned char px[128]; /* 8x4 RGBA8 */
+  size_t base_len = 0;
+  unsigned char *blob;
+  memset(px, 0x40, sizeof(px));
+  blob = build_texv(0, 8, 4, px, sizeof(px), 0, &base_len);
+  unsigned char *out;
+  unsigned char *d;
+  size_t total;
+  int i;
+  if (!blob)
+    return NULL;
+  /* 9 magic + count + gifW + gifH + 2 frames x 32 bytes */
+  total = base_len + 9 + 4 + 8 + 64;
+  out = realloc(blob, total);
+  if (!out) {
+    free(blob);
+    return NULL;
+  }
+  d = out + base_len;
+  memcpy(d, "TEXS0003\0", 9);
+  d += 9;
+  {
+    uint32_t v[3] = {2, 4, 4}; /* frames, gifW, gifH */
+    for (i = 0; i < 3; i++) {
+      d[0] = (unsigned char)(v[i] & 0xff);
+      d[1] = (unsigned char)((v[i] >> 8) & 0xff);
+      d[2] = (unsigned char)((v[i] >> 16) & 0xff);
+      d[3] = (unsigned char)((v[i] >> 24) & 0xff);
+      d += 4;
+    }
+  }
+  for (i = 0; i < 2; i++) {
+    float f[8];
+    uint32_t num = 0;
+    memcpy(d, &num, 4);
+    f[0] = 0.5f;                    /* frametime */
+    f[1] = (float)(i * 4);          /* x */
+    f[2] = 0.0f;                    /* y */
+    f[3] = 4.0f;                    /* w1 */
+    f[4] = 0.0f;                    /* w2 */
+    f[5] = 0.0f;                    /* h2 */
+    f[6] = 4.0f;                    /* h1 */
+    memcpy(d + 4, &f[0], 4);
+    memcpy(d + 8, &f[1], 4);
+    memcpy(d + 12, &f[2], 4);
+    memcpy(d + 16, &f[3], 4);
+    memcpy(d + 20, &f[4], 4);
+    memcpy(d + 24, &f[5], 4);
+    memcpy(d + 28, &f[6], 4);
+    d += 32;
+  }
+  *out_len = total;
+  return out;
+}
+
+static void test_decode_texs(void) {
+  TEST_BEGIN("TEXS sprite-sheet frames are parsed");
+  XWError err = {0};
+  XWTexImage img;
+  size_t len = 0;
+  unsigned char *blob = build_texv_anim(&len);
+  TEST_CHECK(blob != NULL);
+  if (!blob)
+    return;
+  memset(&img, 0, sizeof(img));
+  TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+  TEST_CHECK_EQ_INT(img.n_frames, 2);
+  TEST_CHECK(img.frame_time > 0.99f && img.frame_time < 1.01f);
+  if (img.n_frames == 2) {
+    TEST_CHECK_EQ_INT((int)img.frames[0].x, 0);
+    TEST_CHECK_EQ_INT((int)img.frames[1].x, 4);
+    TEST_CHECK_EQ_INT((int)img.frames[0].w, 4);
+    TEST_CHECK_EQ_INT((int)img.frames[0].h, 4);
+  }
+  xw_tex_image_free(&img);
+  free(blob);
+}
+
 static void test_decode_edges(void) {
   TEST_BEGIN("rejects bad magic, truncation, formats, sizes");
   XWError err = {0};
@@ -324,6 +405,7 @@ int main(void) {
   test_bad_inputs();
   test_decode_raw();
   test_decode_texb0004();
+  test_decode_texs();
   test_decode_edges();
   TEST_SUMMARY();
 }

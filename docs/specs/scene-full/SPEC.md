@@ -226,3 +226,10 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
 - **M4 待做**：`renderer: sprite` + `animationmode: sequence` 的**精灵图逐帧采样**（未实现前直接跳过，
   否则整张 sheet 会被画成大方块——这是本轮刻意保留的保守降级）；`rope`/`ropetrail` 渲染器、
   控制点、振荡器（oscillateAlpha/Size/Position）、湍流、音频驱动发射、子粒子系统、`fadeAlpha/fadeSize`。
+- **M4 第二片（2026-10-13）**：精灵图逐帧采样。逐帧信息来自**纹理**的 `TEXS` 动画块（不是粒子配置）——
+  `rain sprite.tex`/`drizzle.tex` 都是 TEXS0003：1024x512 里 8 帧 256x256。实现：`xw_tex_decode` 扫
+  `TEXS0001/0002/0003` 解析帧矩形与时长（`XWTexImage.frames/n_frames/frame_time`）→ 纹理缓存保存归一化
+  帧矩形 → `xw_gl_texture_uv_rect(tex, time)` 按时间取当前帧 → 点精灵/条纹着色器用 `xw_uv_rect` 采样子矩形。
+  动画时钟 = 发射器累计时间 × `sequencemultiplier`。2178468632 的雨点由"整张 sheet 大方块"变为逐帧圆点。
+- **M4 待做**：`fadeSize`/`fadeAlpha` 曲线、每帧独立时长（当前按帧数均分）、`rope`/`ropetrail`、
+  控制点、振荡器、湍流、音频驱动发射、子粒子系统。

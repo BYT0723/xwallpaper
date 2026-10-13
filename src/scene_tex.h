@@ -21,6 +21,14 @@ typedef enum {
   XW_TEXFMT_PNG,
 } XWTexFmt;
 
+#define XW_TEX_FRAMES_MAX 16
+
+/* One sprite-sheet frame (TEXS animation block): pixel rect + duration. */
+typedef struct XWTexFrame {
+  float x, y, w, h;
+  float time;
+} XWTexFrame;
+
 typedef struct XWTexImage {
   XWTexFmt fmt;
   unsigned int w, h;
@@ -28,6 +36,10 @@ typedef struct XWTexImage {
   unsigned int flags; /* WE TextureFlags: ClampUVs=2, NoInterpolation=1 */
   unsigned char *px;
   size_t len;
+  /* TEXS animation: sprite sheets pick a frame per tick (particles) */
+  XWTexFrame frames[XW_TEX_FRAMES_MAX];
+  int n_frames;
+  float frame_time; /* total duration of one loop */
 } XWTexImage;
 
 int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,

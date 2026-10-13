@@ -471,6 +471,11 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
       json_object_get_type(w) == json_type_string)
     copy_str(o->particle.animation_mode, sizeof(o->particle.animation_mode),
              json_object_get_string(w));
+  o->particle.seq_mult = 1.0f;
+  if (json_object_object_get_ex(cfg, "sequencemultiplier", &w) && w &&
+      (json_object_get_type(w) == json_type_double ||
+       json_object_get_type(w) == json_type_int))
+    o->particle.seq_mult = (float)json_object_get_double(w);
   if (json_object_object_get_ex(cfg, "emitter", &w) && w &&
       json_object_get_type(w) == json_type_array &&
       json_object_array_length(w) >= 1) {

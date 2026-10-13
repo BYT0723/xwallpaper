@@ -13,6 +13,7 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
   char path[1152];
   unsigned int tex = 0, prog = 0;
   XWPoint *pts = NULL;
+  float uv_rect[4] = {0.0f, 0.0f, 1.0f, 1.0f};
   int i, rc = -1;
   if (!g || !o || !e || !dir) {
     XW_ERROR_SET(err, 1, "invalid args");
@@ -32,12 +33,6 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
     return 0;
   if (!o->particle.sprite[0])
     return 1;
-  /* sprite-sheet sequence animation is not implemented yet: sampling the
-   * whole sheet would draw the sheet as one big quad, so skip these until
-   * per-frame sampling lands (spritetrail and plain sprites work) */
-  if (strcmp(o->particle.renderer, "sprite") == 0 &&
-      strcmp(o->particle.animation_mode, "sequence") == 0)
-    return 1;
   /* sprite refs are relative to the scene's materials/ directory in real
    * packages; synthetic scenes may store them next to the scene file */
   {
@@ -51,6 +46,12 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
   if (xw_gl_upload(g, path, &tex, err) != 0) {
     memset(err, 0, sizeof(*err));
     return 1;
+  }
+  {
+    /* sprite-sheet frame for this tick (sequencemultiplier scales speed) */
+    float anim_t = e->t * (o->particle.seq_mult > 0.0f ? o->particle.seq_mult
+                                                       : 1.0f);
+    xw_gl_texture_uv_rect(g, tex, anim_t, uv_rect);
   }
   if (strcmp(o->particle.renderer, "spritetrail") == 0) {
     XWStreak *st;
@@ -85,7 +86,7 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
     }
     if (xw_gl_blend_begin(g, XW_BLEND_TRANSLUCENT) != 0)
       goto out_st;
-    if (xw_gl_draw_streaks(g, prog, tex, st, e->alive) != 0) {
+    if (xw_gl_draw_streaks(g, prog, tex, st, e->alive, uv_rect) != 0) {
       xw_gl_blend_end(g);
       goto out_st;
     }
@@ -116,7 +117,7 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
   }
   if (xw_gl_blend_begin(g, XW_BLEND_TRANSLUCENT) != 0)
     goto out;
-  if (xw_gl_draw_points(g, prog, tex, pts, e->alive) != 0)
+  if (xw_gl_draw_points(g, prog, tex, pts, e->alive, uv_rect) != 0)
     goto out;
   rc = 0;
 out:
