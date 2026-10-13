@@ -57,7 +57,7 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
     char shpath[1152];
     unsigned int texs[XW_GL_WE_SLOTS];
     unsigned int pp = 0, used = 0;
-    XWSceneCombo combos[XW_SCENE_COMBOS_MAX + 3];
+    XWSceneCombo combos[XW_SCENE_COMBOS_MAX + 4];
     float rv0[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float rv1[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     float *verts;
@@ -87,12 +87,37 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
       {
         const char *extra[3];
         int nextra = 0;
+        /* the engine always runs particles through the thick vertex format
+         * (velocity + lifetime in a_TexCoordVec4C1), which is our layout */
+        extra[nextra++] = "THICKFORMAT";
         if (o->particle.has_trail) {
           extra[nextra++] = "TRAILRENDERER";
-          extra[nextra++] = "THICKFORMAT";
           rv0[0] = o->particle.trail_length;
           rv0[1] = o->particle.trail_max; /* length() clamp, see the header */
           rv0[2] = o->particle.trail_min;
+        }
+        /* an animated sprite is a sheet: the shader selects the frame from
+         * g_RenderVar1 (frame w/h in UV, frame count, texture ratio) and the
+         * quad's 0/1 corner UVs are mapped into it via step(0.001, uv) */
+        if (nframes > 1) {
+          float fr[4];
+          int tw = 0, th = 0, rw = 0, rh = 0;
+          if (xw_gl_texture_size(g, tex, &tw, &th, &rw, &rh) == 0 && tw > 0 &&
+              th > 0 && xw_gl_texture_uv_rect(g, tex, 0.0f, fr) == 0 &&
+              fr[2] > 0.0f && fr[3] > 0.0f) {
+            /* only a grid atlas (frames smaller than the texture) is a
+             * spritesheet: sequences that store one frame per texture are
+             * switched by texture id and must keep sampling the whole one */
+            if (fr[2] < (float)tw || fr[3] < (float)th) {
+              extra[nextra++] = "SPRITESHEET";
+              rv1[2] = (float)nframes;
+              /* the cache stores frame rects in pixels; the shader wants UV */
+              rv1[0] = fr[2] / (float)tw;
+              rv1[1] = fr[3] / (float)th;
+            } else {
+              nframes = 1;
+            }
+          }
         }
         {
           int tw = 0, th = 0, rw = 0, rh = 0;
@@ -114,7 +139,7 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
       /* samplers the material leaves empty fall back to the shader's own
        * annotated default; _rt_FullFrameBuffer is the scene so far (the
        * refractive rain multiplies its colour by it) */
-      for (ti = 0; ti < XW_GL_WE_SLOTS; ti++) {
+      for (ti = 1; ti < XW_GL_WE_SLOTS; ti++) {
         char tuname[32], dref[64];
         if (texs[ti])
           continue;
@@ -146,10 +171,17 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
         float nf = (float)(nframes > 0 ? nframes : 1);
         float life;
         int k;
-        if (strcmp(o->particle.animation_mode, "randomframe") == 0)
+        if (nframes > 1) {
+          /* the shader recovers the frame as floor(frac(life) * numFrames) */
+          float fi = 0.0f;
+          if (strcmp(o->particle.animation_mode, "randomframe") == 0)
+            fi = floorf(p->rnd * nf);
+          else
+            xw_gl_particle_frame(g, tex, p->age, speed, &fi);
+          life = fi / nf;
+        } else {
           life = (floorf(p->rnd * nf) + 0.5f) / nf;
-        else
-          life = p->frame / nf;
+        }
         for (k = 0; k < 6; k++) {
           const float *c = corner[idx[k]];
           float *v = verts + ((size_t)nv + (size_t)k) * XW_PARTICLE_FLOATS;
