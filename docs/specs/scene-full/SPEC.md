@@ -380,3 +380,8 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   （混入帧时序噪声）；必须**看放大截图** + 用参考截图做基准。
 - **已知差距**：斑点（speckles）在天空形成细密"细胞/砂纹"观感，而参考是更细的线状雨；逐粒子贴图选择、
   REFRACT 帧缓冲贡献与 alpha 仍未完全对齐。
+- **脚本化向量属性（2026-10-14 已修）**：对象的 `origin`/`scale`/`size` 除了 `"x y z"` 字符串与数组形式，还有
+  **脚本属性**写法 `{"script":…, "scriptproperties":…, "value":"x y z"}`（引擎每帧跑脚本驱动它，例如用时间或
+  滑块）。此前 `get_vec2/3/4` 只认前两种 → 整个场景直接解析失败（用户实测 2794098047 报
+  "object origin/scale/size must be [x, y]"）。现在三个读取器都先解包该 dict 取其基准 `value`；
+  **逐属性脚本本身尚未求值**（记入已知差距），基准值至少让对象落在作者放置的位置。

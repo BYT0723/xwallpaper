@@ -39,6 +39,18 @@ static int parse_vec_str(const char *s, float *v, int n) {
 
 /* Real workshop files store vectors as "x y [z]" strings; our fixtures
  * use JSON arrays. Both accepted. */
+/* A "scripted property" wraps its base value as {"script": .., "script
+ * properties": .., "value": <the vector>}; the engine evaluates the script
+ * per frame, we apply the base value so the object still lands somewhere
+ * sensible. */
+static struct json_object *unwrap_scripted(struct json_object *a) {
+  struct json_object *iv = NULL;
+  if (a && json_object_get_type(a) == json_type_object &&
+      json_object_object_get_ex(a, "value", &iv) && iv)
+    return iv;
+  return a;
+}
+
 static int get_vec2(struct json_object *o, const char *key, float *x, float *y,
                     float dx, float dy) {
   struct json_object *a = NULL;
@@ -46,6 +58,7 @@ static int get_vec2(struct json_object *o, const char *key, float *x, float *y,
   *x = dx;
   *y = dy;
   if (!json_object_object_get_ex(o, key, &a) || !a) return 0;
+  a = unwrap_scripted(a);
   if (json_object_get_type(a) == json_type_string) {
     const char *s = json_object_get_string(a);
     if (!s || parse_vec_str(s, v, 2) != 0) return -1;
@@ -66,6 +79,7 @@ static int get_vec2(struct json_object *o, const char *key, float *x, float *y,
 static int get_vec3(struct json_object *o, const char *key, float *v) {
   struct json_object *a = NULL;
   if (!json_object_object_get_ex(o, key, &a) || !a) return 0;
+  a = unwrap_scripted(a);
   if (json_object_get_type(a) == json_type_string) {
     const char *s = json_object_get_string(a);
     if (!s || parse_vec_str(s, v, 3) != 0) return -1;
@@ -84,6 +98,7 @@ static int get_vec3(struct json_object *o, const char *key, float *v) {
 static int get_vec4(struct json_object *o, const char *key, float *v) {
   struct json_object *a = NULL;
   if (!json_object_object_get_ex(o, key, &a) || !a) return 0;
+  a = unwrap_scripted(a);
   if (json_object_get_type(a) == json_type_string) {
     const char *s = json_object_get_string(a);
     if (!s || parse_vec_str(s, v, 4) != 0) return -1;

@@ -323,6 +323,23 @@ static void test_visible_dict(void) {
   xw_scene_free(&s);
 }
 
+static void test_scripted_vec_props(void) {
+  XWScene s;
+  XWError err = {0};
+  TEST_BEGIN("scripted origin/scale dicts fall back to their base value");
+  memset(&s, 0, sizeof(s));
+  TEST_CHECK_EQ_INT(xw_scene_parse("tests/data/scene/scriptprop", &s, &err), 0);
+  TEST_CHECK_EQ_INT(s.n_objects, 1);
+  if (s.n_objects == 1) {
+    TEST_CHECK((int)s.objects[0].origin[0] == 2700);
+    TEST_CHECK((int)s.objects[0].origin[1] == 238);
+    TEST_CHECK(s.objects[0].scale[0] > 0.49f && s.objects[0].scale[0] < 0.51f);
+    TEST_CHECK((int)s.objects[0].size[0] == 100);
+    TEST_CHECK((int)s.objects[0].size[1] == 200);
+  }
+  xw_scene_free(&s);
+}
+
 static void test_turbulent_parse(void) {
   XWScene s;
   XWError err = {0};
@@ -362,6 +379,7 @@ int main(void) {
   test_realrain();
   test_effect_target();
   test_visible_dict();
+  test_scripted_vec_props();
   test_turbulent_parse();
   TEST_SUMMARY();
 }
