@@ -569,42 +569,246 @@ static int wordch(char c) {
          (c >= 'a' && c <= 'z');
 }
 
-int xw_shader_fix_linked_varyings(const char *frag, char *vert, size_t n) {
+/* The engine guards a varying with #if <COMBO> and declares a different
+ * width per branch (genericparticle declares vec2/vec4 v_TexCoord under
+ * #if SPRITESHEET). Collecting the raw text therefore picks a width from an
+ * inactive branch and widens a pair that actually matches, so the collector
+ * has to evaluate the conditions against the combo defines. The evaluator
+ * covers what the engine's shaders use: identifiers, defined(), !, &&, ||,
+ * parentheses and numeric literals. */
+static const XWSceneCombo *ev_combos;
+static int ev_ncombos;
+
+static int ev_defined(const char *name, size_t len) {
+  int i;
+  for (i = 0; i < ev_ncombos; i++)
+    if (strlen(ev_combos[i].key) == len &&
+        strncmp(ev_combos[i].key, name, len) == 0)
+      return 1;
+  return 0;
+}
+
+static long ev_lookup(const char *name, size_t len) {
+  int i;
+  for (i = 0; i < ev_ncombos; i++)
+    if (strlen(ev_combos[i].key) == len &&
+        strncmp(ev_combos[i].key, name, len) == 0)
+      return ev_combos[i].value[0] ? strtol(ev_combos[i].value, NULL, 0) : 1;
+  return 0;
+}
+
+static const char *ev_ws(const char *p) {
+  while (*p == ' ' || *p == '\t')
+    p++;
+  return p;
+}
+
+static long ev_or(const char **pp);
+
+static long ev_primary(const char **pp) {
+  const char *p = ev_ws(*pp);
+  size_t nl = 0;
+  if (*p == '(') {
+    long v;
+    p++;
+    v = ev_or(&p);
+    p = ev_ws(p);
+    if (*p == ')')
+      p++;
+    *pp = p;
+    return v;
+  }
+  if (strncmp(p, "defined", 7) == 0 && !wordch(p[7])) {
+    long v;
+    p = ev_ws(p + 7);
+    if (*p == '(')
+      p = ev_ws(p + 1);
+    while (wordch(p[nl]))
+      nl++;
+    v = nl ? ev_defined(p, nl) : 0;
+    p += nl;
+    p = ev_ws(p);
+    if (*p == ')')
+      p++;
+    *pp = p;
+    return v;
+  }
+  if (*p >= '0' && *p <= '9') {
+    char *e = NULL;
+    long v = strtol(p, &e, 0);
+    *pp = e;
+    return v;
+  }
+  while (wordch(p[nl]))
+    nl++;
+  if (nl == 0) {
+    *pp = p + 1;
+    return 0;
+  }
+  *pp = p + nl;
+  return ev_lookup(p, nl);
+}
+
+static long ev_unary(const char **pp) {
+  const char *p = ev_ws(*pp);
+  if (*p == '!') {
+    p++;
+    return !ev_unary(&p);
+  }
+  return ev_primary(pp);
+}
+
+static long ev_and(const char **pp) {
+  long v = ev_unary(pp);
+  const char *p = ev_ws(*pp);
+  while (p[0] == '&' && p[1] == '&') {
+    long r;
+    p = ev_ws(p + 2);
+    r = ev_unary(&p);
+    v = v && r;
+    p = ev_ws(p);
+  }
+  *pp = p;
+  return v;
+}
+
+static long ev_or(const char **pp) {
+  long v = ev_and(pp);
+  const char *p = ev_ws(*pp);
+  while (p[0] == '|' && p[1] == '|') {
+    long r;
+    p = ev_ws(p + 2);
+    r = ev_and(&p);
+    v = v || r;
+    p = ev_ws(p);
+  }
+  *pp = p;
+  return v;
+}
+
+/* Collect the names the fragment unit declares `varying vec4`, skipping the
+ * #if branches the combo defines turn off. */
+static void collect_frag_varyings(const char *frag, const XWSceneCombo *combos,
+                                  int n_combos, char names[][64], int max,
+                                  int *out_n) {
+  struct {
+    int active, taken;
+  } stack[32];
+  int sp = 0, k = *out_n;
+  const char *p = frag;
+  ev_combos = combos;
+  ev_ncombos = n_combos;
+  while (*p) {
+    const char *eol = strchr(p, '\n');
+    size_t len = eol ? (size_t)(eol - p) : strlen(p);
+    size_t s = 0;
+    while (s < len && (p[s] == ' ' || p[s] == '\t'))
+      s++;
+    if (s < len && p[s] == '#') {
+      char kw[16], cond[256];
+      size_t ks = 0, cs;
+      const char *d = p + s + 1;
+      while (d < p + len && (*d == ' ' || *d == '\t'))
+        d++;
+      while (d < p + len && *d != ' ' && *d != '\t' && ks < sizeof(kw) - 1)
+        kw[ks++] = *d++;
+      kw[ks] = '\0';
+      while (d < p + len && (*d == ' ' || *d == '\t'))
+        d++;
+      cs = (size_t)(p + len - d);
+      if (cs > sizeof(cond) - 1)
+        cs = sizeof(cond) - 1;
+      memcpy(cond, d, cs);
+      cond[cs] = '\0';
+      if (strcmp(kw, "if") == 0 || strcmp(kw, "elif") == 0) {
+        const char *ep = cond;
+        int eval = (ev_or(&ep) != 0);
+        if (strcmp(kw, "if") == 0) {
+          int parent = sp ? stack[sp - 1].active : 1;
+          if (sp < (int)(sizeof(stack) / sizeof(stack[0]))) {
+            stack[sp].active = parent && eval;
+            stack[sp].taken = parent && eval;
+            sp++;
+          }
+        } else if (sp) {
+          int parent = sp >= 2 ? stack[sp - 2].active : 1;
+          int take = parent && !stack[sp - 1].taken && eval;
+          stack[sp - 1].active = take;
+          stack[sp - 1].taken = stack[sp - 1].taken || take;
+        }
+      } else if (strcmp(kw, "ifdef") == 0 || strcmp(kw, "ifndef") == 0) {
+        size_t nl = 0;
+        int parent = sp ? stack[sp - 1].active : 1;
+        int def;
+        while (cond[nl] && wordch(cond[nl]))
+          nl++;
+        def = nl ? ev_defined(cond, nl) : 0;
+        if (strcmp(kw, "ifndef") == 0)
+          def = !def;
+        if (sp < (int)(sizeof(stack) / sizeof(stack[0]))) {
+          stack[sp].active = parent && def;
+          stack[sp].taken = parent && def;
+          sp++;
+        }
+      } else if (strcmp(kw, "else") == 0) {
+        if (sp) {
+          int parent = sp >= 2 ? stack[sp - 2].active : 1;
+          int take = parent && !stack[sp - 1].taken;
+          stack[sp - 1].active = take;
+          stack[sp - 1].taken = 1;
+        }
+      } else if (strcmp(kw, "endif") == 0) {
+        if (sp)
+          sp--;
+      }
+    } else if (sp == 0 || stack[sp - 1].active) {
+      const char *q = p + s;
+      while (q < p + len) {
+        const char *r;
+        char type[16];
+        size_t tl = 0, nl = 0;
+        q = strstr(q, "varying");
+        if (!q || q >= p + len)
+          break;
+        r = q + 7;
+        while (r < p + len && (*r == ' ' || *r == '\t'))
+          r++;
+        while (r + tl < p + len && wordch(r[tl]) && tl < sizeof(type) - 1)
+          tl++;
+        memcpy(type, r, tl);
+        type[tl] = '\0';
+        r += tl;
+        while (r < p + len && (*r == ' ' || *r == '\t'))
+          r++;
+        while (r + nl < p + len && wordch(r[nl]) && nl < 63)
+          nl++;
+        if (tl && nl && strcmp(type, "vec4") == 0 && k < max) {
+          memcpy(names[k], r, nl);
+          names[k][nl] = '\0';
+          k++;
+        }
+        q = r + (nl ? nl : 1);
+      }
+    }
+    p = eol ? eol + 1 : p + len;
+  }
+  *out_n = k;
+}
+
+int xw_shader_fix_linked_varyings(const char *frag, char *vert, size_t n,
+                                  const XWSceneCombo *combos, int n_combos) {
   char names[16][64];
+  int widened[16];
   int nnames = 0, i;
   char *buf = NULL;
   size_t len = 0, cap = 0;
-  const char *p;
   if (!frag || !vert || n == 0)
     return -1;
 
-  /* collect `varying vec4 NAME;` declarations from the fragment unit */
-  p = frag;
-  while ((p = strstr(p, "varying")) != NULL) {
-    const char *q = p + 7;
-    char type[16], name[64];
-    size_t tl = 0, nl = 0;
-    while (*q == ' ' || *q == '\t') q++;
-    while (q[tl] && wordch(q[tl]) && tl < sizeof(type) - 1) tl++;
-    if (tl == 0) {
-      p = q + 1;
-      continue;
-    }
-    memcpy(type, q, tl);
-    type[tl] = '\0';
-    q += tl;
-    while (*q == ' ' || *q == '\t') q++;
-    while (q[nl] && wordch(q[nl]) && nl < sizeof(name) - 1) nl++;
-    if (nl == 0) {
-      p = q + 1;
-      continue;
-    }
-    memcpy(name, q, nl);
-    name[nl] = '\0';
-    if (strcmp(type, "vec4") == 0 && nnames < 16)
-      snprintf(names[nnames++], sizeof(names[0]), "%s", name);
-    p = q + nl;
-  }
+  memset(widened, 0, sizeof(widened));
+
+  /* collect `varying vec4 NAME;` declarations active in the fragment unit */
+  collect_frag_varyings(frag, combos, n_combos, names, 16, &nnames);
   if (nnames == 0)
     return 0;
 
@@ -614,11 +818,16 @@ int xw_shader_fix_linked_varyings(const char *frag, char *vert, size_t n) {
     char *hit;
     snprintf(pat, sizeof(pat), "varying vec2 %.64s", names[i]);
     hit = strstr(vert, pat);
-    if (hit)
+    if (hit) {
       memcpy(hit + 8, "vec4", 4); /* "varying " is 8 chars, same length */
+      widened[i] = 1;
+    }
   }
 
-  /* 2) pad bare `NAME = expr;` assignments to vec4 */
+  /* 2) pad bare `NAME = expr;` assignments only for the declarations we
+   * widened above: a vertex unit that already declares the name vec4 (and
+   * assigns a vec4, e.g. `v_Color = a_Color;`) must be left alone or the
+   * constructor would end up with too many components. */
   {
     const char *s = vert;
     while (*s) {
@@ -626,6 +835,8 @@ int xw_shader_fix_linked_varyings(const char *frag, char *vert, size_t n) {
       size_t nl = 0;
       for (i = 0; i < nnames; i++) {
         size_t L = strlen(names[i]);
+        if (!widened[i])
+          continue;
         if ((s == vert || !wordch(s[-1])) && strncmp(s, names[i], L) == 0 &&
             !wordch(s[L])) {
           matched = i;

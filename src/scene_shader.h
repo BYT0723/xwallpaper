@@ -45,8 +45,11 @@ int xw_shader_translate(const char *src, char *dst, size_t n);
  * vertex declares `varying vec2 X` while the fragment wants `varying vec4 X`
  * (glitter_prepare is a shipped example). Widen the vertex declaration in
  * place and pad bare `X = expr;` assignments to vec4 so the pair links.
- * `vert` is rewritten in place within n bytes; best effort, returns 0. */
-int xw_shader_fix_linked_varyings(const char *frag, char *vert, size_t n);
+ * `vert` is rewritten in place within n bytes; best effort, returns 0.
+ * `combos` are the active defines, so #if branches the engine turns off are
+ * not mistaken for real declarations. */
+int xw_shader_fix_linked_varyings(const char *frag, char *vert, size_t n,
+                                  const XWSceneCombo *combos, int n_combos);
 
 /* Built-in engine header source ("common.h", "common_fragment.h",
  * "common_vertex.h", "common_blending.h"), or NULL when unknown. */

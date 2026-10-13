@@ -280,3 +280,12 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   `too many parameters to 'vec4' constructor`，但按其给出的行号（0:170）定位到的行并无该调用，
   怀疑与 `#define in_ParticleRotation vec3(...)` 之类的宏展开或行号映射有关，尚未定位。
   解决后即可让 3003908979 这类折射粒子显示正常。
+- **粒子材质 pass 已激活（2026-10-13）**：定位并修掉两个阻塞点后，真 `genericparticle` 通过。
+  ① `xw_shader_fix_linked_varyings` 原先不理会 `#if`，把 frag 里**非激活分支**的 `varying vec4`也当成
+  真实声明，于是把本已匹配的一对（`genericparticle` 在 `#if SPRITESHEET` 下分别声明 vec2/vec4）加宽，
+  链接反而失败；现在按行维护 `#if` 栈并用 combo 定义求值（标识符/`defined()`/`!`/`&&`/`||`/括号/字面量），
+  且**只对真正加宽过的声明**做 `NAME = vec4(expr, 0.0, 1.0)` 填充——之前会把 `v_Color = a_Color;`
+  （`a_Color` 本身是 vec4）改成 6 分量构造而编译失败。
+  ② pass 生效后：3003908979 的折射雨滴正常渲染（不再是白色方块）；3497575235 / 2178468632
+  逐 pass 验证全部编译通过（含 `glitter_prepare`）。
+  **前提**：需要 `XW_ASSETS_DIR` 指向引擎 assets（内建粒子 shader 不在 pkg 内）；未设置时仍走简化渲染器。

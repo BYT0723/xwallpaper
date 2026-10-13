@@ -837,7 +837,8 @@ int xw_gl_program_we(XWGl *g, const char *frag_path,
     if (slurp(vert_path, &vsrc, &verr) == 0) {
       /* the shipped pair may disagree on varying widths; align the vertex
        * side with the fragment before preprocessing */
-      xw_shader_fix_linked_varyings(src, vsrc, strlen(vsrc) + 4096);
+      xw_shader_fix_linked_varyings(src, vsrc, strlen(vsrc) + 4096, combos,
+                                    n_combos);
       vcap = strlen(vsrc) + 65536;
       vdst = malloc(vcap);
       if (!vdst) {

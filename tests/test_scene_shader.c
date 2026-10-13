@@ -164,7 +164,7 @@ static void test_linked_varyings(void) {
            "attribute vec2 a_TexCoord;\n"
            "varying vec2 v_TexCoord;\n"
            "void main() { v_TexCoord = a_TexCoord; }\n");
-  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag, vert, sizeof(vert)), 0);
+  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag, vert, sizeof(vert), NULL, 0), 0);
   TEST_CHECK(strstr(vert, "varying vec4 v_TexCoord;") != NULL);
   TEST_CHECK(strstr(vert, "varying vec2 v_TexCoord;") == NULL);
   /* a bare assignment gets padded to vec4 so the type stays valid */
@@ -175,7 +175,7 @@ static void test_linked_varyings(void) {
   snprintf(vert2, sizeof(vert2),
            "varying vec2 v_TexCoord;\n"
            "void main() { v_TexCoord.xy = a_TexCoord.xy; }\n");
-  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag, vert2, sizeof(vert2)), 0);
+  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag, vert2, sizeof(vert2), NULL, 0), 0);
   TEST_CHECK(strstr(vert2, "varying vec4 v_TexCoord;") != NULL);
   TEST_CHECK(strstr(vert2, "v_TexCoord.xy = a_TexCoord.xy;") != NULL);
 
@@ -183,8 +183,50 @@ static void test_linked_varyings(void) {
   const char *frag2 = "varying vec2 v_TexCoord;\nvoid main() {}\n";
   char vert3[512];
   snprintf(vert3, sizeof(vert3), "varying vec2 v_TexCoord;\nvoid main() {}\n");
-  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag2, vert3, sizeof(vert3)), 0);
+  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag2, vert3, sizeof(vert3), NULL, 0), 0);
   TEST_CHECK(strstr(vert3, "varying vec2 v_TexCoord;") != NULL);
+
+  /* a vertex unit that already declares the name vec4 keeps its assignment
+   * untouched - padding a wide RHS would build a 6-component constructor
+   * (this is what broke the engine's genericparticle.vert) */
+  const char *frag3 = "varying vec4 v_Color;\nvoid main() {}\n";
+  char vert4[512];
+  snprintf(vert4, sizeof(vert4),
+           "attribute vec4 a_Color;\n"
+           "varying vec4 v_Color;\n"
+           "void main() { v_Color = a_Color; }\n");
+  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag3, vert4, sizeof(vert4), NULL, 0), 0);
+  TEST_CHECK(strstr(vert4, "varying vec4 v_Color;") != NULL);
+  TEST_CHECK(strstr(vert4, "v_Color = a_Color;") != NULL);
+  TEST_CHECK(strstr(vert4, "vec4(a_Color, 0.0, 1.0)") == NULL);
+
+  /* a fragment that only declares the wide type in a branch the combos turn
+   * off must not widen a pair that already matches (the engine's
+   * genericparticle declares vec2/vec4 v_TexCoord under #if SPRITESHEET) */
+  const char *frag4 =
+      "#if SPRITESHEET\n"
+      "varying vec4 v_TexCoord;\n"
+      "#else\n"
+      "varying vec2 v_TexCoord;\n"
+      "#endif\n"
+      "void main() {}\n";
+  char vert5[512];
+  snprintf(vert5, sizeof(vert5), "varying vec2 v_TexCoord;\nvoid main() {}\n");
+  TEST_CHECK_EQ_INT(
+      xw_shader_fix_linked_varyings(frag4, vert5, sizeof(vert5), NULL, 0), 0);
+  TEST_CHECK(strstr(vert5, "varying vec2 v_TexCoord;") != NULL);
+  TEST_CHECK(strstr(vert5, "varying vec4 v_TexCoord;") == NULL);
+
+  /* but when the combos select the wide branch, a narrow vertex is widened */
+  XWSceneCombo ss[1];
+  char vert6[512];
+  memset(ss, 0, sizeof(ss));
+  snprintf(ss[0].key, sizeof(ss[0].key), "SPRITESHEET");
+  snprintf(ss[0].value, sizeof(ss[0].value), "1");
+  snprintf(vert6, sizeof(vert6), "varying vec2 v_TexCoord;\nvoid main() {}\n");
+  TEST_CHECK_EQ_INT(
+      xw_shader_fix_linked_varyings(frag4, vert6, sizeof(vert6), ss, 1), 0);
+  TEST_CHECK(strstr(vert6, "varying vec4 v_TexCoord;") != NULL);
 }
 
 static void test_vertex_attrib_locations(void) {
