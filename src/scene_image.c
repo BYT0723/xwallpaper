@@ -92,6 +92,35 @@ static const XWSceneFbo *find_fbo(const XWSceneEffect *fx, const char *name) {
   return NULL;
 }
 
+/* Resolve the shader's annotated `default` for a material's empty sampler
+ * slot: `_rt_FullFrameBuffer` is the scene accumulated so far, other
+ * `_rt_`/`_alias_` names belong to the pass binds, and everything else
+ * resolves like a texture reference. Returns 0 and fills tex/res. */
+int xw_scene_sampler_default_tex(XWGl *gl, const char *dir, unsigned int prog,
+                                 int slot, unsigned int *tex, float res[4]) {
+  char uname[32], dref[64];
+  XWWeSlot tmp;
+  if (!gl || !tex)
+    return -1;
+  *tex = 0;
+  snprintf(uname, sizeof(uname), "g_Texture%d", slot);
+  if (xw_gl_program_sampler_default(gl, prog, uname, dref, sizeof(dref)) != 0 ||
+      !dref[0])
+    return -1;
+  if (strcmp(dref, "_rt_FullFrameBuffer") == 0)
+    return xw_gl_framebuffer_snapshot(gl, tex);
+  if (strncmp(dref, "_rt_", 4) == 0 || strncmp(dref, "_alias_", 7) == 0)
+    return -1;
+  memset(&tmp, 0, sizeof(tmp));
+  fill_slot(gl, dir, dref, &tmp);
+  if (!tmp.tex)
+    return -1;
+  *tex = tmp.tex;
+  if (res)
+    memcpy(res, tmp.res, sizeof(tmp.res));
+  return 0;
+}
+
 int xw_scene_resolve_shader(const char *dir, const char *ref, char *out,
                             size_t n) {
   return resolve_shader(dir, ref, out, n);
@@ -202,13 +231,12 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
          * (util/perlin_256, util/white, gradients) when the material does
          * not provide one; named render targets come from pass binds */
         if (!slots[t].tex) {
-          char uname[32], dref[64];
-          snprintf(uname, sizeof(uname), "g_Texture%d", t);
-          if (xw_gl_program_sampler_default(gl, ep, uname, dref,
-                                            sizeof(dref)) == 0 &&
-              dref[0] && strncmp(dref, "_rt_", 4) != 0 &&
-              strncmp(dref, "_alias_", 7) != 0)
-            fill_slot(gl, dir, dref, &slots[t]);
+          unsigned int dt = 0;
+          float dr[4];
+          if (xw_scene_sampler_default_tex(gl, dir, ep, t, &dt, dr) == 0) {
+            slots[t].tex = dt;
+            memcpy(slots[t].res, dr, sizeof(dr));
+          }
         }
       }
       /* destination: a named offscreen target, else the ping-pong chain */

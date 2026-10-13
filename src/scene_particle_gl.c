@@ -141,22 +141,10 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
        * annotated default; _rt_FullFrameBuffer is the scene so far (the
        * refractive rain multiplies its colour by it) */
       for (ti = 1; ti < XW_GL_WE_SLOTS; ti++) {
-        char tuname[32], dref[64];
-        if (texs[ti])
-          continue;
-        snprintf(tuname, sizeof(tuname), "g_Texture%d", ti);
-        if (xw_gl_program_sampler_default(g, pp, tuname, dref,
-                                          sizeof(dref)) != 0 ||
-            !dref[0])
-          continue;
-        if (strcmp(dref, "_rt_FullFrameBuffer") == 0) {
-          unsigned int ft = 0;
-          if (xw_gl_framebuffer_snapshot(g, &ft) == 0)
-            texs[ti] = ft;
-        } else if (strncmp(dref, "_rt_", 4) != 0 &&
-                   strncmp(dref, "_alias_", 7) != 0) {
-          xw_scene_resolve_texture(g, dir, dref, &texs[ti], NULL);
-        }
+        unsigned int dt = 0;
+        if (!texs[ti] &&
+            xw_scene_sampler_default_tex(g, dir, pp, ti, &dt, NULL) == 0)
+          texs[ti] = dt;
       }
       verts = malloc((size_t)e->alive * 6 * XW_PARTICLE_FLOATS *
                      sizeof(float));

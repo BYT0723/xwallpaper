@@ -690,22 +690,22 @@ static int wordch(char c) {
 static const XWSceneCombo *ev_combos;
 static int ev_ncombos;
 
-static int ev_defined(const char *name, size_t len) {
+/* Index of a define in the active combos, or -1. */
+static int ev_find(const char *name, size_t len) {
   int i;
   for (i = 0; i < ev_ncombos; i++)
     if (strlen(ev_combos[i].key) == len &&
         strncmp(ev_combos[i].key, name, len) == 0)
-      return 1;
-  return 0;
+      return i;
+  return -1;
 }
 
+/* An undefined name evaluates to 0; a define with no value counts as 1. */
 static long ev_lookup(const char *name, size_t len) {
-  int i;
-  for (i = 0; i < ev_ncombos; i++)
-    if (strlen(ev_combos[i].key) == len &&
-        strncmp(ev_combos[i].key, name, len) == 0)
-      return ev_combos[i].value[0] ? strtol(ev_combos[i].value, NULL, 0) : 1;
-  return 0;
+  int i = ev_find(name, len);
+  if (i < 0)
+    return 0;
+  return ev_combos[i].value[0] ? strtol(ev_combos[i].value, NULL, 0) : 1;
 }
 
 static const char *ev_ws(const char *p) {
@@ -736,7 +736,7 @@ static long ev_primary(const char **pp) {
       p = ev_ws(p + 1);
     while (wordch(p[nl]))
       nl++;
-    v = nl ? ev_defined(p, nl) : 0;
+    v = nl ? (ev_find(p, nl) >= 0) : 0;
     p += nl;
     p = ev_ws(p);
     if (*p == ')')
@@ -853,7 +853,7 @@ static void collect_frag_varyings(const char *frag, const XWSceneCombo *combos,
         int def;
         while (cond[nl] && wordch(cond[nl]))
           nl++;
-        def = nl ? ev_defined(cond, nl) : 0;
+        def = nl ? (ev_find(cond, nl) >= 0) : 0;
         if (strcmp(kw, "ifndef") == 0)
           def = !def;
         if (sp < (int)(sizeof(stack) / sizeof(stack[0]))) {

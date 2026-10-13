@@ -16,6 +16,8 @@ int xw_scene_image_render(XWGl *gl, const XWScene *scene, const char *dir,
  * the engine asset fallback) and a material texture ref. */
 int xw_scene_resolve_shader(const char *dir, const char *ref, char *out,
                             size_t n);
+int xw_scene_sampler_default_tex(XWGl *gl, const char *dir, unsigned int prog,
+                                 int slot, unsigned int *tex, float res[4]);
 void xw_scene_resolve_texture(XWGl *gl, const char *dir, const char *ref,
                               unsigned int *tex, float res[4]);
 
