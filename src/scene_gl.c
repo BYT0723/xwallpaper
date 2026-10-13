@@ -1762,9 +1762,15 @@ static void bind_prog_defaults(XWGl *g, GLuint prog,
       continue;
     for (i = 0; i < g->progs[p].ndefs; i++) {
       const XWShaderDef *d = &g->progs[p].defs[i];
-      GLint loc = glGetUniformLocation(prog, d->name);
+      GLint loc;
       float v[4];
       int c;
+      /* kind 0 is a sampler default (a texture ref, no numeric value); it is
+       * bound through the pass texture slots, and glUniform on a sampler
+       * location is invalid */
+      if (d->kind == 0)
+        continue;
+      loc = glGetUniformLocation(prog, d->name);
       if (loc < 0)
         continue;
       memcpy(v, d->v, sizeof(v));

@@ -333,3 +333,11 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   （画师的镜面高光/反光），不是渲染缺陷；`блеск очки`（glasses shine，即 glitter 效果）能编译、能动画
   （`_rt_GlitterTiles` 在 t≈0 与 t≈30 差异 29%），把它的 alpha 归零后画面仅差 1.7%（细微光泽），属正常。
   真正修掉的是上面那条"采样器默认纹理未绑定"。
+- **回归修复（2026-10-13）**：上一条把采样器默认记入 `defs`（kind 0）后，`bind_prog_defaults` 的 switch
+  没有 case 0，落到 `default:` 分支对**采样器 uniform**调用 `glUniform4f` —— 非法操作且会把采样器绑定的纹理
+  单元改写成 0，导致纹理全乱（3003908979 的窗框 `genericimage2` 直接消失，用户反馈为"前后景分离"）。
+  现在 kind 0 直接跳过（采样器默认走纹理槽绑定路径）。窗框已恢复。
+- **2178468632 无雨滴（2026-10-13 诊断）**：雨滴用的是 `genericparticle` + `REFRACT=1`，该分支执行
+  `color.rgb *= texSample2D(g_Texture3, ...)`，而 `g_Texture3` 的默认是 `_rt_FullFrameBuffer`（我们跳过
+  `_rt_*` 默认）→ 采样未绑定纹理得黑色 → 颜色乘 0 → 雨滴不可见。**待实现**：`_rt_FullFrameBuffer`（帧缓冲
+  快照）作为纹理源。
