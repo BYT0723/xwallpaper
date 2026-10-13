@@ -10,6 +10,7 @@
 #include <Imlib2.h>
 
 #include "scene_gl.h"
+#include "scene_glsl.h"
 #include "scene_shader.h"
 #include "scene_tex.h"
 
@@ -752,12 +753,28 @@ int xw_gl_program_we(XWGl *g, const char *frag_path,
     }
   }
   free(src);
-  /* collect annotated uniform defaults for the draw path */
+  /* collect annotated uniform defaults from the preprocessed source: the
+   * SPIRV-Cross round trip below strips the // {"material":...} comments */
   g->progs[slot].ndefs = 0;
   xw_shader_collect_defaults(vert_use, g->progs[slot].defs,
                              &g->progs[slot].ndefs, XW_GL_DEFS_MAX);
   xw_shader_collect_defaults(dst, g->progs[slot].defs, &g->progs[slot].ndefs,
                              XW_GL_DEFS_MAX);
+  /* optional normalisation through glslang -> SPIR-V -> SPIRV-Cross; the
+   * preprocessed source is already valid GLSL 330, so a failure here just
+   * falls back to handing it to the driver */
+  if (xw_glsl_available()) {
+    char *rv = NULL, *rf = NULL;
+    XWError gerr;
+    memset(&gerr, 0, sizeof(gerr));
+    if (xw_glsl_roundtrip(vert_use, dst, &rv, &rf, &gerr) == 0) {
+      free(vdst);
+      free(dst);
+      vdst = rv;
+      dst = rf;
+      vert_use = rv;
+    }
+  }
   rc = link_program(key, vert_use, dst, g, prog, err);
   free(dst);
   free(vdst);

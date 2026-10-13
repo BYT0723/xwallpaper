@@ -35,7 +35,7 @@ DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/scene_parse.c src/scene_core.c src/scene_gl.c \
               src/scene_image.c src/scene_text_gl.c \
               src/scene_particle.c src/scene_particle_gl.c src/scene_text.c \
-              src/scene_sound.c \
+              src/scene_sound.c src/scene_glsl.c \
               src/scene_script.c src/scene.c
 DAEMON_SRC += $(QJS_SRC)
 DAEMON_OBJ := $(DAEMON_SRC:.c=.o)
@@ -103,6 +103,25 @@ LZ4_LIBS :=
 $(info xwallpaper: scene TEXV decode OFF (need: $(LZ4_PKGS) dev package))
 endif
 
+# ---- Scene shader pipeline (glslang + SPIRV-Cross): daemon-only ----
+# Mirrors linux-wallpaperengine's GLSLContext::toGlsl: glslang parses the
+# preprocessed GLSL, SPIRV-Cross re-emits it. Both are permissively licensed
+# (BSD / Apache-2.0), unlike the GPL engine itself. Without them the renderer
+# hands the preprocessed source straight to the driver.
+GLSLANG_HDR := /usr/include/glslang/Include/glslang_c_interface.h
+SPVC_HDR    := /usr/include/spirv_cross/spirv_cross_c.h
+HAVE_GLSLANG := $(shell test -f $(GLSLANG_HDR) -a -f $(SPVC_HDR) && \
+  pkg-config --exists spirv-cross-c-shared && echo 1 || echo 0)
+ifeq ($(HAVE_GLSLANG),1)
+GLSLANG_CFLAGS := -DXW_HAVE_GLSLANG=1
+GLSLANG_LIBS   := -lglslang -lglslang-default-resource-limits \
+                  $(shell pkg-config --libs spirv-cross-c-shared) -lstdc++
+else
+GLSLANG_CFLAGS :=
+GLSLANG_LIBS   :=
+$(info xwallpaper: scene shader pipeline OFF (need: glslang + spirv-cross))
+endif
+
 # ---- PulseAudio monitor capture (WE audio listener): daemon-only ----
 # libpulse works via pipewire-pulse with no new daemon process.
 # The thin CLI never sees these flags or libs (check-client-libs guards that).
@@ -166,7 +185,7 @@ $(info xwallpaper: Wayland layer-shell support OFF (need: $(WL_PKGS) libs + 'mak
 endif
 
 # wayland flags reach daemon objects only (protocol obj included above).
-$(DAEMON_OBJ): CFLAGS += $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) $(GL_CFLAGS) $(FT_CFLAGS) $(SND_CFLAGS) $(LZ4_CFLAGS)
+$(DAEMON_OBJ): CFLAGS += $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) $(GL_CFLAGS) $(FT_CFLAGS) $(SND_CFLAGS) $(LZ4_CFLAGS) $(GLSLANG_CFLAGS)
 
 BINS := xwallpaper xwallpaperd
 
@@ -200,7 +219,7 @@ xwallpaper: $(CLI_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(CLI_OBJ) $(SANITIZE)
 
 xwallpaperd: $(DAEMON_OBJ)
-	$(CC) $(LDFLAGS) -o $@ $(DAEMON_OBJ) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) $(GL_LIBS) $(FT_LIBS) $(SND_LIBS) $(LZ4_LIBS) -lm
+	$(CC) $(LDFLAGS) -o $@ $(DAEMON_OBJ) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) $(GL_LIBS) $(FT_LIBS) $(SND_LIBS) $(LZ4_LIBS) $(GLSLANG_LIBS) -lm
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -212,7 +231,7 @@ HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/wl.h src/daemon.h src/web_dir.h src/we_audio.h src/we_pulse.h \
   src/scene_pkg.h src/scene_tex.h src/scene_shader.h src/scene_parse.h \
   src/scene_model.h src/scene_core.h src/scene_gl.h src/scene_image.h \
-  src/scene_text_gl.h src/scene_particle_gl.h \
+  src/scene_text_gl.h src/scene_particle_gl.h src/scene_glsl.h \
   src/scene_sound.h src/scene_script.h \
   src/scene.h $(wildcard src/proto/*-client-protocol.h)
 $(CLI_OBJ) $(DAEMON_OBJ) $(TEST_BIN) $(INTEG_BIN) $(WL_INTEG_BIN): $(HEADER_DEPS)
@@ -242,6 +261,9 @@ tests/test_scene_tex: tests/test_scene_tex.c src/scene_tex.o
 tests/test_scene_shader: tests/test_scene_shader.c src/scene_shader.o
 	$(CC) $(CFLAGS) -o $@ $< src/scene_shader.o
 
+tests/test_scene_glsl: tests/test_scene_glsl.c src/scene_glsl.o
+	$(CC) $(CFLAGS) $(GLSLANG_CFLAGS) -o $@ $< src/scene_glsl.o $(GLSLANG_LIBS)
+
 tests/test_scene_parse: tests/test_scene_parse.c src/scene_parse.o
 	$(CC) $(CFLAGS) $(SCENE_CFLAGS) -o $@ $< src/scene_parse.o $(SCENE_LIBS) -lm
 
@@ -270,7 +292,7 @@ test: $(TEST_BIN)
 	@for t in $(TEST_BIN); do echo "== $$t =="; ./$$t || exit 1; done
 
 tests/integration/%: tests/integration/%.c $(filter-out src/dmain.o,$(DAEMON_OBJ))
-	$(CC) $(CFLAGS) $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) $(GL_CFLAGS) $(FT_CFLAGS) $(SND_CFLAGS) $(LZ4_CFLAGS) -o $@ $< $(filter-out src/dmain.o,$(DAEMON_OBJ)) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) $(GL_LIBS) $(FT_LIBS) $(SND_LIBS) $(LZ4_LIBS) -lm
+	$(CC) $(CFLAGS) $(WL_CFLAGS) $(PULSE_CFLAGS) $(SCENE_CFLAGS) $(GL_CFLAGS) $(FT_CFLAGS) $(SND_CFLAGS) $(LZ4_CFLAGS) $(GLSLANG_CFLAGS) -o $@ $< $(filter-out src/dmain.o,$(DAEMON_OBJ)) $(LDLIBS) $(WL_LIBS) $(PULSE_LIBS) $(SCENE_LIBS) $(GL_LIBS) $(FT_LIBS) $(SND_LIBS) $(LZ4_LIBS) $(GLSLANG_LIBS) -lm
 
 test-xvfb: $(BINS) $(INTEG_BIN)
 	@for t in $(INTEG_BIN); do \

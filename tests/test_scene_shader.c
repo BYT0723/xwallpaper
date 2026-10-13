@@ -176,6 +176,22 @@ static void test_linked_varyings(void) {
   TEST_CHECK(strstr(vert3, "varying vec2 v_TexCoord;") != NULL);
 }
 
+static void test_vertex_attrib_locations(void) {
+  TEST_BEGIN("vertex attributes get explicit locations for SPIR-V");
+  char dst[8192];
+  const char *src =
+      "attribute vec3 a_Position;\n"
+      "attribute vec2 a_TexCoord;\n"
+      "void main() { gl_Position = vec4(a_Position, 1.0); }\n";
+  TEST_CHECK_EQ_INT(xw_shader_translate_stage(src, dst, sizeof(dst), 1), 0);
+  TEST_CHECK(strstr(dst, "layout(location=0) attribute vec3 a_Position;") != NULL);
+  TEST_CHECK(strstr(dst, "layout(location=1) attribute vec2 a_TexCoord;") != NULL);
+  /* the fragment stage has no vertex attributes to pin */
+  char fdst[8192];
+  TEST_CHECK_EQ_INT(xw_shader_translate_stage(src, fdst, sizeof(fdst), 0), 0);
+  TEST_CHECK(strstr(fdst, "layout(location=0)") == NULL);
+}
+
 static void test_bad_inputs(void) {
   TEST_BEGIN("NULL/small-dst rejected");
   char dst[8];
@@ -258,6 +274,7 @@ int main(void) {
   test_combos();
   test_version_line_dropped();
   test_linked_varyings();
+  test_vertex_attrib_locations();
   test_bad_inputs();
   test_builtin_lookup();
   test_sample_translates();

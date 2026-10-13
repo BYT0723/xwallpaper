@@ -265,10 +265,25 @@ static int match_include(const char *line, char *name, size_t n) {
 
 #define XW_INCLUDE_DEPTH_MAX 8
 
+static int line_contains(const char *p, size_t len, const char *needle) {
+  size_t nl = strlen(needle);
+  size_t i;
+  if (nl == 0 || len < nl)
+    return 0;
+  for (i = 0; i + nl <= len; i++)
+    if (memcmp(p + i, needle, nl) == 0)
+      return 1;
+  return 0;
+}
+
 /* Copy `text` into the buffer, expanding #include lines. A missing header
- * becomes a comment (the engine does the same) rather than an error. */
+ * becomes a comment (the engine does the same) rather than an error.
+ * Vertex attributes are pinned to the renderer's VAO slots (0 = position,
+ * 1 = texcoord) because compiling for SPIR-V requires explicit locations
+ * and glslang's auto-mapping would not match our layout. */
 static int emit_source(char **tmp, size_t *len, size_t *cap, const char *text,
-                       XWShaderInclude inc, void *user, int depth) {
+                       int is_vertex, XWShaderInclude inc, void *user,
+                       int depth) {
   const char *p = text;
   while (*p) {
     const char *eol = strchr(p, '\n');
@@ -282,7 +297,8 @@ static int emit_source(char **tmp, size_t *len, size_t *cap, const char *text,
         if (append_cstr(tmp, len, cap, "// begin include ") != 0 ||
             append_cstr(tmp, len, cap, name) != 0 ||
             append_cstr(tmp, len, cap, "\n") != 0 ||
-            emit_source(tmp, len, cap, content, inc, user, depth + 1) != 0 ||
+            emit_source(tmp, len, cap, content, is_vertex, inc, user,
+                        depth + 1) != 0 ||
             append_cstr(tmp, len, cap, "// end include\n") != 0)
           return -1;
       } else if (append_cstr(tmp, len, cap, "// include not found: ") != 0 ||
@@ -292,8 +308,18 @@ static int emit_source(char **tmp, size_t *len, size_t *cap, const char *text,
       }
     } else if (line_len >= 8 && strncmp(p, "#version", 8) == 0) {
       /* the generated header owns #version; drop any in the source */
-    } else if (append(tmp, len, cap, p, line_len) != 0) {
-      return -1;
+    } else {
+      const char *loc = NULL;
+      if (is_vertex && line_contains(p, line_len, "attribute")) {
+        if (line_contains(p, line_len, "a_Position"))
+          loc = "layout(location=0) ";
+        else if (line_contains(p, line_len, "a_TexCoord"))
+          loc = "layout(location=1) ";
+      }
+      if (loc && append_cstr(tmp, len, cap, loc) != 0)
+        return -1;
+      if (append(tmp, len, cap, p, line_len) != 0)
+        return -1;
     }
     p += line_len;
   }
@@ -327,7 +353,7 @@ int xw_shader_preprocess(const char *src, char *dst, size_t n, int is_vertex,
   }
   if (emit_combos(&tmp, &len, &cap, src, combos, n_combos) != 0)
     goto fail;
-  if (emit_source(&tmp, &len, &cap, src, inc, user, 0) != 0)
+  if (emit_source(&tmp, &len, &cap, src, is_vertex, inc, user, 0) != 0)
     goto fail;
   if (len + 1 > n)
     goto fail;

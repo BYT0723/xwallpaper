@@ -1,6 +1,8 @@
 #ifndef XW_ERR_H
 #define XW_ERR_H
 
+#include <stdio.h>
+
 typedef struct XWError {
   int code;       /* 0 = ok, non-zero = module-specific error */
   char msg[256];  /* human-readable message */

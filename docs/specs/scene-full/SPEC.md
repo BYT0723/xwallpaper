@@ -194,3 +194,12 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   纹理缓存上限 8→24（349 需 1 底图 + 9 遮罩）。
 - **雨声残留（非代码 bug）**：用户 state 里 `screen` 输出仍挂着 2178468632（雨声壁纸），且其 1920x1080 与
   DP-1 的 2560x1440+1080 在 x∈[1080,1920] 重叠——"重叠+雨声"来自另一个输出的残留壁纸。清除：`xwallpaper clear -m screen`。
+- **M2（已完成，2026-10-13）**：接入 glslang → SPIR-V → SPIRV-Cross（照 `GLSLContext::toGlsl` 的流程）：
+  `src/scene_glsl.c` 用 glslang C API（`GLSLANG_SHADER_AUTO_MAP_BINDINGS|AUTO_MAP_LOCATIONS`）+ spirv-cross
+  C API（`spvc_*`，GLSL 330）。两库均为宽松许可（BSD / Apache-2.0），MIT 干净。Makefile 自动探测，
+  缺库时降级为"预处理源码直接交给驱动"。
+  两个要点：① 编译为 SPIR-V 要求显式 location，故预处理阶段给 `a_Position`/`a_TexCoord` 钉死
+  `layout(location=0/1)`（否则 glslang 自动映射与我们的 VAO 槽位不符）；② uniform 的
+  `// {"material":...}` 注释必须在回译**前**收集，SPIRV-Cross 输出会丢注释。
+  `glslang_initialize_process()` 成功返回非 0（转发 `ShInitialize` 的 bool）——一开始判断反了，
+  导致静默回退；`tests/test_scene_glsl.c` 覆盖可用性/往返/坏 shader 报错。
