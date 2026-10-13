@@ -21,6 +21,9 @@ typedef struct XWEmitter {
   int alive;
   float acc;
   unsigned int rng;
+  /* screen size for the emitter-origin transform (engine converts the
+   * emitter origin from screen space into centered space at setup) */
+  float screen_w, screen_h;
 } XWEmitter;
 
 int xw_emitter_init(XWEmitter *e, const XWParticleCfg *cfg);

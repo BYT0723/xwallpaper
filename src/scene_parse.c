@@ -448,16 +448,50 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
   cfg = slurp_json(dir, json_object_get_string(v));
   if (!cfg)
     return;
+  o->particle.dirs[0] = o->particle.dirs[1] = o->particle.dirs[2] = 1.0f;
+  o->particle.drag = 0.0f;
   if (json_object_object_get_ex(cfg, "maxcount", &w) && w)
     o->particle.max_count = json_object_get_int(w);
+  if (json_object_object_get_ex(cfg, "renderer", &w) && w &&
+      json_object_get_type(w) == json_type_array &&
+      json_object_array_length(w) >= 1) {
+    struct json_object *r0 = json_object_array_get_idx(w, 0);
+    struct json_object *rn = NULL, *rm = NULL;
+    if (r0 && json_object_get_type(r0) == json_type_object) {
+      if (json_object_object_get_ex(r0, "name", &rn) && rn)
+        copy_str(o->particle.renderer, sizeof(o->particle.renderer),
+                 json_object_get_string(rn));
+      if (json_object_object_get_ex(r0, "maxlength", &rm) && rm)
+        o->particle.trail_max = (float)json_object_get_double(rm);
+    }
+  }
+  if (o->particle.trail_max <= 0.0f)
+    o->particle.trail_max = 30.0f;
+  if (json_object_object_get_ex(cfg, "animationmode", &w) && w &&
+      json_object_get_type(w) == json_type_string)
+    copy_str(o->particle.animation_mode, sizeof(o->particle.animation_mode),
+             json_object_get_string(w));
   if (json_object_object_get_ex(cfg, "emitter", &w) && w &&
       json_object_get_type(w) == json_type_array &&
       json_object_array_length(w) >= 1) {
     struct json_object *e0 = json_object_array_get_idx(w, 0);
-    struct json_object *r = NULL;
-    if (e0 && json_object_get_type(e0) == json_type_object &&
-        json_object_object_get_ex(e0, "rate", &r) && r)
-      o->particle.rate = (float)json_object_get_double(r);
+    struct json_object *r = NULL, *s3 = NULL;
+    if (e0 && json_object_get_type(e0) == json_type_object) {
+      if (json_object_object_get_ex(e0, "rate", &r) && r)
+        o->particle.rate = (float)json_object_get_double(r);
+      if (json_object_object_get_ex(e0, "origin", &s3) && s3 &&
+          json_object_get_type(s3) == json_type_string)
+        parse_vec_str(json_object_get_string(s3), o->particle.origin, 3);
+      if (json_object_object_get_ex(e0, "distancemin", &s3) && s3 &&
+          json_object_get_type(s3) == json_type_string)
+        parse_vec_str(json_object_get_string(s3), o->particle.dist_min, 3);
+      if (json_object_object_get_ex(e0, "distancemax", &s3) && s3 &&
+          json_object_get_type(s3) == json_type_string)
+        parse_vec_str(json_object_get_string(s3), o->particle.dist_max, 3);
+      if (json_object_object_get_ex(e0, "directions", &s3) && s3 &&
+          json_object_get_type(s3) == json_type_string)
+        parse_vec_str(json_object_get_string(s3), o->particle.dirs, 3);
+    }
   }
   if (json_object_object_get_ex(cfg, "initializer", &w) && w &&
       json_object_get_type(w) == json_type_array) {
@@ -499,6 +533,8 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
         if (json_object_object_get_ex(it, "max", &mx) && mx &&
             json_object_get_type(mx) == json_type_string)
           parse_vec_str(json_object_get_string(mx), b, 3);
+        memcpy(o->particle.vel_min, a, sizeof(a));
+        memcpy(o->particle.vel_max, b, sizeof(b));
         len = 0.0f;
         for (k = 0; k < 3; k++) {
           m[k] = (a[k] + b[k]) / 2.0f;
@@ -523,8 +559,15 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
         continue;
       if (json_object_object_get_ex(it, "gravity", &g) && g &&
           json_object_get_type(g) == json_type_string &&
-          parse_vec_str(json_object_get_string(g), gv, 3) == 0)
+          parse_vec_str(json_object_get_string(g), gv, 3) == 0) {
+        memcpy(o->particle.gravity_v, gv, sizeof(gv));
         o->particle.gravity = gv[1];
+      }
+      {
+        struct json_object *dg = NULL;
+        if (json_object_object_get_ex(it, "drag", &dg) && dg)
+          o->particle.drag = (float)json_object_get_double(dg);
+      }
     }
   }
   if (json_object_object_get_ex(cfg, "material", &w) && w &&
@@ -671,6 +714,12 @@ static int parse_object_at(const char *dir, struct json_object *jo,
   o->visible = 1;
   o->scale[0] = 1.0f;
   o->scale[1] = 1.0f;
+  /* particle colour defaults to opaque white for every object kind; the
+   * "particle" config path never reaches the emitter block below */
+  o->particle.color[0] = 1.0f;
+  o->particle.color[1] = 1.0f;
+  o->particle.color[2] = 1.0f;
+  o->particle.color[3] = 1.0f;
   parse_id(jo, o);
   if (json_object_object_get_ex(jo, "model", &v) && v)
     copy_str(o->model, sizeof(o->model), json_object_get_string(v));

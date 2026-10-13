@@ -44,16 +44,33 @@ void xw_emitter_free(XWEmitter *e) {
   e->acc = 0.0f;
 }
 
+/* Spawn following the engine's box emitter (CParticle::createBoxEmitter):
+ * positions live in centered pixel space with Y up, the emitter origin is
+ * Y-flipped, the spawn box is the distanceMin/Max extent with a random sign
+ * per axis, scaled by the flipped directions vector. */
 static void spawn_one(XWEmitter *e) {
   XWParticle *p = &e->parts[e->alive];
-  float ang, sp;
-  /* base direction is screen-up (0,-1); spread widens symmetrically */
-  ang = (next_unit(&e->rng) * 2.0f - 1.0f) * e->cfg.spread;
-  sp = e->cfg.speed;
-  p->x = 0.0f;
-  p->y = 0.0f;
-  p->vx = sp * sinf(ang);
-  p->vy = -sp * cosf(ang);
+  float rnd[3];
+  int ax;
+  float speed = e->cfg.speed_mult.kind == XW_DYN_CONSTANT
+                    ? e->cfg.speed_mult.constant
+                    : 1.0f;
+  for (ax = 0; ax < 3; ax++) {
+    float d = e->cfg.dist_min[ax] +
+              next_unit(&e->rng) * (e->cfg.dist_max[ax] - e->cfg.dist_min[ax]);
+    if (next_unit(&e->rng) < 0.5f)
+      d = -d;
+    /* directions.y is flipped along with the emitter origin */
+    rnd[ax] = d * (ax == 1 ? -e->cfg.dirs[1] : e->cfg.dirs[ax]);
+  }
+  p->x = e->cfg.origin[0] + rnd[0];
+  p->y = -e->cfg.origin[1] + rnd[1];
+  p->vx = (e->cfg.vel_min[0] +
+           next_unit(&e->rng) * (e->cfg.vel_max[0] - e->cfg.vel_min[0])) *
+          speed;
+  p->vy = -(e->cfg.vel_min[1] +
+            next_unit(&e->rng) * (e->cfg.vel_max[1] - e->cfg.vel_min[1])) *
+          speed;
   p->age = 0.0f;
   p->life = e->cfg.life;
   p->size = e->cfg.size_min +
@@ -80,9 +97,21 @@ int xw_emitter_update(XWEmitter *e, float dt) {
     e->acc = 0.0f;
   for (i = 0; i < e->alive; i++) {
     XWParticle *p = &e->parts[i];
-    p->vy += e->cfg.gravity * dt;
+    float speed = e->cfg.speed_mult.kind == XW_DYN_CONSTANT
+                      ? e->cfg.speed_mult.constant
+                      : 1.0f;
+    /* movement operator: integrate, then apply gravity (Y flipped) + drag */
     p->x += p->vx * dt;
     p->y += p->vy * dt;
+    p->vx += e->cfg.gravity_v[0] * dt * speed;
+    p->vy += -e->cfg.gravity_v[1] * dt * speed;
+    if (e->cfg.drag > 0.0f) {
+      float df = 1.0f - e->cfg.drag * dt;
+      if (df < 0.0f)
+        df = 0.0f;
+      p->vx *= df;
+      p->vy *= df;
+    }
     p->age += dt;
     if (p->age > p->life) {
       e->alive--;

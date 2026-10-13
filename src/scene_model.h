@@ -103,6 +103,18 @@ typedef struct XWParticleCfg {
   XWDynFloat count_mult;
   XWDynFloat life_mult;
   XWDynFloat speed_mult;
+  /* faithful emitter/operator data (engine space: centered pixels, Y up) */
+  float origin[3];    /* emitter origin, Y flipped at spawn */
+  float dist_min[3];  /* spawn box inner extent */
+  float dist_max[3];  /* spawn box outer extent */
+  float dirs[3];      /* per-axis multiplier (directions, Y flipped) */
+  float vel_min[3];   /* velocityrandom min (Y flipped at spawn) */
+  float vel_max[3];   /* velocityrandom max */
+  float gravity_v[3]; /* movement gravity (Y flipped) */
+  float drag;         /* movement drag */
+  char renderer[32];  /* "sprite" | "spritetrail" | "rope" ... */
+  float trail_max;    /* renderer maxlength in pixels (trail length) */
+  char animation_mode[24]; /* "sequence" | "" (sprite-sheet animation) */
 } XWParticleCfg;
 
 typedef struct XWTextCfg {

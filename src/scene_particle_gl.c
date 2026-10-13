@@ -5,6 +5,8 @@
 #include "scene_particle_gl.h"
 #include "scene_tex.h"
 
+#include <math.h>
+
 int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
                              const char *dir, float dt, float alpha,
                              XWError *err) {
@@ -16,6 +18,12 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
     XW_ERROR_SET(err, 1, "invalid args");
     return -1;
   }
+  {
+    int sw = 0, sh = 0;
+    xw_gl_target_size(g, &sw, &sh);
+    e->screen_w = (float)sw;
+    e->screen_h = (float)sh;
+  }
   if (xw_emitter_update(e, dt) < 0) {
     XW_ERROR_SET(err, 1, "emitter update failed");
     return -1;
@@ -23,6 +31,12 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
   if (e->alive <= 0)
     return 0;
   if (!o->particle.sprite[0])
+    return 1;
+  /* sprite-sheet sequence animation is not implemented yet: sampling the
+   * whole sheet would draw the sheet as one big quad, so skip these until
+   * per-frame sampling lands (spritetrail and plain sprites work) */
+  if (strcmp(o->particle.renderer, "sprite") == 0 &&
+      strcmp(o->particle.animation_mode, "sequence") == 0)
     return 1;
   /* sprite refs are relative to the scene's materials/ directory in real
    * packages; synthetic scenes may store them next to the scene file */
@@ -38,6 +52,49 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
     memset(err, 0, sizeof(*err));
     return 1;
   }
+  if (strcmp(o->particle.renderer, "spritetrail") == 0) {
+    XWStreak *st;
+    if (xw_gl_program_streaks(g, &prog, err) != 0)
+      return -1;
+    st = malloc(sizeof(XWStreak) * (size_t)e->alive);
+    if (!st) {
+      XW_ERROR_SET(err, 1, "out of memory");
+      return -1;
+    }
+    for (i = 0; i < e->alive; i++) {
+      const XWParticle *p = &e->parts[i];
+      float fade = p->life > 0.0f ? 1.0f - p->age / p->life : 0.0f;
+      float sx = o->origin[0] + p->x;
+      float sy = o->origin[1] - p->y;
+      /* screen-space velocity (centered space is Y up) */
+      float vx = p->vx, vy = -p->vy;
+      float len = sqrtf(vx * vx + vy * vy);
+      float tail = o->particle.trail_max;
+      if (fade < 0.0f)
+        fade = 0.0f;
+      if (len > 1.0f) {
+        st[i].dx = -vx / len * tail;
+        st[i].dy = -vy / len * tail;
+      } else {
+        st[i].dx = 0.0f;
+        st[i].dy = tail;
+      }
+      st[i].x = sx;
+      st[i].y = sy;
+      st[i].alpha = p->a * fade * alpha;
+    }
+    if (xw_gl_blend_begin(g, XW_BLEND_TRANSLUCENT) != 0)
+      goto out_st;
+    if (xw_gl_draw_streaks(g, prog, tex, st, e->alive) != 0) {
+      xw_gl_blend_end(g);
+      goto out_st;
+    }
+    xw_gl_blend_end(g);
+    rc = 0;
+  out_st:
+    free(st);
+    return rc;
+  }
   if (xw_gl_program_points(g, &prog, err) != 0)
     return -1;
   pts = malloc(sizeof(XWPoint) * (size_t)e->alive);
@@ -50,8 +107,10 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
     float fade = p->life > 0.0f ? 1.0f - p->age / p->life : 0.0f;
     if (fade < 0.0f)
       fade = 0.0f;
+    /* engine space is centered pixels with Y up; the object origin maps
+     * back to screen pixels (Y down) for the point renderer */
     pts[i].x = o->origin[0] + p->x;
-    pts[i].y = o->origin[1] + p->y;
+    pts[i].y = o->origin[1] - p->y;
     pts[i].size = p->size;
     pts[i].alpha = p->a * fade * alpha;
   }

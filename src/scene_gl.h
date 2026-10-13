@@ -65,6 +65,19 @@ typedef struct XWPoint {
 /* Builtin point-sprite program (samples xw_tex0, multiplies alpha). */
 int xw_gl_program_points(XWGl *g, unsigned int *prog, XWError *err);
 
+/* One particle trail: head in window pixels, tail offset in pixels. */
+typedef struct XWStreak {
+  float x, y;
+  float dx, dy;
+  float alpha;
+} XWStreak;
+
+/* Builtin streak program (samples a vertical slice of xw_tex0). */
+int xw_gl_program_streaks(XWGl *g, unsigned int *prog, XWError *err);
+/* Draw n streaks on the bound target. */
+int xw_gl_draw_streaks(XWGl *g, unsigned int prog, unsigned int tex,
+                       const XWStreak *st, int n);
+
 /* Draw n point sprites on the bound target (positions window pixels). */
 int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
                       const XWPoint *pts, int n);

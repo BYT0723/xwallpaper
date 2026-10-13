@@ -215,3 +215,14 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
 - **ApplyBlending（2026-10-13）**：按标准图层混合模式表实现（Normal/Darken/Multiply/Screen/Overlay/
   Additive/Difference/Exclusion/Subtract/Divide/Grain 等），未知/越界模式回退 additive。WE 未公开
   `imageblending` 的数值枚举，属近似；3497575235 的 glitter（BLENDMODE=32）靠此回退得到正确的"镜片闪光"。
+- **M4 第一片（2026-10-13）**：发射器按参考 `CParticle::createBoxEmitter` 重写——
+  位置在**中心化像素空间（Y 向上）**，emitter `origin` 翻 Y，在 `distancemin/max` 盒内随机生成并按
+  `directions`（Y 翻转）缩放；速度取 `velocityrandom` 的 min/max **向量**并翻 Y（旧实现只取模长、
+  方向丢失、固定在 (0,0) 生成 → 粒子瞬移出屏）；`movement` 的 `gravity` 翻 Y、支持 `drag`。
+  另修：真实壁纸走 `particle` 配置路径，粒子颜色被 memset 成 0 → alpha 恒 0（不可见），已在对象解析处
+  统一默认不透明白。
+  渲染：新增条纹路径（`xw_gl_program_streaks`/`xw_gl_draw_streaks`，沿速度拉成细条），`renderer: spritetrail`
+  用它；2178468632 的雨现在真的可见且在动。
+- **M4 待做**：`renderer: sprite` + `animationmode: sequence` 的**精灵图逐帧采样**（未实现前直接跳过，
+  否则整张 sheet 会被画成大方块——这是本轮刻意保留的保守降级）；`rope`/`ropetrail` 渲染器、
+  控制点、振荡器（oscillateAlpha/Size/Position）、湍流、音频驱动发射、子粒子系统、`fadeAlpha/fadeSize`。

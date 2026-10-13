@@ -104,6 +104,36 @@ static const char *points_vert_src =
     "  gl_Position = vec4(pos.x, pos.y * xw_flip, 0.0, 1.0);\n"
     "}\n";
 
+static const char *streaks_vert_src =
+    "#version 330 core\n"
+    "layout(location=0) in vec2 pos;\n"
+    "layout(location=1) in vec2 am;\n" /* alpha, along */
+    "uniform float xw_flip;\n"
+    "uniform vec2 xw_size;\n"
+    "out float v_alpha;\n"
+    "out float v_along;\n"
+    "void main() {\n"
+    "  v_alpha = am.x;\n"
+    "  v_along = am.y;\n"
+    "  vec2 ndc = vec2(pos.x / xw_size.x * 2.0 - 1.0,\n"
+    "                  1.0 - pos.y / xw_size.y * 2.0);\n"
+    "  gl_Position = vec4(ndc.x, ndc.y * xw_flip, 0.0, 1.0);\n"
+    "}\n";
+
+/* Streaks sample a vertical slice of the sprite: the particle trails are
+ * drawn as thin quads stretched along their velocity (the engine's
+ * spritetrail renderer), with the sprite's alpha shaping the tail. */
+static const char *streaks_frag_src =
+    "#version 330 core\n"
+    "in float v_alpha;\n"
+    "in float v_along;\n"
+    "uniform sampler2D xw_tex0;\n"
+    "out vec4 xw_out;\n"
+    "void main() {\n"
+    "  vec4 c = texture(xw_tex0, vec2(0.5, v_along));\n"
+    "  xw_out = vec4(c.rgb, c.a * v_alpha);\n"
+    "}\n";
+
 static const char *points_frag_src =
     "#version 330 core\n"
     "in float v_alpha;\n"
@@ -814,6 +844,70 @@ int xw_gl_program_points(XWGl *g, unsigned int *prog, XWError *err) {
     return gl_error("invalid args", err);
   return link_program("xw_points", points_vert_src, points_frag_src, g, prog,
                       err);
+}
+
+static GLint sampler_location(GLuint prog);
+
+int xw_gl_program_streaks(XWGl *g, unsigned int *prog, XWError *err) {
+  if (!g || !prog)
+    return gl_error("invalid args", err);
+  return link_program("xw_streaks", streaks_vert_src, streaks_frag_src, g, prog,
+                      err);
+}
+
+int xw_gl_draw_streaks(XWGl *g, unsigned int prog, unsigned int tex,
+                       const XWStreak *st, int n) {
+  GLint loc;
+  float *verts;
+  int i, rc = -1;
+  if (!g || !prog || !st || n <= 0 || g->w <= 0 || g->h <= 0)
+    return -1;
+  /* two vertices per streak: head (along 0) and tail (along 1) */
+  verts = malloc((size_t)n * 8 * sizeof(float));
+  if (!verts)
+    return -1;
+  for (i = 0; i < n; i++) {
+    float *v = verts + (size_t)i * 8;
+    v[0] = st[i].x;
+    v[1] = st[i].y;
+    v[2] = st[i].alpha;
+    v[3] = 0.0f;
+    v[4] = st[i].x + st[i].dx;
+    v[5] = st[i].y + st[i].dy;
+    v[6] = st[i].alpha;
+    v[7] = 1.0f;
+  }
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glUseProgram(prog);
+  loc = sampler_location(prog);
+  if (loc >= 0 && tex) {
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glUniform1i(loc, 0);
+  }
+  loc = glGetUniformLocation(prog, "xw_flip");
+  if (loc >= 0)
+    glUniform1f(loc, g->flip ? -1.0f : 1.0f);
+  loc = glGetUniformLocation(prog, "xw_size");
+  if (loc >= 0)
+    glUniform2f(loc, (float)g->w, (float)g->h);
+  glBindVertexArray(g->points_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, g->points_vbo);
+  glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)n * 8 * sizeof(float)),
+               verts, GL_DYNAMIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                        (void *)(2 * sizeof(float)));
+  glDrawArrays(GL_LINES, 0, n * 2);
+  glBindVertexArray(0);
+  glUseProgram(0);
+  free(verts);
+  rc = 0;
+  return rc;
 }
 
 int xw_gl_bind_target(XWGl *g, int fbo) {
