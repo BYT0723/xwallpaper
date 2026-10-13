@@ -260,3 +260,15 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   `tests/test_scene_shader.c` 用合成 assets 目录覆盖（覆盖内建头 + 解析 `genericparticle` + 复位回退）。
 - **待做**：拿到 WE 资源后，实现**粒子材质 pass 渲染**（参考的 17 float/顶点布局：`a_Position`/
   `a_TexCoordVec4`/`a_Color`/`a_TexCoordVec4C1`/`a_TexCoordC2`），才能跑真 `genericparticle` 的折射粒子。
+- **拿到 WE 真实资源（2026-10-13）**：用户跑过 WE 后资源解出，路径
+  `~/.local/share/Steam/steamapps/common/wallpaper_engine/assets`（另有 `/mnt/windows_d/...` 一份）。
+  用 `XW_ASSETS_DIR` 指向它即可让 `#include` 与内建 shader 走真文件。核对结果：
+  ① 真 `common.h` 的常量与按文档实现的完全一致（`M_PI_2 = 6.28318530718` 等）——验证了之前的修法；
+  ② 真 `common_blending.h` 的 `ApplyBlending` 是 **编译期 `#if BLENDMODE == N`** 链，编号为
+     1=Darken、2=Multiply、4=Subtract、7=Screen、9=Add、…、31=`A+B*opacity`、**32=`mix(A, A+A*B, opacity)`**、
+     其余回退 Normal。**我原先按 reshade 猜的编号是错的**，且 32 不是"替换"而是"保留 A 再叠加 A*B"
+     ——这正是 349 glitter 之前镜片发黑的原因。回退版已按真编号重写（与真资源差异 1.7% → 0.83%）。
+  ③ `genericparticle.vert` 用的属性与参考 17 float/顶点的布局完全对应
+     （`a_Position`/`a_TexCoordVec4`/`a_Color`/`a_TexCoordVec4C1`/`a_TexCoordC2`）。
+- **下一步**：实现**粒子材质 pass 渲染**（属性绑定 + 17 float 顶点流 + 绑定 sprite/法线/combos/常量），
+  跑真 `genericparticle`，修掉 3003908979 的白色方块（应为折射雨滴）。
