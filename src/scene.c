@@ -347,7 +347,12 @@ static int paint_gl(XWSceneCtx *c) {
       return -1;
     }
   }
-  t = (float)(now_ms() - c->t0_ms) / 1000.0f;
+  /* XW_FIXED_TIME drives the clock from the frame counter so renders are
+   * reproducible; timing noise otherwise swamps frame-to-frame A/Bs */
+  if (getenv("XW_FIXED_TIME"))
+    t = c->fps > 0.0f ? (float)c->frames / c->fps : (float)c->frames / 30.0f;
+  else
+    t = (float)(now_ms() - c->t0_ms) / 1000.0f;
   {
     float *alphas = NULL;
     int n = c->scene.n_objects, rc = -1, i;
@@ -377,6 +382,8 @@ static int paint_gl(XWSceneCtx *c) {
 static int render_overlays(XWSceneCtx *c, const float *alphas, XWError *rerr) {
   uint64_t now = now_ms();
   float dt = c->last_ms ? (float)(now - c->last_ms) / 1000.0f : 1.0f / 30.0f;
+  if (getenv("XW_FIXED_TIME"))
+    dt = c->fps > 0.0f ? 1.0f / c->fps : 1.0f / 30.0f;
   int i;
   if (dt < 0.0f)
     dt = 0.0f;
