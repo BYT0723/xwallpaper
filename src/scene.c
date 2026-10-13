@@ -43,8 +43,11 @@ typedef struct XWSceneCtx {
   GC gc;
   XWGl *gl;
   XWEmitter *emitters;
+  int n_emitters;
   XWTextItem *texts;
+  int n_texts;
   struct XWSound **sounds;
+  int n_sounds;
   int sound_sys;
   int mute;
   double volume;
@@ -56,19 +59,22 @@ static void free_emitters(XWSceneCtx *c) {
   int i;
   if (!c || !c->emitters)
     return;
-  for (i = 0; i < c->scene.n_objects; i++) xw_emitter_free(&c->emitters[i]);
+  /* count travels with the array: reload swaps scenes between alloc/free */
+  for (i = 0; i < c->n_emitters; i++) xw_emitter_free(&c->emitters[i]);
   free(c->emitters);
   c->emitters = NULL;
+  c->n_emitters = 0;
 }
 
 static void free_texts(XWSceneCtx *c) {
   int i;
   if (!c || !c->texts)
     return;
-  for (i = 0; i < c->scene.n_objects; i++)
+  for (i = 0; i < c->n_texts; i++)
     xw_text_item_free(c->gl, &c->texts[i]);
   free(c->texts);
   c->texts = NULL;
+  c->n_texts = 0;
 }
 
 /* Load every SOUND object with a file. Degrades: a dead device or a bad
@@ -92,6 +98,7 @@ static void init_sounds(XWSceneCtx *c) {
                      sizeof(struct XWSound *));
   if (!c->sounds)
     return;
+  c->n_sounds = c->scene.n_objects > 0 ? c->scene.n_objects : 1;
   for (i = 0; i < c->scene.n_objects; i++) {
     const XWSceneObject *o = &c->scene.objects[i];
     char path[1152];
@@ -107,12 +114,13 @@ static void free_sounds(XWSceneCtx *c) {
   int i;
   if (!c || !c->sounds)
     return;
-  for (i = 0; i < c->scene.n_objects; i++) {
+  for (i = 0; i < c->n_sounds; i++) {
     if (c->sounds[i])
       xw_sound_free(c->sounds[i]);
   }
   free(c->sounds);
   c->sounds = NULL;
+  c->n_sounds = 0;
   if (c->sound_sys) {
     xw_sound_sys_free();
     c->sound_sys = 0;
@@ -155,6 +163,7 @@ static int init_emitters(XWSceneCtx *c, XWError *err) {
     XW_ERROR_SET(err, 1, "out of memory");
     return -1;
   }
+  c->n_emitters = c->scene.n_objects > 0 ? c->scene.n_objects : 1;
   for (i = 0; i < c->scene.n_objects; i++) {
     if (xw_emitter_init(&c->emitters[i], &c->scene.objects[i].particle) != 0) {
       XW_ERROR_SET(err, 1, "cannot init emitter %d", i);
@@ -446,8 +455,9 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     free(c);
     return -1;
   }
+  c->n_texts = c->scene.n_objects > 0 ? c->scene.n_objects : 1;
   if (load_script(c, err) != 0) {
-    free(c->texts);
+    free_texts(c);
     free_emitters(c);
     xw_scene_free(&c->scene);
     free_tmpdir(c);
@@ -458,7 +468,7 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
   if (!c->gc) {
     XW_ERROR_SET(err, 1, "cannot create scene GC");
     free_script(c);
-    free(c->texts);
+    free_texts(c);
     free_sounds(c);
     free_emitters(c);
     xw_scene_free(&c->scene);
@@ -544,6 +554,7 @@ static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
     XW_ERROR_SET(err, 1, "out of memory");
     return -1;
   }
+  c->n_texts = c->scene.n_objects > 0 ? c->scene.n_objects : 1;
   /* Degraded, not fatal: the new scene is already swapped in (reload keeps
    * the window alive by design); a broken script just leaves it scriptless.
    * Fresh sets fail hard in init instead so typos never land silently. */

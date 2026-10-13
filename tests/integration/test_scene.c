@@ -103,6 +103,67 @@ static void test_scene_shell(void) {
   xw_x11_destroy_window(win);
 }
 
+/* Regression: reload across scenes with different object counts must not
+ * overrun the emitter/text/sound arrays (heap overflow -> free(): invalid
+ * pointer on real Workshop walls). Grows and shrinks repeatedly. */
+static void test_scene_reload_grow(void) {
+  TEST_BEGIN("reload 2 -> 13 -> 4 -> 13 objects without crashing");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_PRIMARY;
+  int x, y;
+  unsigned int w, h;
+  if (xw_x11_resolve_geometry(dpy, &cfg, &x, &y, &w, &h, NULL) != 0) {
+    TEST_FAIL("cannot resolve primary geometry");
+    return;
+  }
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, x, y, w, h, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackend backend = *xw_scene_backend_new();
+  const char *dirs[] = {
+    "tests/data/scene",
+    "tests/data/scene/realrain",
+    "tests/data/scene/full",
+    "tests/data/scene/realrain",
+    "tests/data/scene",
+  };
+  const int counts[] = {2, 13, 4, 13, 2};
+  for (int k = 0; k < 5; k++) {
+    XWBackendOpt opt;
+    memset(&opt, 0, sizeof(opt));
+    opt.type = XW_BACKEND_SCENE;
+    opt.path = dirs[k];
+    opt.fps = 1000.0;
+    memset(&err, 0, sizeof(err));
+    int rc;
+    if (k == 0)
+      rc = backend.init(&backend, win, &opt, &err);
+    else
+      rc = backend.reload(&backend, &opt, &err);
+    TEST_CHECK_EQ_INT(rc, 0);
+    if (rc != 0) {
+      TEST_FAIL("step %d (%s): %s", k, dirs[k], err.msg);
+      break;
+    }
+    TEST_CHECK_EQ_INT(xw_scene_object_count(&backend), counts[k]);
+    backend.tick(&backend);
+    XSync(dpy, False);
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 static void test_scene_bad_dir(void) {
   TEST_BEGIN("missing dir fails init without crashing");
   XWError err;
@@ -141,6 +202,7 @@ static void test_scene_bad_dir(void) {
 int main(void) {
   TEST_SUITE("scene backend (Xvfb)");
   test_scene_shell();
+  test_scene_reload_grow();
   test_scene_bad_dir();
   TEST_SUMMARY();
 }

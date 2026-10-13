@@ -145,6 +145,7 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
 - **失败策略**：解析/脚本/纹理缺失 fail fast（`set` 直接报错）；帧内渲染失败回落 clear 色（壁纸活着）；音频缺设备/坏文件降级 mute。
 - **effect 运行时（2026-10-13 真包联调补）**：material shader 名省略 `shaders/` 前缀（resolve 时回退补齐）；effect 用同名 `.vert`（无则内置 quad），`a_Position→0`/`a_TexCoord→1` 绑定；`#include` 恒注入 prelude（texSample2D/mul/saturate/frac/lerp/CAST2-4/M_PI 系列/rotateVec2/ApplyBlending≈mix）+ `// [COMBO]` 默认 `#define`；material combos 进程序缓存键；draw 时绑 `g_Texture0..7`（0=输入，缺槽回退输入）+ `g_Texture{i}Resolution=(texW,texH,realW,realH)` + 单位 MVP + `g_Time`/`g_TexelSize` + 注释 default 被 scene 常量（按 material 名）覆盖；`util/black|white|noflow|perlin_256` 程序化；单 pass 失败降级到已画结果（不断整对象）；TEXB0004 非视频按 0003+isVideo 解析（视频拒绝），内嵌 PNG 不校验 usize。两张真实 Workshop 包（2178468632/3497575235）xvfb 像素回读已出图且与 preview 色系一致。
 - **effect 后续**：render-target/`bind: previous|_rt_*`（glitter 等多 pass 效果当前只跑出单链近似）、material 文件 combos 与 scene combos 合并、音频频谱 uniform（恒 0）、`util/` 更多内置。
+- **reload 数组计数（2026-10-13 panic 修复）**：emitter/text/sound 数组的释放一律用分配时记录的 `n_emitters/n_texts/n_sounds`，不再用当前 `scene.n_objects`——reload 先换 scene 后 `init_emitters`，对象数变大时旧 `free_emitters` 越界读并 `free` 野指针（`free(): invalid pointer`，2178468632/3003908979 切换必现）。回归测试 `test_scene_reload_grow`（2→13→4→13→2）旧码必崩。
 - **合成顺序**：image → text → particle 的 per-type 循环；object-order 与 scene-space FBO 合成是后续任务。
 - **粒子排序**：未做（swap-remove 打乱顺序；当前 blend 下可接受，记录为后续项）。
 - **文本**：Latin-1 单行；UTF-8/CJK shaping 后续。
