@@ -427,11 +427,16 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     return -1;
   }
   c->win = win;
-  /* Wallpaper Engine's own assets (shaders/common.h) when pointed at them */
+  /* Wallpaper Engine's own assets (shaders/common.h): XW_ASSETS_DIR when it
+   * is set, otherwise a Steam install auto-detected under $HOME. */
   {
-    const char *assets = getenv("XW_ASSETS_DIR");
-    if (assets && assets[0])
+    char assets[1024];
+    if (xw_shader_resolve_assets_dir(getenv("XW_ASSETS_DIR"), getenv("HOME"),
+                                     assets, sizeof(assets)) == 0) {
       xw_shader_set_assets_dir(assets);
+      if (getenv("XW_DEBUG_DAEMON"))
+        fprintf(stderr, "[scene] engine assets: %s\n", assets);
+    }
   }
   if (resolve_dir(c, opt->path, err) != 0) {
     free(c);

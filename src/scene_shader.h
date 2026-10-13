@@ -61,6 +61,12 @@ const char *xw_shader_builtin_header(const char *name);
  * reimplemented headers. Set once at daemon start. */
 void xw_shader_set_assets_dir(const char *dir);
 const char *xw_shader_assets_dir(void);
+/* Decide which asset directory to use: `env` (XW_ASSETS_DIR) wins when set,
+ * otherwise the Steam libraries under `home` are probed for a
+ * wallpaper_engine/assets that holds shaders/common.h. Returns 0 and writes
+ * the directory into `out` when one is found, -1 otherwise. Read-only. */
+int xw_shader_resolve_assets_dir(const char *env, const char *home, char *out,
+                                 size_t n);
 /* Resolve a built-in shader name ("genericparticle") to a file under the
  * assets directory; returns 0 and fills out when found. */
 int xw_shader_assets_shader(const char *name, char *out, size_t n);

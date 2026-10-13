@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,34 @@ static int mkdir2(const char *base, const char *sub) {
   char path[512];
   snprintf(path, sizeof(path), "%s/%s", base, sub);
   return mkdir(path, 0755);
+}
+
+static int mkpath(const char *path) {
+  char tmp[1024];
+  size_t i, n = strlen(path);
+  if (n == 0 || n >= sizeof(tmp))
+    return -1;
+  memcpy(tmp, path, n + 1);
+  for (i = 1; i < n; i++) {
+    if (tmp[i] == '/') {
+      tmp[i] = '\0';
+      if (mkdir(tmp, 0755) != 0 && errno != EEXIST)
+        return -1;
+      tmp[i] = '/';
+    }
+  }
+  if (mkdir(tmp, 0755) != 0 && errno != EEXIST)
+    return -1;
+  return 0;
+}
+
+static int putfile(const char *path, const char *text) {
+  FILE *f = fopen(path, "wb");
+  if (!f)
+    return -1;
+  fputs(text, f);
+  fclose(f);
+  return 0;
 }
 
 static char *slurp(const char *path) {
@@ -403,6 +432,75 @@ static void test_collect_defaults(void) {
   TEST_CHECK_EQ_INT(xw_shader_collect_defaults(NULL, defs, &n, 4), -1);
 }
 
+static void test_detect_assets(void) {
+  char root[] = "/tmp/xw-detect-XXXXXX";
+  char buf[1024], p[1024];
+  TEST_BEGIN("asset dir auto-detection honours XW_ASSETS_DIR first");
+  TEST_CHECK(mkdtemp(root) != NULL);
+
+  /* an explicit value wins even when nothing is installed */
+  TEST_CHECK_EQ_INT(
+      xw_shader_resolve_assets_dir("/explicit/we/assets", root, buf, sizeof(buf)),
+      0);
+  TEST_CHECK(strcmp(buf, "/explicit/we/assets") == 0);
+
+  /* an empty home finds nothing */
+  TEST_CHECK_EQ_INT(xw_shader_resolve_assets_dir(NULL, root, buf, sizeof(buf)),
+                    -1);
+
+  /* the default Steam library is discovered through shaders/common.h */
+  snprintf(p, sizeof(p), "%s/.local/share/Steam/steamapps/common/"
+                         "wallpaper_engine/assets/shaders",
+           root);
+  TEST_CHECK_EQ_INT(mkpath(p), 0);
+  snprintf(p, sizeof(p), "%s/.local/share/Steam/steamapps/common/"
+                         "wallpaper_engine/assets/shaders/common.h",
+           root);
+  TEST_CHECK_EQ_INT(putfile(p, "// marker\n"), 0);
+  snprintf(p, sizeof(p), "%s/.local/share/Steam/steamapps/common/"
+                         "wallpaper_engine/assets",
+           root);
+  TEST_CHECK_EQ_INT(xw_shader_resolve_assets_dir(NULL, root, buf, sizeof(buf)),
+                    0);
+  TEST_CHECK(strcmp(buf, p) == 0);
+}
+
+static void test_detect_assets_vdf(void) {
+  char root[] = "/tmp/xw-detect-XXXXXX";
+  char buf[1024], p[1024], vdf[2048];
+  TEST_BEGIN("asset dir auto-detection reads libraryfolders.vdf");
+  TEST_CHECK(mkdtemp(root) != NULL);
+
+  /* the default library exists but holds no engine */
+  snprintf(p, sizeof(p), "%s/.local/share/Steam/steamapps", root);
+  TEST_CHECK_EQ_INT(mkpath(p), 0);
+
+  /* a second library does */
+  snprintf(p, sizeof(p), "%s/elsewhere/steamapps/common/wallpaper_engine/"
+                         "assets/shaders",
+           root);
+  TEST_CHECK_EQ_INT(mkpath(p), 0);
+  snprintf(p, sizeof(p), "%s/elsewhere/steamapps/common/wallpaper_engine/"
+                         "assets/shaders/common.h",
+           root);
+  TEST_CHECK_EQ_INT(putfile(p, "// marker\n"), 0);
+
+  snprintf(vdf, sizeof(vdf),
+           "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\"%s/"
+           ".local/share/Steam\"\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\"%s/"
+           "elsewhere\"\n\t}\n}\n",
+           root, root);
+  snprintf(p, sizeof(p), "%s/.local/share/Steam/steamapps/libraryfolders.vdf",
+           root);
+  TEST_CHECK_EQ_INT(putfile(p, vdf), 0);
+
+  snprintf(p, sizeof(p),
+           "%s/elsewhere/steamapps/common/wallpaper_engine/assets", root);
+  TEST_CHECK_EQ_INT(xw_shader_resolve_assets_dir(NULL, root, buf, sizeof(buf)),
+                    0);
+  TEST_CHECK(strcmp(buf, p) == 0);
+}
+
 int main(void) {
   TEST_SUITE("scene_shader");
   test_header_shape();
@@ -416,6 +514,8 @@ int main(void) {
   test_vertex_attrib_locations();
   test_sampler_combo();
   test_assets_dir();
+  test_detect_assets();
+  test_detect_assets_vdf();
   test_bad_inputs();
   test_builtin_lookup();
   test_sample_translates();

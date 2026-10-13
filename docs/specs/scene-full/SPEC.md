@@ -289,3 +289,29 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   ② pass 生效后：3003908979 的折射雨滴正常渲染（不再是白色方块）；3497575235 / 2178468632
   逐 pass 验证全部编译通过（含 `glitter_prepare`）。
   **前提**：需要 `XW_ASSETS_DIR` 指向引擎 assets（内建粒子 shader 不在 pkg 内）；未设置时仍走简化渲染器。
+
+## Spec: WE assets 目录自动探测（2026-10-13）
+
+**目标**：不设 `XW_ASSETS_DIR` 时，也能自动找到 Wallpaper Engine 的 assets（内建 shader 所在），
+使粒子材质 pass 等能力开箱可用。
+
+**契约**（`src/scene_shader.h`）
+- `int xw_shader_resolve_assets_dir(const char *env, const char *home, char *out, size_t n);`
+  优先级：`env`（即 `XW_ASSETS_DIR`）非空 → 直接采用；否则在 `home` 下探测。命中返回 0 并写入 `out`。
+
+**探测规则**
+- 有效候选：`<候选>/shaders/common.h` 可读。
+- `$HOME` 下的固定 Steam 根：`~/.local/share/Steam`、`~/.steam/steam`、`~/.steam/root`、
+  `~/.var/app/com.valvesoftware.Steam/.local/share/Steam`（Flatpak）、
+  `~/.snap/steam/common/.local/share/Steam`（Snap）。
+- 每个根的 `steamapps/libraryfolders.vdf` 里 `"path"` 指向的其它库（同时兼容旧式
+  `"N" "<路径>"`），追加 `<库>/steamapps/common/wallpaper_engine/assets`。
+- 候选只读探测；找不到 → 返回 -1，调用方保持原行为（简化渲染器）。
+
+**边界**
+- Always：只读探测、无分配、找不到不报错（可降级）。
+- Never：不联网、不写用户目录、不加新依赖；CLI 不受影响（只在 daemon 侧 scene init 调用）。
+- **已实现**：`xw_shader_resolve_assets_dir(env, home, out, n)` —— `XW_ASSETS_DIR` 优先，否则探测
+  `$HOME` 下 5 个固定 Steam 根 + 各根 `steamapps/libraryfolders.vdf` 列出的其它库（兼容新旧两种写法），
+  命中判定 `<候选>/shaders/common.h` 可读；`src/scene.c` 在 scene init 调用，`XW_DEBUG_DAEMON` 下打印命中路径。
+  单测覆盖 env 优先 / 默认库 / vdf 第二库 / 未命中；真机不设 env 也能自动激活粒子材质 pass。

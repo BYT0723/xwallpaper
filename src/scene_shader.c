@@ -134,6 +134,117 @@ void xw_shader_set_assets_dir(const char *dir) {
 
 const char *xw_shader_assets_dir(void) { return g_assets_dir; }
 
+/* The engine's asset directory is accepted only when it really carries the
+ * canonical header, so a stray match elsewhere on disk is ignored. */
+static int is_engine_assets(const char *dir) {
+  char path[1200];
+  FILE *f;
+  snprintf(path, sizeof(path), "%.900s/shaders/common.h", dir);
+  f = fopen(path, "rb");
+  if (!f)
+    return 0;
+  fclose(f);
+  return 1;
+}
+
+static int probe_library(const char *lib, char *out, size_t n) {
+  char path[1200];
+  snprintf(path, sizeof(path),
+           "%.900s/steamapps/common/wallpaper_engine/assets", lib);
+  if (!is_engine_assets(path))
+    return 0;
+  snprintf(out, n, "%s", path);
+  return 1;
+}
+
+/* Pull one "quoted" token out of a vdf line; returns 0 when absent. */
+static int vdf_quoted(const char **pp, char *out, size_t n) {
+  const char *p = strchr(*pp, '"');
+  size_t i = 0;
+  if (!p)
+    return 0;
+  for (p++; *p && *p != '"'; p++)
+    if (i + 1 < n)
+      out[i++] = *p;
+  if (*p != '"')
+    return 0;
+  out[i] = '\0';
+  *pp = p + 1;
+  return 1;
+}
+
+static int vdf_all_digits(const char *s) {
+  if (!s[0])
+    return 0;
+  for (; *s; s++)
+    if (*s < '0' || *s > '9')
+      return 0;
+  return 1;
+}
+
+/* Append the library roots found in a libraryfolders.vdf: the current format
+ * nests "path" "<dir>" entries, older ones use "N" "<dir>". */
+static int vdf_libraries(const char *vdf_path, char (*cands)[1024], int max,
+                         int n) {
+  FILE *f = fopen(vdf_path, "rb");
+  char line[1024];
+  if (!f)
+    return n;
+  while (n < max && fgets(line, sizeof(line), f)) {
+    const char *p = line;
+    char key[128], val[1024];
+    if (!vdf_quoted(&p, key, sizeof(key)) ||
+        !vdf_quoted(&p, val, sizeof(val)))
+      continue;
+    if (strcmp(key, "path") != 0 && !vdf_all_digits(key))
+      continue;
+    if (val[0] != '/')
+      continue;
+    snprintf(cands[n], 1024, "%s", val);
+    n++;
+  }
+  fclose(f);
+  return n;
+}
+
+int xw_shader_resolve_assets_dir(const char *env, const char *home, char *out,
+                                 size_t n) {
+  /* Steam roots directly under the home directory */
+  static const char *const roots[] = {
+      ".local/share/Steam",
+      ".steam/steam",
+      ".steam/root",
+      ".var/app/com.valvesoftware.Steam/.local/share/Steam",
+      ".snap/steam/common/.local/share/Steam",
+  };
+  char cands[32][1024];
+  char vdf[1200];
+  int nroots = (int)(sizeof(roots) / sizeof(roots[0])), i, nc = 0;
+
+  if (!out || n == 0)
+    return -1;
+  if (env && env[0]) {
+    snprintf(out, n, "%s", env);
+    return 0;
+  }
+  if (!home || !home[0])
+    return -1;
+  for (i = 0; i < nroots && nc < 32; i++) {
+    snprintf(cands[nc], sizeof(cands[0]), "%.400s/%.300s", home, roots[i]);
+    nc++;
+  }
+  /* libraries that live elsewhere get listed in the root's vdf */
+  for (i = 0; i < nroots && nc < 32; i++) {
+    snprintf(vdf, sizeof(vdf), "%.400s/%.300s/steamapps/libraryfolders.vdf",
+             home, roots[i]);
+    nc = vdf_libraries(vdf, cands, 32, nc);
+  }
+  for (i = 0; i < nc; i++)
+    if (probe_library(cands[i], out, n))
+      return 0;
+  return -1;
+}
+
 /* Read a header from <assets>/shaders/<name>; caller frees. */
 static char *assets_header(const char *name) {
   char path[1152];
