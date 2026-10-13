@@ -247,7 +247,7 @@ static void test_bad_inputs(void) {
 }
 
 static void test_effect_target(void) {
-  TEST_BEGIN("offscreen render target name is captured from effect.json");
+  TEST_BEGIN("offscreen render target, fbos and binds are captured");
   XWScene s;
   memset(&s, 0, sizeof(s));
   XWError err = {0};
@@ -257,10 +257,29 @@ static void test_effect_target(void) {
     return;
   TEST_CHECK_EQ_INT(s.n_objects, 1);
   TEST_CHECK(s.objects[0].n_effects >= 1);
-  if (s.objects[0].n_effects >= 1 && s.objects[0].effects[0].n_passes >= 1) {
-    const XWScenePass *p = &s.objects[0].effects[0].passes[0];
-    TEST_CHECK_EQ_STR(p->target, "_rt_Offscreen");
-    TEST_CHECK_EQ_STR(p->shader, "genericimage2");
+  if (s.objects[0].n_effects >= 1) {
+    const XWSceneEffect *fx = &s.objects[0].effects[0];
+    TEST_CHECK_EQ_INT(fx->n_passes, 2);
+    /* effect-declared offscreen buffer */
+    TEST_CHECK_EQ_INT(fx->n_fbos, 1);
+    if (fx->n_fbos == 1) {
+      TEST_CHECK_EQ_STR(fx->fbos[0].name, "_rt_Offscreen");
+      TEST_CHECK_EQ_INT(fx->fbos[0].width, 256);
+      TEST_CHECK_EQ_INT(fx->fbos[0].height, 256);
+      TEST_CHECK_EQ_STR(fx->fbos[0].format, "r8");
+      TEST_CHECK_EQ_STR(fx->fbos[0].uvs, "repeat");
+    }
+    if (fx->n_passes == 2) {
+      TEST_CHECK_EQ_STR(fx->passes[0].target, "_rt_Offscreen");
+      TEST_CHECK_EQ_STR(fx->passes[0].shader, "genericimage2");
+      TEST_CHECK_EQ_INT(fx->passes[1].n_binds, 2);
+      if (fx->passes[1].n_binds == 2) {
+        TEST_CHECK_EQ_STR(fx->passes[1].binds[0].name, "previous");
+        TEST_CHECK_EQ_INT(fx->passes[1].binds[0].slot, 0);
+        TEST_CHECK_EQ_STR(fx->passes[1].binds[1].name, "_rt_Offscreen");
+        TEST_CHECK_EQ_INT(fx->passes[1].binds[1].slot, 1);
+      }
+    }
   }
   xw_scene_free(&s);
 }

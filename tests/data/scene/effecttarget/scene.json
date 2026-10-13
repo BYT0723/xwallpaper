@@ -1,7 +1,14 @@
 {
   "camera": {
-    "orthogonalprojection": [1280, 720],
-    "clearcolor": [0.1, 0.1, 0.1]
+    "orthogonalprojection": [
+      1280,
+      720
+    ],
+    "clearcolor": [
+      0.1,
+      0.1,
+      0.1
+    ]
   },
   "objects": [
     {
@@ -10,7 +17,10 @@
       "effects": [
         {
           "file": "effects/e/effect.json",
-          "passes": [{}]
+          "passes": [
+            {},
+            {}
+          ]
         }
       ]
     }

@@ -41,16 +41,28 @@ typedef struct XWScenePass {
   int n_consts;
   char textures[XW_SCENE_PASS_TEX_MAX][XW_SCENE_PATH_MAX];
   int n_textures;
-  /* render-target name when the pass writes offscreen ("_rt_..."); we do
-   * not route those yet, the renderer degrades the effect instead. */
+  /* render-target name when the pass writes offscreen ("_rt_...") */
   char target[XW_SCENE_PATH_MAX];
 } XWScenePass;
+
+#define XW_SCENE_FBOS_MAX 8
+
+/* Effect-declared offscreen buffer ("fbos" in effect.json): the pass
+ * targets above resolve to these by name. */
+typedef struct XWSceneFbo {
+  char name[XW_SCENE_ID_MAX];
+  int width, height;
+  char format[16];
+  char uvs[16];
+} XWSceneFbo;
 
 typedef struct XWSceneEffect {
   char name[XW_SCENE_ID_MAX];
   XWScenePass *passes;
   int n_passes;
   int visible; /* effects can be toggled off per instance */
+  XWSceneFbo fbos[XW_SCENE_FBOS_MAX];
+  int n_fbos;
 } XWSceneEffect;
 
 /* Object kinds. Explicit "type" wins; otherwise inferred from payload:

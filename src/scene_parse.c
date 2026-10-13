@@ -245,6 +245,36 @@ static void resolve_effect_shaders(const char *dir, const char *eff_file,
     json_object_put(ej);
     return;
   }
+  /* effect-declared offscreen buffers (targets resolve to these) */
+  {
+    struct json_object *fbos = NULL, *fv = NULL;
+    if (json_object_object_get_ex(ej, "fbos", &fbos) && fbos &&
+        json_object_get_type(fbos) == json_type_array) {
+      size_t fn = json_object_array_length(fbos), fi;
+      for (fi = 0; fi < fn && e->n_fbos < XW_SCENE_FBOS_MAX; fi++) {
+        struct json_object *fo = json_object_array_get_idx(fbos, fi);
+        XWSceneFbo *dst;
+        if (!fo || json_object_get_type(fo) != json_type_object)
+          continue;
+        dst = &e->fbos[e->n_fbos];
+        memset(dst, 0, sizeof(*dst));
+        if (json_object_object_get_ex(fo, "name", &fv) && fv)
+          copy_str(dst->name, sizeof(dst->name), json_object_get_string(fv));
+        if (!dst->name[0])
+          continue;
+        if (json_object_object_get_ex(fo, "width", &fv) && fv)
+          dst->width = json_object_get_int(fv);
+        if (json_object_object_get_ex(fo, "height", &fv) && fv)
+          dst->height = json_object_get_int(fv);
+        if (json_object_object_get_ex(fo, "format", &fv) && fv)
+          copy_str(dst->format, sizeof(dst->format),
+                   json_object_get_string(fv));
+        if (json_object_object_get_ex(fo, "uvs", &fv) && fv)
+          copy_str(dst->uvs, sizeof(dst->uvs), json_object_get_string(fv));
+        e->n_fbos++;
+      }
+    }
+  }
   for (i = 0; i < (size_t)e->n_passes; i++) {
     struct json_object *pj = json_object_array_get_idx(
         passes, i < n ? i : n - 1);
@@ -257,6 +287,31 @@ static void resolve_effect_shaders(const char *dir, const char *eff_file,
         json_object_get_type(tg) == json_type_string)
       copy_str(e->passes[i].target, sizeof(e->passes[i].target),
                json_object_get_string(tg));
+    /* binds: [{"name": "_rt_X" | "previous", "index": N}] remaps the
+     * sampler at index N to a named FBO (or the sequence input) */
+    {
+      struct json_object *binds = NULL;
+      if (json_object_object_get_ex(pj, "bind", &binds) && binds &&
+          json_object_get_type(binds) == json_type_array) {
+        size_t bn = json_object_array_length(binds), bi;
+        for (bi = 0; bi < bn && e->passes[i].n_binds < XW_SCENE_BINDS_MAX;
+             bi++) {
+          struct json_object *bo = json_object_array_get_idx(binds, bi);
+          struct json_object *nv = NULL, *iv = NULL;
+          XWSceneBind *bd;
+          if (!bo || json_object_get_type(bo) != json_type_object)
+            continue;
+          if (!json_object_object_get_ex(bo, "name", &nv) || !nv)
+            continue;
+          bd = &e->passes[i].binds[e->passes[i].n_binds];
+          memset(bd, 0, sizeof(*bd));
+          copy_str(bd->name, sizeof(bd->name), json_object_get_string(nv));
+          if (json_object_object_get_ex(bo, "index", &iv) && iv)
+            bd->slot = json_object_get_int(iv);
+          e->passes[i].n_binds++;
+        }
+      }
+    }
     if (e->passes[i].shader[0])
       continue;
     if (!json_object_object_get_ex(pj, "material", &mat) || !mat ||

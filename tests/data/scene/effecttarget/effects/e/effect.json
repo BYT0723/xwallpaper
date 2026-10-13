@@ -1,1 +1,11 @@
-{"version":1,"passes":[{"material":"materials/mat.json","target":"_rt_Offscreen"}]}
+{
+  "version": 1,
+  "passes": [
+    {"material": "materials/mat.json", "target": "_rt_Offscreen"},
+    {"material": "materials/mat.json",
+     "bind": [{"name": "previous", "index": 0}, {"name": "_rt_Offscreen", "index": 1}]}
+  ],
+  "fbos": [
+    {"name": "_rt_Offscreen", "width": 256, "height": 256, "format": "r8", "uvs": "repeat"}
+  ]
+}
