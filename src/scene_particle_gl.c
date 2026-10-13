@@ -14,6 +14,7 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
   unsigned int tex = 0, prog = 0;
   XWPoint *pts = NULL;
   float speed = o->particle.seq_mult > 0.0f ? o->particle.seq_mult : 1.0f;
+  int nframes = xw_gl_texture_frame_count(g, tex);
   int i, rc = -1;
   if (!g || !o || !e || !dir) {
     XW_ERROR_SET(err, 1, "invalid args");
@@ -106,8 +107,15 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
     pts[i].y = o->origin[1] - p->y;
     pts[i].size = p->size;
     pts[i].alpha = p->a * alpha; /* alphafade already applied by the emitter */
-    xw_gl_particle_frame(g, tex, p->age, speed, &fr);
-    pts[i].frame = fr;
+    pts[i].rot = p->rot;
+    if (strcmp(o->particle.animation_mode, "randomframe") == 0) {
+      /* stable per-particle pick across the sheet */
+      int nf = nframes > 0 ? nframes : 1;
+      pts[i].frame = (float)((int)(p->rnd * (float)nf) % nf);
+    } else {
+      xw_gl_particle_frame(g, tex, p->age, speed, &fr);
+      pts[i].frame = fr;
+    }
   }
   if (xw_gl_blend_begin(g, XW_BLEND_TRANSLUCENT) != 0)
     goto out;

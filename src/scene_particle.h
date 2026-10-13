@@ -15,6 +15,8 @@ typedef struct XWParticle {
   float r, g, b, a;
   float a0;    /* alpha before the alphafade operator */
   float frame; /* sprite-sheet frame index (set by the renderer) */
+  float rot;   /* in-plane rotation (radians) */
+  float rnd;   /* stable per-particle random draw (randomframe) */
 } XWParticle;
 
 typedef struct XWEmitter {

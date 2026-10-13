@@ -85,8 +85,30 @@ static void spawn_one(XWEmitter *e) {
   p->r = e->cfg.color[0];
   p->g = e->cfg.color[1];
   p->b = e->cfg.color[2];
+  if (e->cfg.has_color_random) {
+    int k;
+    for (k = 0; k < 3; k++) {
+      float lo = e->cfg.color_min[k];
+      float hi = e->cfg.color_max[k];
+      float v = lo + next_unit(&e->rng) * (hi - lo);
+      if (k == 0)
+        p->r = v;
+      else if (k == 1)
+        p->g = v;
+      else
+        p->b = v;
+    }
+  }
   p->a = e->cfg.color[3];
+  if (e->cfg.alpha_max > e->cfg.alpha_min)
+    p->a = e->cfg.alpha_min +
+           next_unit(&e->rng) * (e->cfg.alpha_max - e->cfg.alpha_min);
   p->a0 = p->a;
+  p->rot = 0.0f;
+  if (e->cfg.rot_max != e->cfg.rot_min)
+    p->rot = e->cfg.rot_min +
+             next_unit(&e->rng) * (e->cfg.rot_max - e->cfg.rot_min);
+  p->rnd = next_unit(&e->rng);
   p->frame = 0.0f;
   e->alive++;
 }

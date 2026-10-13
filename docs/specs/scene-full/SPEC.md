@@ -243,3 +243,13 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   2178468632 的雨点由大圆点变为细小白色雨滴，观感正常。
 - **M4 待做**：`rope`/`ropetrail`、`randomframe`/`once` 动画模式、控制点、振荡器、湍流、
   音频驱动发射、子粒子系统、`fadeAlpha`/`fadeSize`（参考里是 renderer 字段，仅 rope 用）。
+- **M4 第四片（2026-10-13）**：按真壁纸实际用到的初始化器补齐（先统计了三张壁纸的 operator/initializer
+  用量：`rotationrandom`×3、`alpharandom`×2、`randomframe`×2、`colorrandom`×1、`turbulentvelocityrandom`×1）：
+  ① `alpharandom`/`colorrandom`/`rotationrandom` 初值；② 每粒子旋转（`XWPoint.rot` + 片元里绕
+  gl_PointCoord 中心旋转）；③ `animationmode: randomframe`（每粒子稳定随机取帧，用 spawn 时保存的 `rnd`）。
+  另修一个真 bug：内嵌 PNG 的 TEXV（FIF=13）走**提前 return**，绕过了 TEXS 解析 → 该纹理帧数为 0、整张
+  sheet 被当作一帧采样（3003908979 的雨滴贴图正是这种）。
+- **M4 已知缺口（重要）**：粒子的**材质 shader** 没有实现——我们只把 sprite 当贴图做点精灵，而 WE 会跑
+  粒子材质自己的 pass（如 `rainrefractive` 的折射、`halo_50` 用 blank sprite + 法线做玻璃感）。
+  因此 3003908979 的雨滴显示为白色方块（预览里是微弱折射）。要修需实现粒子材质的 pass 渲染
+  （实例化四边形 + 粒子 shader），属较大一块。

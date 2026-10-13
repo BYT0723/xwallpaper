@@ -117,6 +117,11 @@ typedef struct XWParticleCfg {
   char animation_mode[24]; /* "sequence" | "" (sprite-sheet animation) */
   float seq_mult;          /* sequencemultiplier: sheet animation speed */
   float size_exponent;     /* sizerandom exponent (1 = linear) */
+  /* alpharandom / colorrandom / rotationrandom ranges (engine defaults) */
+  float alpha_min, alpha_max;
+  float color_min[3], color_max[3];
+  float rot_min, rot_max;
+  int has_color_random;
   int has_alpha_fade;      /* alphafade operator present */
   float fade_in, fade_out; /* alphafade fadeintime / fadeouttime (0..1) */
 } XWParticleCfg;

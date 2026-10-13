@@ -523,6 +523,36 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
         /* the engine shapes the random draw with this exponent */
         if (json_object_object_get_ex(it, "exponent", &ex) && ex)
           o->particle.size_exponent = (float)json_object_get_double(ex);
+      } else if (strcmp(name, "alpharandom") == 0) {
+        struct json_object *lo = NULL, *hi = NULL;
+        if (json_object_object_get_ex(it, "min", &lo) && lo)
+          o->particle.alpha_min = (float)json_object_get_double(lo);
+        if (json_object_object_get_ex(it, "max", &hi) && hi)
+          o->particle.alpha_max = (float)json_object_get_double(hi);
+      } else if (strcmp(name, "colorrandom") == 0) {
+        struct json_object *mn = NULL, *mx = NULL;
+        float lo[3] = {1, 1, 1}, hi[3] = {1, 1, 1};
+        if (json_object_object_get_ex(it, "min", &mn) && mn &&
+            json_object_get_type(mn) == json_type_string)
+          parse_vec_str(json_object_get_string(mn), lo, 3);
+        if (json_object_object_get_ex(it, "max", &mx) && mx &&
+            json_object_get_type(mx) == json_type_string)
+          parse_vec_str(json_object_get_string(mx), hi, 3);
+        memcpy(o->particle.color_min, lo, sizeof(lo));
+        memcpy(o->particle.color_max, hi, sizeof(hi));
+        o->particle.has_color_random = 1;
+      } else if (strcmp(name, "rotationrandom") == 0) {
+        struct json_object *mn = NULL, *mx = NULL;
+        float lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0};
+        if (json_object_object_get_ex(it, "min", &mn) && mn &&
+            json_object_get_type(mn) == json_type_string)
+          parse_vec_str(json_object_get_string(mn), lo, 3);
+        if (json_object_object_get_ex(it, "max", &mx) && mx &&
+            json_object_get_type(mx) == json_type_string)
+          parse_vec_str(json_object_get_string(mx), hi, 3);
+        /* 2D sprites roll in the Z axis */
+        o->particle.rot_min = lo[2];
+        o->particle.rot_max = hi[2];
       } else if (strcmp(name, "lifetimerandom") == 0) {
         struct json_object *lo = NULL, *hi = NULL;
         float lmin = 1.0f, lmax = 1.0f;

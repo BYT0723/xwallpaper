@@ -100,13 +100,15 @@ static const char *composite_frag_src =
 static const char *points_vert_src =
     "#version 330 core\n"
     "layout(location=0) in vec2 pos;\n"
-    "layout(location=1) in vec3 ps;\n" /* size, alpha, frame */
+    "layout(location=1) in vec4 ps;\n" /* size, alpha, frame, rotation */
     "out float v_alpha;\n"
     "out float v_frame;\n"
+    "out float v_rot;\n"
     "uniform float xw_flip;\n"
     "void main() {\n"
     "  v_alpha = ps.y;\n"
     "  v_frame = ps.z;\n"
+    "  v_rot = ps.w;\n"
     "  gl_PointSize = ps.x;\n"
     "  gl_Position = vec4(pos.x, pos.y * xw_flip, 0.0, 1.0);\n"
     "}\n";
@@ -156,12 +158,16 @@ static const char *points_frag_src =
     "#version 330 core\n"
     "in float v_alpha;\n"
     "in float v_frame;\n"
+    "in float v_rot;\n"
     "uniform sampler2D xw_tex0;\n"
     "uniform vec4 xw_frames[16];\n"
     "uniform int xw_frame_count;\n"
     "out vec4 xw_out;\n"
     "void main() {\n"
     "  vec2 pc = vec2(gl_PointCoord.x, 1.0 - gl_PointCoord.y);\n"
+    "  pc -= 0.5;\n"
+    "  float cs = cos(v_rot), sn = sin(v_rot);\n"
+    "  pc = vec2(cs * pc.x - sn * pc.y, sn * pc.x + cs * pc.y) + 0.5;\n"
     "  vec4 r = vec4(0.0, 0.0, 1.0, 1.0);\n"
     "  if (xw_frame_count > 0) {\n"
     "    int fi = int(v_frame + 0.5);\n"
@@ -917,6 +923,16 @@ static void bind_frames(XWGl *g, GLuint prog, unsigned int tex) {
     glUniform4fv(loc, nf, rects);
 }
 
+int xw_gl_texture_frame_count(XWGl *g, unsigned int tex) {
+  int i;
+  if (!g || !tex)
+    return 0;
+  for (i = 0; i < g->ntex; i++)
+    if (g->texcache[i].tex == tex)
+      return g->texcache[i].nframes;
+  return 0;
+}
+
 int xw_gl_particle_frame(XWGl *g, unsigned int tex, float age, float speed,
                          float *frame) {
   int i;
@@ -1232,10 +1248,10 @@ int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
   glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)n * sizeof(XWPoint)), ndc,
                GL_DYNAMIC_DRAW);
   glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
                         (void *)0);
   glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
+  glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
                         (void *)(2 * sizeof(float)));
   glEnable(GL_PROGRAM_POINT_SIZE);
   glDrawArrays(GL_POINTS, 0, n);
@@ -1454,6 +1470,12 @@ int xw_gl_bind_named(XWGl *g, const char *name) {
   (void)g;
   (void)name;
   return -1;
+}
+
+int xw_gl_texture_frame_count(XWGl *g, unsigned int tex) {
+  (void)g;
+  (void)tex;
+  return 0;
 }
 
 int xw_gl_particle_frame(XWGl *g, unsigned int tex, float age, float speed,

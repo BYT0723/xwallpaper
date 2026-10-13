@@ -97,6 +97,40 @@ static void test_gravity_and_determinism(void) {
   xw_emitter_free(&z);
 }
 
+static void test_initializers(void) {
+  TEST_BEGIN("alpha/colour/rotation random plus a stable per-particle draw");
+  XWEmitter e;
+  XWParticleCfg c = cfg60();
+  c.alpha_min = 0.25f;
+  c.alpha_max = 0.75f;
+  c.color_min[0] = 0.2f;
+  c.color_max[0] = 0.8f;
+  c.color_min[1] = 0.3f;
+  c.color_max[1] = 0.9f;
+  c.color_min[2] = 0.1f;
+  c.color_max[2] = 0.5f;
+  c.has_color_random = 1;
+  c.rot_min = -0.5f;
+  c.rot_max = 0.5f;
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  TEST_CHECK_EQ_INT(xw_emitter_update(&e, 1.0f), 60);
+  TEST_CHECK(e.alive > 1);
+  int distinct_rnd = 0;
+  for (int i = 0; i < e.alive; i++) {
+    const XWParticle *p = &e.parts[i];
+    TEST_CHECK(p->a >= 0.25f && p->a <= 0.75f);
+    TEST_CHECK(p->r >= 0.2f && p->r <= 0.8f);
+    TEST_CHECK(p->g >= 0.3f && p->g <= 0.9f);
+    TEST_CHECK(p->b >= 0.1f && p->b <= 0.5f);
+    TEST_CHECK(p->rot >= -0.5f && p->rot <= 0.5f);
+    TEST_CHECK(p->rnd >= 0.0f && p->rnd < 1.0f);
+    if (i > 0 && p->rnd != e.parts[0].rnd)
+      distinct_rnd = 1;
+  }
+  TEST_CHECK(distinct_rnd);
+  xw_emitter_free(&e);
+}
+
 static void test_bad_inputs(void) {
   TEST_BEGIN("zero rate spawns nothing, NULL rejected");
   XWEmitter e;
@@ -118,6 +152,7 @@ int main(void) {
   test_box_spawn();
   test_cap();
   test_gravity_and_determinism();
+  test_initializers();
   test_bad_inputs();
   TEST_SUMMARY();
 }

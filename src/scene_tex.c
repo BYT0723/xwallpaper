@@ -292,6 +292,8 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
     img->h = h ? h : mh;
     img->tex_w = mw;
     img->tex_h = mh;
+    /* embedded-file textures can carry a TEXS sheet too */
+    parse_texs(data, len, img);
     return 0;
   }
   switch (format) {

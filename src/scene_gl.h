@@ -62,6 +62,7 @@ typedef struct XWPoint {
   float x, y;
   float size, alpha;
   float frame;
+  float rot; /* in-plane rotation, radians */
 } XWPoint;
 
 /* Builtin point-sprite program (samples xw_tex0, multiplies alpha). */
@@ -97,6 +98,9 @@ int xw_gl_texture_uv_rect(XWGl *g, unsigned int tex, float time,
  * *frame is 0 for textures without animation. */
 int xw_gl_particle_frame(XWGl *g, unsigned int tex, float age, float speed,
                          float *frame);
+
+/* Sprite-sheet frame count of a texture (0 when it has no TEXS block). */
+int xw_gl_texture_frame_count(XWGl *g, unsigned int tex);
 
 /* Transient blending around particle draws (core blend-state mapping). */
 int xw_gl_blend_begin(XWGl *g, XWBlend mode);
