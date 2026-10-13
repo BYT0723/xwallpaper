@@ -96,11 +96,34 @@ static const char *hdr_common_blending =
     "// engine built-in common_blending.h\n"
     "#ifndef XW_WE_COMMON_BLENDING_H\n"
     "#define XW_WE_COMMON_BLENDING_H\n"
-    "// the docs state the mode argument is ignored at compile time and only\n"
-    "// the blend amount drives the result; the material owns the real\n"
-    "// blending mode, so this is an interpolate.\n"
-    "vec3 ApplyBlending(int mode, vec3 colorA, vec3 colorB, float blend) {\n"
-    "  return mix(colorA, colorB, clamp(blend, 0.0, 1.0));\n"
+    "// Standard layer blending set used by the engine's imageblending combo\n"
+    "// (docs.wallpaperengine.io/en/scene/shader/headers.html#common-blending-h).\n"
+    "// The engine does not publish the numeric enum, so the ordering follows\n"
+    "// the classic Photoshop-style list; anything unknown falls back to an\n"
+    "// additive apply, which is how effect passes (sparkles, glow) compose.\n"
+    "vec3 ApplyBlending(int mode, vec3 a, vec3 b, float blend) {\n"
+    "  vec3 r;\n"
+    "  if (mode == 1) r = min(a, b);\n"
+    "  else if (mode == 2) r = a * b;\n"
+    "  else if (mode == 5) r = max(a, b);\n"
+    "  else if (mode == 6) r = 1.0 - (1.0 - a) * (1.0 - b);\n"
+    "  else if (mode == 7) r = min(vec3(1.0), a / max(1.0 - b, vec3(1e-4)));\n"
+    "  else if (mode == 8) r = min(a + b, vec3(1.0));\n"
+    "  else if (mode == 9) r = min(a + b, vec3(1.0));\n"
+    "  else if (mode == 11) r = mix(2.0 * a * b,\n"
+    "                               1.0 - 2.0 * (1.0 - a) * (1.0 - b),\n"
+    "                               step(0.5, a));\n"
+    "  else if (mode == 13) r = mix(2.0 * a * b,\n"
+    "                               1.0 - 2.0 * (1.0 - a) * (1.0 - b),\n"
+    "                               step(0.5, b));\n"
+    "  else if (mode == 18) r = abs(a - b);\n"
+    "  else if (mode == 19) r = a + b - 2.0 * a * b;\n"
+    "  else if (mode == 20) r = max(a - b, vec3(0.0));\n"
+    "  else if (mode == 21) r = clamp(a / max(b + 0.01, vec3(1e-4)), 0.0, 1.0);\n"
+    "  else if (mode == 25) r = clamp(a + b - 0.5, 0.0, 1.0);\n"
+    "  else if (mode == 26) r = clamp(a - b + 0.5, 0.0, 1.0);\n"
+    "  else r = min(a + b, vec3(1.0)); /* addition (mode 0/unknown) */\n"
+    "  return mix(a, r, clamp(blend, 0.0, 1.0));\n"
     "}\n"
     "#endif\n";
 
@@ -239,6 +262,86 @@ static int emit_combos(char **tmp, size_t *len, size_t *cap, const char *src,
   return 0;
 }
 
+/* Sampler annotations carry a `combo` (e.g. the opacity mask uses MASK).
+ * The engine defines that combo as 1 when the texture is actually bound, so
+ * shaders that guard the mask with #if MASK turn it on. */
+static int emit_sampler_combos(char **tmp, size_t *len, size_t *cap,
+                               const char *src, unsigned int texture_slots,
+                               const XWSceneCombo *combos, int n_combos) {
+  const char *p = src;
+  char seen[32][32];
+  int n_seen = 0;
+  while ((p = strstr(p, "uniform")) != NULL) {
+    const char *eol = strchr(p, '\n');
+    const char *end = eol ? eol : p + strlen(p);
+    const char *name = strstr(p, "sampler");
+    const char *cmt = strstr(p, "//");
+    char combo[32];
+    int slot = -1, i, skip = 0;
+    if (!name || name >= end || !cmt || cmt >= end) {
+      p = end;
+      continue;
+    }
+    /* g_Texture<N> gives the slot */
+    {
+      const char *g = strstr(p, "g_Texture");
+      if (!g || g >= end) {
+        p = end;
+        continue;
+      }
+      g += 9;
+      if (*g < '0' || *g > '9') {
+        p = end;
+        continue;
+      }
+      slot = *g - '0';
+    }
+    {
+      const char *ck = strstr(cmt, "\"combo\"");
+      const char *colon, *q1, *q2;
+      size_t nl;
+      if (!ck || ck >= end) {
+        p = end;
+        continue;
+      }
+      colon = strchr(ck, ':');
+      if (!colon || colon >= end || (q1 = strchr(colon, '"')) == NULL ||
+          q1 >= end || (q2 = strchr(q1 + 1, '"')) == NULL || q2 >= end) {
+        p = end;
+        continue;
+      }
+      nl = (size_t)(q2 - q1 - 1);
+      if (nl == 0 || nl >= sizeof(combo)) {
+        p = end;
+        continue;
+      }
+      memcpy(combo, q1 + 1, nl);
+      combo[nl] = '\0';
+    }
+    /* only when the slot is bound and the combo is not already defined */
+    if (!((texture_slots >> slot) & 1u)) {
+      p = end;
+      continue;
+    }
+    for (i = 0; i < n_combos; i++)
+      if (strcmp(combos[i].key, combo) == 0)
+        skip = 1;
+    for (i = 0; i < n_seen; i++)
+      if (strcmp(seen[i], combo) == 0)
+        skip = 1;
+    if (!skip) {
+      char def[96];
+      int dl = snprintf(def, sizeof(def), "#define %s 1\n", combo);
+      if (dl > 0 && append(tmp, len, cap, def, (size_t)dl) != 0)
+        return -1;
+      if (n_seen < 32)
+        snprintf(seen[n_seen++], sizeof(seen[0]), "%s", combo);
+    }
+    p = end;
+  }
+  return 0;
+}
+
 /* Try to match `#include "name"` on a line; the resolver wins over the
  * built-in headers. Returns 1 and fills name when matched. */
 static int match_include(const char *line, char *name, size_t n) {
@@ -328,7 +431,8 @@ static int emit_source(char **tmp, size_t *len, size_t *cap, const char *text,
 
 int xw_shader_preprocess(const char *src, char *dst, size_t n, int is_vertex,
                          const XWSceneCombo *combos, int n_combos,
-                         XWShaderInclude inc, void *user) {
+                         unsigned int texture_slots, XWShaderInclude inc,
+                         void *user) {
   char *tmp = NULL;
   size_t len = 0, cap = 0;
   int i;
@@ -353,6 +457,9 @@ int xw_shader_preprocess(const char *src, char *dst, size_t n, int is_vertex,
   }
   if (emit_combos(&tmp, &len, &cap, src, combos, n_combos) != 0)
     goto fail;
+  if (emit_sampler_combos(&tmp, &len, &cap, src, texture_slots, combos,
+                          n_combos) != 0)
+    goto fail;
   if (emit_source(&tmp, &len, &cap, src, is_vertex, inc, user, 0) != 0)
     goto fail;
   if (len + 1 > n)
@@ -367,11 +474,11 @@ fail:
 
 int xw_shader_translate_stage(const char *src, char *dst, size_t n,
                               int is_vertex) {
-  return xw_shader_preprocess(src, dst, n, is_vertex, NULL, 0, NULL, NULL);
+  return xw_shader_preprocess(src, dst, n, is_vertex, NULL, 0, 0, NULL, NULL);
 }
 
 int xw_shader_translate(const char *src, char *dst, size_t n) {
-  return xw_shader_preprocess(src, dst, n, 0, NULL, 0, NULL, NULL);
+  return xw_shader_preprocess(src, dst, n, 0, NULL, 0, 0, NULL, NULL);
 }
 
 /* ------------------------------------------------------------------ */

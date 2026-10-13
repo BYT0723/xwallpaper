@@ -27,10 +27,14 @@ typedef const char *(*XWShaderInclude)(void *user, const char *name);
 
 /* Preprocess `src` into `dst` (NUL-terminated, truncated -> -1).
  * is_vertex selects the attribute/varying and output mapping.
- * combos are emitted as `#define NAME value` before the body. */
+ * combos are emitted as `#define NAME value` before the body.
+ * texture_slots is a bitmask of bound sampler slots (bit N = g_TextureN has
+ * a texture): the engine enables a sampler's `combo` (e.g. MASK) when its
+ * texture is actually present, which shaders rely on. */
 int xw_shader_preprocess(const char *src, char *dst, size_t n, int is_vertex,
                          const XWSceneCombo *combos, int n_combos,
-                         XWShaderInclude inc, void *user);
+                         unsigned int texture_slots, XWShaderInclude inc,
+                         void *user);
 
 /* Convenience wrappers: no combos, built-in headers only. */
 int xw_shader_translate_stage(const char *src, char *dst, size_t n,

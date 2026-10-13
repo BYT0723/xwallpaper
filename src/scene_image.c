@@ -77,6 +77,16 @@ static void fill_slot(XWGl *gl, const char *dir, const char *ref,
   slot->res[3] = (float)(rh > 0 ? rh : th);
 }
 
+static const XWSceneFbo *find_fbo(const XWSceneEffect *fx, const char *name) {
+  int i;
+  if (!fx || !name || !name[0])
+    return NULL;
+  for (i = 0; i < fx->n_fbos; i++)
+    if (strcmp(fx->fbos[i].name, name) == 0)
+      return &fx->fbos[i];
+  return NULL;
+}
+
 /* Returns 0 drawn, 1 skipped (missing texture), -1 frame error.
  * Effect passes that cannot resolve or compile degrade to the base
  * image (or last good pass) instead of dropping the object. */
@@ -113,30 +123,41 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
   if (xw_gl_fbo_texture(gl, 0, &src) != 0)
     return -1;
   for (e = 0; e < o->n_effects; e++) {
+    const XWSceneEffect *fx = &o->effects[e];
     int broken = 0;
-    if (!o->effects[e].visible)
+    /* "previous" binds resolve to the texture that entered the current
+     * offscreen-target sequence (see the engine's configurePassTarget) */
+    unsigned int effect_input = 0;
+    int in_seq = 0;
+    if (!fx->visible)
       continue;
-    for (i = 0; i < o->effects[e].n_passes; i++) {
+    for (i = 0; i < fx->n_passes; i++) {
       unsigned int ep = 0;
-      XWScenePass *pass = &o->effects[e].passes[i];
+      const XWScenePass *pass = &fx->passes[i];
       const char *sh = pass->shader;
       XWWeSlot slots[XW_GL_WE_SLOTS];
       float input_res[4];
-      int ww = 0, hh = 0, t;
-      /* offscreen render-target passes are not routed yet; running one in
-       * the main chain would overwrite the image, so degrade the effect */
-      if (pass->target[0]) {
-        broken = 1;
-        break;
-      }
+      int ww = 0, hh = 0, t, b;
+      unsigned int texture_slots = 0;
+      int writes_target = 0;
       /* builtin shader names (genericimage*) need no file */
-      if (!sh[0] || strchr(sh, '/') == NULL) {
-        /* empty slot: passthrough to the next pass */
+      if (!sh[0] || strchr(sh, '/') == NULL)
         continue;
+      /* bound sampler slots: the engine enables a sampler's combo (MASK
+       * and friends) only when its texture is actually present */
+      {
+        unsigned int used = 0;
+        for (t = 0; t < pass->n_textures && t < XW_GL_WE_SLOTS; t++)
+          if (pass->textures[t][0])
+            used |= 1u << t;
+        for (b = 0; b < pass->n_binds; b++)
+          if (pass->binds[b].slot >= 0 && pass->binds[b].slot < XW_GL_WE_SLOTS)
+            used |= 1u << pass->binds[b].slot;
+        texture_slots = used;
       }
       if (resolve_shader(dir, sh, shpath, sizeof(shpath)) != 0 ||
-          xw_gl_program_we(gl, shpath, pass->combos, pass->n_combos, &ep,
-                           err) != 0) {
+          xw_gl_program_we(gl, shpath, pass->combos, pass->n_combos,
+                           texture_slots, &ep, err) != 0) {
         /* unknown shader or untranslatable dialect: keep the base
          * image (or last good pass) instead of dropping the object */
         memset(err, 0, sizeof(*err));
@@ -158,14 +179,67 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
         else
           memset(&slots[t], 0, sizeof(slots[t]));
       }
-      if (xw_gl_bind_target(gl, dst) != 0)
+      /* destination: a named offscreen target, else the ping-pong chain */
+      if (pass->target[0]) {
+        const XWSceneFbo *f = find_fbo(fx, pass->target);
+        unsigned int tt = 0;
+        if (xw_gl_named_target(gl, pass->target, f ? f->width : 0,
+                               f ? f->height : 0, f ? f->format : NULL,
+                               f ? f->uvs : NULL, &tt) != 0 ||
+            xw_gl_bind_named(gl, pass->target) != 0) {
+          memset(err, 0, sizeof(*err));
+          broken = 1;
+          break;
+        }
+        if (!in_seq) {
+          effect_input = src;
+          in_seq = 1;
+        }
+        writes_target = 1;
+      } else if (xw_gl_bind_target(gl, dst) != 0) {
         return -1;
+      }
+      /* binds remap a sampler to a named target or the sequence input */
+      for (b = 0; b < pass->n_binds; b++) {
+        int slot = pass->binds[b].slot;
+        unsigned int bt = 0;
+        if (slot < 0 || slot >= XW_GL_WE_SLOTS)
+          continue;
+        if (strcmp(pass->binds[b].name, "previous") == 0) {
+          bt = (in_seq && effect_input) ? effect_input : src;
+        } else {
+          const XWSceneFbo *f = find_fbo(fx, pass->binds[b].name);
+          if (xw_gl_named_target(gl, pass->binds[b].name, f ? f->width : 0,
+                                 f ? f->height : 0, f ? f->format : NULL,
+                                 f ? f->uvs : NULL, &bt) != 0)
+            continue;
+        }
+        if (bt) {
+          int tw2 = 0, th2 = 0, rw2 = 0, rh2 = 0;
+          slots[slot].tex = bt;
+          if (xw_gl_texture_size(gl, bt, &tw2, &th2, &rw2, &rh2) == 0) {
+            slots[slot].res[0] = (float)(tw2 > 0 ? tw2 : 1);
+            slots[slot].res[1] = (float)(th2 > 0 ? th2 : 1);
+            slots[slot].res[2] = (float)(rw2 > 0 ? rw2 : tw2);
+            slots[slot].res[3] = (float)(rh2 > 0 ? rh2 : th2);
+          }
+        }
+      }
       if (xw_gl_draw_we(gl, ep, src, input_res, slots, pass->consts,
                         pass->n_consts, time) != 0)
         return -1;
-      if (xw_gl_fbo_texture(gl, dst, &src) != 0)
-        return -1;
-      dst = 1 - dst;
+      if (writes_target) {
+        unsigned int tt = 0;
+        if (xw_gl_named_target(gl, pass->target, 0, 0, NULL, NULL, &tt) != 0)
+          return -1;
+        src = tt;
+      } else {
+        if (xw_gl_fbo_texture(gl, dst, &src) != 0)
+          return -1;
+        dst = 1 - dst;
+        in_seq = 0;
+        effect_input = 0;
+      }
     }
     if (broken)
       break;

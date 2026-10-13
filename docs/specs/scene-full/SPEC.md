@@ -203,3 +203,15 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   `// {"material":...}` 注释必须在回译**前**收集，SPIRV-Cross 输出会丢注释。
   `glslang_initialize_process()` 成功返回非 0（转发 `ShInitialize` 的 bool）——一开始判断反了，
   导致静默回退；`tests/test_scene_glsl.c` 覆盖可用性/往返/坏 shader 报错。
+- **M3（已完成，2026-10-13）**：effect 离屏 render target / bind，按参考 `CImage::setupPasses` +
+  `configurePassTarget` 的行为实现：解析 effect 的 `fbos`（name/size/format/uvs）与 per-pass `bind`
+  （`{name,index}`）；GL 侧新增命名 target 表（`xw_gl_named_target`/`xw_gl_bind_named`，`r8`→GL_R8，
+  `repeat`→REPEAT）；pass 驱动照参考：命中 `target` 的 pass 写入命名 FBO 并进入 "target 序列"，
+  `bind` 里 `previous` 解析为序列入口纹理、其余名字解析为命名 FBO，非 target pass 走 ping-pong 并结束序列。
+  `tests/data/scene/effecttarget` 覆盖 fbos/bind/target 解析。
+- **combo 语义（2026-10-13）**：补齐 WE 的"采样器 combo"规则——`uniform sampler2D g_TextureN; // {"combo":"X"}`
+  仅在该槽**实际绑定纹理**时把 X 定义为 1（官方文档 `variables.html#optional-visible-texture` 明示）。
+  这条不实现会让 `#if MASK` 恒假（遮罩失效、混合量恒为 1）。
+- **ApplyBlending（2026-10-13）**：按标准图层混合模式表实现（Normal/Darken/Multiply/Screen/Overlay/
+  Additive/Difference/Exclusion/Subtract/Divide/Grain 等），未知/越界模式回退 additive。WE 未公开
+  `imageblending` 的数值枚举，属近似；3497575235 的 glitter（BLENDMODE=32）靠此回退得到正确的"镜片闪光"。

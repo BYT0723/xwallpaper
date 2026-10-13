@@ -109,7 +109,8 @@ static void test_resolver_precedence(void) {
       "#include \"common.h\"\n"
       "void main() { float y = custom_helper(M_PI); }\n";
   TEST_CHECK_EQ_INT(
-      xw_shader_preprocess(src, dst, sizeof(dst), 0, NULL, 0, resolver_cb, NULL),
+      xw_shader_preprocess(src, dst, sizeof(dst), 0, NULL, 0, 0, resolver_cb,
+                           NULL),
       0);
   TEST_CHECK(strstr(dst, "custom_helper") != NULL);
   TEST_CHECK(strstr(dst, "vec2 rotateVec2(") != NULL);
@@ -127,7 +128,8 @@ static void test_combos(void) {
   snprintf(combos[0].key, sizeof(combos[0].key), "BLENDMODE");
   snprintf(combos[0].value, sizeof(combos[0].value), "3");
   TEST_CHECK_EQ_INT(
-      xw_shader_preprocess(src, dst, sizeof(dst), 0, combos, 1, NULL, NULL), 0);
+      xw_shader_preprocess(src, dst, sizeof(dst), 0, combos, 1, 0, NULL, NULL),
+      0);
   /* explicit material combo wins over the annotation default */
   TEST_CHECK(strstr(dst, "#define BLENDMODE 3") != NULL);
   TEST_CHECK(strstr(dst, "#define BLENDMODE 32") == NULL);
@@ -190,6 +192,41 @@ static void test_vertex_attrib_locations(void) {
   char fdst[8192];
   TEST_CHECK_EQ_INT(xw_shader_translate_stage(src, fdst, sizeof(fdst), 0), 0);
   TEST_CHECK(strstr(fdst, "layout(location=0)") == NULL);
+}
+
+static void test_sampler_combo(void) {
+  TEST_BEGIN("a sampler combo is enabled only when its slot is bound");
+  const char *src =
+      "uniform sampler2D g_Texture2; // {\"label\":\"mask\",\"combo\":\"MASK\"}\n"
+      "varying vec2 v_TexCoord;\n"
+      "void main() { float m = 1.0;\n"
+      "#if MASK\n"
+      "  m = texture(g_Texture2, v_TexCoord).r;\n"
+      "#endif\n"
+      "  gl_FragColor = vec4(m); }\n";
+  char dst[8192];
+  /* slot 2 bound -> MASK becomes 1 */
+  TEST_CHECK_EQ_INT(
+      xw_shader_preprocess(src, dst, sizeof(dst), 0, NULL, 0, 1u << 2, NULL,
+                           NULL),
+      0);
+  TEST_CHECK(strstr(dst, "#define MASK 1") != NULL);
+  /* slot 2 empty -> the combo stays undefined so the guard is off */
+  TEST_CHECK_EQ_INT(
+      xw_shader_preprocess(src, dst, sizeof(dst), 0, NULL, 0, 0, NULL, NULL),
+      0);
+  TEST_CHECK(strstr(dst, "#define MASK") == NULL);
+  /* an explicit material combo wins over the implicit enable */
+  XWSceneCombo combos[1];
+  memset(combos, 0, sizeof(combos));
+  snprintf(combos[0].key, sizeof(combos[0].key), "MASK");
+  snprintf(combos[0].value, sizeof(combos[0].value), "0");
+  TEST_CHECK_EQ_INT(
+      xw_shader_preprocess(src, dst, sizeof(dst), 0, combos, 1, 1u << 2, NULL,
+                           NULL),
+      0);
+  TEST_CHECK(strstr(dst, "#define MASK 0") != NULL);
+  TEST_CHECK(strstr(dst, "#define MASK 1") == NULL);
 }
 
 static void test_bad_inputs(void) {
@@ -275,6 +312,7 @@ int main(void) {
   test_version_line_dropped();
   test_linked_varyings();
   test_vertex_attrib_locations();
+  test_sampler_combo();
   test_bad_inputs();
   test_builtin_lookup();
   test_sample_translates();

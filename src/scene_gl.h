@@ -45,7 +45,8 @@ int xw_gl_delete_texture(XWGl *g, unsigned int tex);
  * cached by path. */
 int xw_gl_program_we(XWGl *g, const char *frag_path,
                      const XWSceneCombo *combos, int n_combos,
-                     unsigned int *prog, XWError *err);
+                     unsigned int texture_slots, unsigned int *prog,
+                     XWError *err);
 
 /* Builtin base-copy program (samples xw_tex0). */
 int xw_gl_program_copy(XWGl *g, unsigned int *prog, XWError *err);
@@ -74,6 +75,14 @@ int xw_gl_blend_end(XWGl *g);
 
 /* Bind render target: -1 = window backbuffer, 0/1 = internal FBO. */
 int xw_gl_bind_target(XWGl *g, int fbo);
+
+/* Effect-declared offscreen targets ("fbos" in effect.json). Create or
+ * fetch by name (w/h <= 0 use the window size, format "r8" is single
+ * channel), then bind it for rendering. */
+int xw_gl_named_target(XWGl *g, const char *name, int w, int h,
+                       const char *format, const char *uvs,
+                       unsigned int *tex);
+int xw_gl_bind_named(XWGl *g, const char *name);
 
 /* Clear the bound target to an opaque color. */
 int xw_gl_clear(XWGl *g, float r, float gg, float b);

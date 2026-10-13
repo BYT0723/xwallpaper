@@ -17,6 +17,7 @@
 #define XW_GL_PROG_MAX 16
 #define XW_GL_TEXCACHE_MAX 24
 #define XW_GL_DEFS_MAX 24
+#define XW_GL_TARGETS_MAX 8
 
 #ifdef XW_HAVE_GL
 
@@ -49,6 +50,13 @@ struct XWGl {
   int ntex;
   GLuint utils[4];
   int flip; /* 1 while rendering into an FBO (see bind_target) */
+  /* named offscreen targets declared by effects ("fbos") */
+  struct {
+    char name[64];
+    GLuint fbo, tex;
+    int w, h;
+  } targets[XW_GL_TARGETS_MAX];
+  int ntargets;
 };
 
 static const char *vert_src =
@@ -256,6 +264,10 @@ void xw_gl_destroy(XWGl *g) {
     for (i = 0; i < g->nprogs; i++) glDeleteProgram(g->progs[i].prog);
     for (i = 0; i < g->ntex; i++) glDeleteTextures(1, &g->texcache[i].tex);
     glDeleteTextures(4, g->utils);
+    for (i = 0; i < g->ntargets; i++) {
+      glDeleteFramebuffers(1, &g->targets[i].fbo);
+      glDeleteTextures(1, &g->targets[i].tex);
+    }
     glDeleteFramebuffers(2, g->fbos);
     glDeleteTextures(2, g->fbo_tex);
     glDeleteBuffers(1, &g->quad_vbo);
@@ -664,10 +676,11 @@ static int slurp(const char *path, char **out, XWError *err) {
 }
 
 static void program_key(char *key, size_t n, const char *frag_path,
-                        const XWSceneCombo *combos, int n_combos) {
+                        const XWSceneCombo *combos, int n_combos,
+                        unsigned int texture_slots) {
   size_t len;
   int i;
-  snprintf(key, n, "%s", frag_path);
+  snprintf(key, n, "%s|%u", frag_path, texture_slots);
   if (!combos)
     return;
   for (i = 0; i < n_combos; i++) {
@@ -683,7 +696,8 @@ static void program_key(char *key, size_t n, const char *frag_path,
 
 int xw_gl_program_we(XWGl *g, const char *frag_path,
                      const XWSceneCombo *combos, int n_combos,
-                     unsigned int *prog, XWError *err) {
+                     unsigned int texture_slots, unsigned int *prog,
+                     XWError *err) {
   char *src = NULL, *dst = NULL;
   char vert_path[1152];
   char key[512];
@@ -694,7 +708,7 @@ int xw_gl_program_we(XWGl *g, const char *frag_path,
   int rc, i, slot = -1;
   if (!g || !frag_path || !prog)
     return gl_error("invalid args", err);
-  program_key(key, sizeof(key), frag_path, combos, n_combos);
+  program_key(key, sizeof(key), frag_path, combos, n_combos, texture_slots);
   for (i = 0; i < g->nprogs; i++)
     if (strcmp(g->progs[i].key, key) == 0) {
       *prog = g->progs[i].prog;
@@ -713,7 +727,8 @@ int xw_gl_program_we(XWGl *g, const char *frag_path,
     free(src);
     return gl_error("out of memory", err);
   }
-  if (xw_shader_preprocess(src, dst, cap, 0, combos, n_combos, NULL, NULL) != 0) {
+  if (xw_shader_preprocess(src, dst, cap, 0, combos, n_combos, texture_slots,
+                           NULL, NULL) != 0) {
     free(src);
     free(dst);
     XW_ERROR_SET(err, 1, "cannot translate shader '%s'", frag_path);
@@ -739,8 +754,8 @@ int xw_gl_program_we(XWGl *g, const char *frag_path,
         free(dst);
         return gl_error("out of memory", err);
       }
-      if (xw_shader_preprocess(vsrc, vdst, vcap, 1, combos, n_combos, NULL,
-                               NULL) != 0) {
+      if (xw_shader_preprocess(vsrc, vdst, vcap, 1, combos, n_combos,
+                               texture_slots, NULL, NULL) != 0) {
         free(vsrc);
         free(vdst);
         free(src);
@@ -820,6 +835,86 @@ int xw_gl_bind_target(XWGl *g, int fbo) {
     return -1;
   }
   return 0;
+}
+
+/* Create (or fetch) a named offscreen target. w/h <= 0 mean the window
+ * size; format "r8" gets a single-channel buffer (the engine uses it for
+ * effect tiles), anything else RGBA8. */
+int xw_gl_named_target(XWGl *g, const char *name, int w, int h,
+                       const char *format, const char *uvs,
+                       unsigned int *tex) {
+  int i;
+  GLenum internal = GL_RGBA8;
+  GLint wrap = GL_CLAMP_TO_EDGE;
+  if (!g || !name || !name[0] || !tex)
+    return -1;
+  for (i = 0; i < g->ntargets; i++)
+    if (strcmp(g->targets[i].name, name) == 0) {
+      *tex = g->targets[i].tex;
+      return 0;
+    }
+  if (g->ntargets >= XW_GL_TARGETS_MAX)
+    return -1;
+  if (w <= 0)
+    w = g->w;
+  if (h <= 0)
+    h = g->h;
+  if (w <= 0 || h <= 0)
+    return -1;
+  if (format && strcmp(format, "r8") == 0)
+    internal = GL_R8;
+  if (uvs && strcmp(uvs, "repeat") == 0)
+    wrap = GL_REPEAT;
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  i = g->ntargets;
+  glGenTextures(1, &g->targets[i].tex);
+  glBindTexture(GL_TEXTURE_2D, g->targets[i].tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+  glTexImage2D(GL_TEXTURE_2D, 0, (GLint)internal, w, h, 0, GL_RGBA,
+               GL_UNSIGNED_BYTE, NULL);
+  glGenFramebuffers(1, &g->targets[i].fbo);
+  glBindFramebuffer(GL_FRAMEBUFFER, g->targets[i].fbo);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                         GL_TEXTURE_2D, g->targets[i].tex, 0);
+  if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &g->targets[i].fbo);
+    glDeleteTextures(1, &g->targets[i].tex);
+    return -1;
+  }
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  snprintf(g->targets[i].name, sizeof(g->targets[i].name), "%s", name);
+  g->targets[i].w = w;
+  g->targets[i].h = h;
+  g->ntargets++;
+  *tex = g->targets[i].tex;
+  return 0;
+}
+
+/* Bind a named target (or the window when name is NULL/empty) for
+ * rendering. Mirrors bind_target's flip handling. */
+int xw_gl_bind_named(XWGl *g, const char *name) {
+  int i;
+  if (!g)
+    return -1;
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  if (!name || !name[0]) {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, g->w, g->h);
+    g->flip = 0;
+    return 0;
+  }
+  for (i = 0; i < g->ntargets; i++)
+    if (strcmp(g->targets[i].name, name) == 0) {
+      glBindFramebuffer(GL_FRAMEBUFFER, g->targets[i].fbo);
+      glViewport(0, 0, g->targets[i].w, g->targets[i].h);
+      g->flip = 1;
+      return 0;
+    }
+  return -1;
 }
 
 static GLint sampler_location(GLuint prog) {
@@ -1106,11 +1201,13 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
 
 int xw_gl_program_we(XWGl *g, const char *frag_path,
                      const XWSceneCombo *combos, int n_combos,
-                     unsigned int *prog, XWError *err) {
+                     unsigned int texture_slots, unsigned int *prog,
+                     XWError *err) {
   (void)g;
   (void)frag_path;
   (void)combos;
   (void)n_combos;
+  (void)texture_slots;
   (void)prog;
   XW_ERROR_SET(err, 1, "scene GL support not compiled in (need gl/glew)");
   return -1;
@@ -1127,6 +1224,25 @@ int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
   (void)consts;
   (void)n_consts;
   (void)time;
+  return -1;
+}
+
+int xw_gl_named_target(XWGl *g, const char *name, int w, int h,
+                       const char *format, const char *uvs,
+                       unsigned int *tex) {
+  (void)g;
+  (void)name;
+  (void)w;
+  (void)h;
+  (void)format;
+  (void)uvs;
+  (void)tex;
+  return -1;
+}
+
+int xw_gl_bind_named(XWGl *g, const char *name) {
+  (void)g;
+  (void)name;
   return -1;
 }
 
@@ -1462,6 +1578,20 @@ int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
         *rw = g->texcache[i].rw;
       if (rh)
         *rh = g->texcache[i].rh;
+      return 0;
+    }
+  }
+  /* offscreen targets are not in the path cache */
+  for (i = 0; i < g->ntargets; i++) {
+    if (g->targets[i].tex == tex) {
+      if (tw)
+        *tw = g->targets[i].w;
+      if (th)
+        *th = g->targets[i].h;
+      if (rw)
+        *rw = g->targets[i].w;
+      if (rh)
+        *rh = g->targets[i].h;
       return 0;
     }
   }
