@@ -152,3 +152,26 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
 - **props 不持久化**：override 只活在 daemon 内存，重启/切换丢失（后续可加 state 列）。
 - **`--disable-mouse`/`--disable-parallax`**：未实现（输入恒为 root 像素：脚本可用；decorrelation 开关后续）。
 - **真机同帧对比**：未执行（无参考壁纸目录）；xvfb 像素回读 + 动画推进断言代替。
+
+## 渲染重写（2026-10-13，分支 `refactor/scene-render-pipeline`）
+
+背景：原 shader 处理是手写 token 替换，实机多张 Workshop 壁纸失败。用户要求对标本地
+`linux-wallpaperengine`。许可冲突已决议：**保持 MIT**，只照其"行为/流程"重写，不搬 GPL 代码。
+
+- **许可**：参考实现是 GPL-3.0，本项目是 MIT。逐文件照搬会强制本项目 copyleft，故**不照搬**。
+  采用的 `glslang`（BSD/Apache）与 `spirv-cross`（Apache-2.0）是宽松许可，可安全使用/依赖。
+- **shader 管线路线（照参考 `ShaderUnit` + `GLSLContext` 的行为）**：WE 方言预处理 →
+  glslang 编译为 SPIR-V → spirv-cross 回译为 GLSL 330。参考用自建 fork；我们用系统库。
+- **M1（已完成）**：`scene_shader.c` 重写为真正的预处理器——`#version 330` 头 + 方言 `#define`
+  （mul/lerp/frac/saturate/CASTn/texSample2D/…）+ 按阶段映射（frag：`varying`→`in` +
+  `out_FragColor`；vert：`attribute`→`in`、`varying`→`out`）+ `#include` 解析（外部 resolver
+  优先，回退内建头，缺失降级为注释）+ `// [COMBO]`→`#define`（material 显式值优先）。
+  内建 `common.h`/`common_fragment.h`/`common_vertex.h`/`common_blending.h` 按 WE 官方文档重写
+  （https://docs.wallpaperengine.io/en/scene/shader/headers.html ）。
+- **修正实锤 bug**：官方文档 `M_PI_2 = 6.28318530718`（=2π）、`M_PI_HALF` 才是 π/2；旧实现把
+  `M_PI_2` 当 π/2，且缺 `M_PI_HALF/SQRT_2/SQRT_3` 与 `hsv2rgb/rgb2hsv/greyscale`。
+- **M2（待做）**：接入 glslang→SPIR-V→spirv-cross，替换对驱动 GLSL 编译器的直接依赖。
+  前置：`sudo pacman -S spirv-cross`（glslang 已装）。随后继续按参考补 effect render
+  target/`bind: previous|_rt_*`（`CPass`/`CFBO` 行为）与粒子系统。
+- **未验证项**：内建头里 `DecompressNormal*`/`ConvertTexture0Format`/`BuildTangentSpace` 等
+  函数体官方只公布签名未公布公式，按标准实现，需真机比对。

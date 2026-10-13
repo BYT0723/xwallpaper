@@ -646,42 +646,6 @@ static int slurp(const char *path, char **out, XWError *err) {
   return 0;
 }
 
-/* Bake material combos as -D defines, inserted after the #version
- * line (or prepended when the source has none). */
-static int bake_combos(char *dst, size_t cap, const XWSceneCombo *combos,
-                       int n_combos) {
-  char *at;
-  size_t dl, tail;
-  int i;
-  if (!combos || n_combos <= 0)
-    return 0;
-  at = dst;
-  if (strncmp(dst, "#version", 8) == 0) {
-    at = strchr(dst, '\n');
-    if (!at)
-      return -1;
-    at++;
-  }
-  for (i = 0; i < n_combos; i++) {
-    char line[128];
-    int ll;
-    if (!combos[i].key[0])
-      continue;
-    ll = snprintf(line, sizeof(line), "#define %s %s\n", combos[i].key,
-                  combos[i].value[0] ? combos[i].value : "1");
-    if (ll <= 0 || ll >= (int)sizeof(line))
-      continue;
-    dl = strlen(dst);
-    tail = dl - (size_t)(at - dst);
-    if (dl + (size_t)ll + 1 > cap)
-      return -1;
-    memmove(at + ll, at, tail + 1);
-    memcpy(at, line, (size_t)ll);
-    at += ll;
-  }
-  return 0;
-}
-
 static void program_key(char *key, size_t n, const char *frag_path,
                         const XWSceneCombo *combos, int n_combos) {
   size_t len;
@@ -726,14 +690,13 @@ int xw_gl_program_we(XWGl *g, const char *frag_path,
   slot = g->nprogs;
   if (slurp(frag_path, &src, err) != 0)
     return -1;
-  cap = strlen(src) + 8192;
+  cap = strlen(src) + 65536;
   dst = malloc(cap);
   if (!dst) {
     free(src);
     return gl_error("out of memory", err);
   }
-  if (xw_shader_translate(src, dst, cap) != 0 ||
-      bake_combos(dst, cap, combos, n_combos) != 0) {
+  if (xw_shader_preprocess(src, dst, cap, 0, combos, n_combos, NULL, NULL) != 0) {
     free(src);
     free(dst);
     XW_ERROR_SET(err, 1, "cannot translate shader '%s'", frag_path);
@@ -749,15 +712,15 @@ int xw_gl_program_we(XWGl *g, const char *frag_path,
     memset(&verr, 0, sizeof(verr));
     memcpy(vert_path + flen - 5, ".vert", 6);
     if (slurp(vert_path, &vsrc, &verr) == 0) {
-      vcap = strlen(vsrc) + 8192;
+      vcap = strlen(vsrc) + 65536;
       vdst = malloc(vcap);
       if (!vdst) {
         free(vsrc);
         free(dst);
         return gl_error("out of memory", err);
       }
-      if (xw_shader_translate_stage(vsrc, vdst, vcap, 1) != 0 ||
-          bake_combos(vdst, vcap, combos, n_combos) != 0) {
+      if (xw_shader_preprocess(vsrc, vdst, vcap, 1, combos, n_combos, NULL,
+                               NULL) != 0) {
         free(vsrc);
         free(vdst);
         free(dst);

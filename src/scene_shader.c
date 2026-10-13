@@ -4,6 +4,124 @@
 
 #include "scene_shader.h"
 
+/* ------------------------------------------------------------------ */
+/* Built-in engine headers                                             */
+/*                                                                     */
+/* Linux-wallpaperengine ships its own copies of these under a GPL and */
+/* needs the user's Steam install for the originals; we reimplement    */
+/* them from the public header documentation instead.                  */
+/*   https://docs.wallpaperengine.io/en/scene/shader/headers.html      */
+/* Constants are documented exactly; function bodies are the standard  */
+/* formulations (the docs only publish signatures) and are flagged     */
+/* where a reference frame would be needed to verify them bit-exactly. */
+/* ------------------------------------------------------------------ */
+
+static const char *hdr_common =
+    "// engine built-in common.h\n"
+    "#ifndef XW_WE_COMMON_H\n"
+    "#define XW_WE_COMMON_H\n"
+    "#ifndef M_PI\n"
+    "#define M_PI 3.14159265359\n"
+    "#endif\n"
+    "#ifndef M_PI_HALF\n"
+    "#define M_PI_HALF 1.57079632679\n"
+    "#endif\n"
+    "#ifndef M_PI_2\n"
+    "#define M_PI_2 6.28318530718\n"
+    "#endif\n"
+    "#ifndef SQRT_2\n"
+    "#define SQRT_2 1.41421356237\n"
+    "#endif\n"
+    "#ifndef SQRT_3\n"
+    "#define SQRT_3 1.73205080756\n"
+    "#endif\n"
+    "vec3 hsv2rgb(vec3 c) {\n"
+    "  vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);\n"
+    "  vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);\n"
+    "  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);\n"
+    "}\n"
+    "vec3 rgb2hsv(vec3 c) {\n"
+    "  vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);\n"
+    "  vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));\n"
+    "  vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));\n"
+    "  float d = q.x - min(q.w, q.y);\n"
+    "  return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + 1.0e-10)), d / (q.x + 1.0e-10), q.x);\n"
+    "}\n"
+    "vec2 rotateVec2(vec2 v, float r) {\n"
+    "  float c = cos(r), s = sin(r);\n"
+    "  return vec2(c * v.x - s * v.y, s * v.x + c * v.y);\n"
+    "}\n"
+    "float greyscale(vec3 color) {\n"
+    "  return dot(color, vec3(0.299, 0.587, 0.114));\n"
+    "}\n"
+    "#endif\n";
+
+static const char *hdr_common_fragment =
+    "// engine built-in common_fragment.h\n"
+    "#ifndef XW_WE_COMMON_FRAGMENT_H\n"
+    "#define XW_WE_COMMON_FRAGMENT_H\n"
+    "vec3 DecompressNormal(vec4 n) {\n"
+    "  vec3 t = n.xyz * 2.0 - 1.0;\n"
+    "  t.z = sqrt(max(0.0, 1.0 - dot(t.xy, t.xy)));\n"
+    "  return normalize(t);\n"
+    "}\n"
+    "vec4 DecompressNormalWithMask(vec4 n) {\n"
+    "  vec3 t = n.xyz * 2.0 - 1.0;\n"
+    "  t.z = sqrt(max(0.0, 1.0 - dot(t.xy, t.xy)));\n"
+    "  return vec4(normalize(t), n.w);\n"
+    "}\n"
+    "float ConvertSampleR8(vec4 sample) {\n"
+    "  return sample.r;\n"
+    "}\n"
+    "vec4 ConvertTexture0Format(vec4 color) {\n"
+    "  return color;\n"
+    "}\n"
+    "#endif\n";
+
+static const char *hdr_common_vertex =
+    "// engine built-in common_vertex.h\n"
+    "#ifndef XW_WE_COMMON_VERTEX_H\n"
+    "#define XW_WE_COMMON_VERTEX_H\n"
+    "mat3 BuildTangentSpace(vec3 normal, vec4 signedTangent) {\n"
+    "  vec3 n = normalize(normal);\n"
+    "  vec3 t = normalize(signedTangent.xyz - n * dot(n, signedTangent.xyz));\n"
+    "  return mat3(t, cross(n, t) * signedTangent.w, n);\n"
+    "}\n"
+    "mat3 BuildTangentSpace(mat3 modelTransform, vec3 normal, vec4 signedTangent) {\n"
+    "  return modelTransform * BuildTangentSpace(normal, signedTangent);\n"
+    "}\n"
+    "#endif\n";
+
+static const char *hdr_common_blending =
+    "// engine built-in common_blending.h\n"
+    "#ifndef XW_WE_COMMON_BLENDING_H\n"
+    "#define XW_WE_COMMON_BLENDING_H\n"
+    "// the docs state the mode argument is ignored at compile time and only\n"
+    "// the blend amount drives the result; the material owns the real\n"
+    "// blending mode, so this is an interpolate.\n"
+    "vec3 ApplyBlending(int mode, vec3 colorA, vec3 colorB, float blend) {\n"
+    "  return mix(colorA, colorB, clamp(blend, 0.0, 1.0));\n"
+    "}\n"
+    "#endif\n";
+
+const char *xw_shader_builtin_header(const char *name) {
+  if (!name)
+    return NULL;
+  if (strcmp(name, "common.h") == 0)
+    return hdr_common;
+  if (strcmp(name, "common_fragment.h") == 0)
+    return hdr_common_fragment;
+  if (strcmp(name, "common_vertex.h") == 0)
+    return hdr_common_vertex;
+  if (strcmp(name, "common_blending.h") == 0)
+    return hdr_common_blending;
+  return NULL;
+}
+
+/* ------------------------------------------------------------------ */
+/* Buffer helpers                                                      */
+/* ------------------------------------------------------------------ */
+
 static int append(char **buf, size_t *len, size_t *cap, const char *s,
                   size_t n) {
   if (*len + n + 1 > *cap) {
@@ -24,174 +142,213 @@ static int append_cstr(char **buf, size_t *len, size_t *cap, const char *s) {
   return append(buf, len, cap, s, strlen(s));
 }
 
-static int word_char(char c) {
-  return (c == '_' || (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
-          (c >= 'a' && c <= 'z'));
-}
+/* Dialect + stage prefix. Mirrors the engine's documented compatibility
+ * defines: HLSL spellings used by workshop shaders, mapped to GLSL. */
+static const char *dialect_defines =
+    "#define mul(x, y) ((y) * (x))\n"
+    "#define lerp mix\n"
+    "#define frac fract\n"
+    "#define CAST2(x) (vec2(x))\n"
+    "#define CAST3(x) (vec3(x))\n"
+    "#define CAST4(x) (vec4(x))\n"
+    "#define CAST3X3(x) (mat3(x))\n"
+    "#define float2 vec2\n"
+    "#define float3 vec3\n"
+    "#define float4 vec4\n"
+    "#define int2 ivec2\n"
+    "#define int3 ivec3\n"
+    "#define int4 ivec4\n"
+    "#define saturate(x) (clamp(x, 0.0, 1.0))\n"
+    "#define texSample2D texture\n"
+    "#define texSample2DLod textureLod\n"
+    "#define log10(x) (log2(x) * 0.301029995663981)\n"
+    "#define atan2 atan\n"
+    "#define fmod(x, y) ((x) - (y) * trunc((x) / (y)))\n"
+    "#define ddx dFdx\n"
+    "#define ddy(x) dFdy(-(x))\n"
+    "#define GLSL 1\n";
 
-/* Wallpaper Engine common built-ins observed in workshop shaders. Rotation
- * direction follows the standard math convention; revisit against a
- * reference frame if parallaxed layers shear the wrong way. */
-static const char *we_prelude =
-    "#ifndef XW_WE_COMMON_H\n"
-    "#define XW_WE_COMMON_H\n"
-    "#define texSample2D(s, uv) texture(s, uv)\n"
-    "#define mul(v, m) ((m) * (v))\n"
-    "#define saturate(x) clamp(x, 0.0, 1.0)\n"
-    "#define frac(x) fract(x)\n"
-    "#define lerp(a, b, t) mix(a, b, t)\n"
-    "#define CAST2(x) vec2(x)\n"
-    "#define CAST3(x) vec3(x)\n"
-    "#define CAST4(x) vec4(x)\n"
-    "#ifndef M_PI\n"
-    "#define M_PI 3.141592653589793\n"
-    "#endif\n"
-    "#ifndef M_PI_2\n"
-    "#define M_PI_2 1.5707963267948966\n"
-    "#endif\n"
-    "#ifndef M_PI_4\n"
-    "#define M_PI_4 0.7853981633974483\n"
-    "#endif\n"
-    "vec2 rotateVec2(vec2 v, float a) {\n"
-    "  float c = cos(a);\n"
-    "  float s = sin(a);\n"
-    "  return vec2(c * v.x - s * v.y, s * v.x + c * v.y);\n"
-    "}\n"
-    "vec3 ApplyBlending(int mode, vec3 a, vec3 b, float blend) {\n"
-    "  return mix(a, b, clamp(blend, 0.0, 1.0));\n"
-    "}\n"
-    "#endif\n";
+static const char *fragment_defines =
+    "out vec4 out_FragColor;\n"
+    "#define gl_FragColor out_FragColor\n"
+    "#define varying in\n";
 
-int xw_shader_translate(const char *src, char *dst, size_t n) {
-  return xw_shader_translate_stage(src, dst, n, 0);
-}
+static const char *vertex_defines =
+    "#define attribute in\n"
+    "#define varying out\n";
 
-int xw_shader_translate_stage(const char *src, char *dst, size_t n,
-                              int is_vertex) {
-  if (!src || !dst || n == 0) return -1;
-  char *tmp = NULL;
-  size_t len = 0, cap = 0;
-  const char *p = src;
-  /* built-ins are needed with or without an #include line */
-  if (append_cstr(&tmp, &len, &cap, we_prelude) != 0) {
-    free(tmp);
-    return -1;
-  }
-  /* combo defaults from // [COMBO] {"combo":"NAME",...,"default":N}
-   * annotations (integer defaults only; materials may override later) */
-  {
-    const char *q = src;
-    while ((q = strstr(q, "// [COMBO")) != NULL) {
-      const char *eol = strchr(q, '\n');
-      size_t llen = eol ? (size_t)(eol - q) : strlen(q);
-      const char *ck = strstr(q, "\"combo\"");
-      if (ck && ck < q + llen) {
-        const char *colon = strchr(ck, ':');
-        const char *q1, *q2;
-        char name[64];
-        size_t nl;
-        if (colon && colon < q + llen && (q1 = strchr(colon, '"')) != NULL &&
-            q1 < q + llen && (q2 = strchr(q1 + 1, '"')) != NULL &&
-            q2 < q + llen && (nl = (size_t)(q2 - q1 - 1)) < sizeof(name)) {
-          const char *dk;
-          memcpy(name, q1 + 1, nl);
-          name[nl] = '\0';
-          dk = strstr(q, "\"default\"");
-          if (dk && dk < q + llen) {
-            const char *dc = strchr(dk, ':');
+/* Combo annotations: // [COMBO] {"combo":"NAME",...,"default":N}
+ * An annotation default is only emitted when the material did not already
+ * provide that combo (explicit material combos win). */
+static int emit_combos(char **tmp, size_t *len, size_t *cap, const char *src,
+                       const XWSceneCombo *combos, int n_combos) {
+  const char *q = src;
+  char seen[64][64];
+  int n_seen = 0;
+  while ((q = strstr(q, "// [COMBO")) != NULL) {
+    const char *eol = strchr(q, '\n');
+    size_t llen = eol ? (size_t)(eol - q) : strlen(q);
+    const char *ck = strstr(q, "\"combo\"");
+    if (ck && ck < q + llen) {
+      const char *colon = strchr(ck, ':');
+      const char *q1, *q2;
+      char name[64];
+      size_t nl;
+      if (colon && colon < q + llen && (q1 = strchr(colon, '"')) != NULL &&
+          q1 < q + llen && (q2 = strchr(q1 + 1, '"')) != NULL &&
+          q2 < q + llen && (nl = (size_t)(q2 - q1 - 1)) < sizeof(name)) {
+        const char *dk;
+        int i, skip = 0;
+        memcpy(name, q1 + 1, nl);
+        name[nl] = '\0';
+        for (i = 0; i < n_combos; i++)
+          if (strcmp(combos[i].key, name) == 0)
+            skip = 1;
+        for (i = 0; i < n_seen; i++)
+          if (strcmp(seen[i], name) == 0)
+            skip = 1;
+        dk = strstr(q, "\"default\"");
+        if (!skip && dk && dk < q + llen) {
+          const char *dc = strchr(dk, ':');
+          if (dc && dc < q + llen) {
+            const char *ds = dc + 1;
             char *end = NULL;
-            long dv = 0;
-            if (dc && dc < q + llen) {
-              const char *ds = dc + 1;
-              while (ds < q + llen && (*ds == ' ' || *ds == '\t')) ds++;
-              /* quoted defaults are paths/colors, not combo values */
-              if (ds < q + llen && *ds != '"') {
-                dv = strtol(ds, &end, 10);
-                if (end != ds) {
-                  char def[128];
-                  int dl = snprintf(def, sizeof(def), "#define %s %ld\n",
-                                    name, dv);
-                  if (dl > 0 &&
-                      append(&tmp, &len, &cap, def, (size_t)dl) != 0) {
-                    free(tmp);
-                    return -1;
-                  }
-                }
+            long dv;
+            while (ds < q + llen && (*ds == ' ' || *ds == '\t')) ds++;
+            /* quoted defaults are paths/colours, not combo values */
+            if (ds < q + llen && *ds != '"') {
+              dv = strtol(ds, &end, 10);
+              if (end != ds) {
+                char def[128];
+                int dl = snprintf(def, sizeof(def), "#define %s %ld\n", name,
+                                  dv);
+                if (dl > 0 && append(tmp, len, cap, def, (size_t)dl) != 0)
+                  return -1;
+                if (n_seen < 64)
+                  snprintf(seen[n_seen++], sizeof(seen[0]), "%s", name);
               }
             }
           }
         }
       }
-      q += llen ? llen : 1;
     }
+    q += llen ? llen : 1;
   }
-  while (*p) {
-    if (strncmp(p, "#include", 8) == 0 &&
-        (p == src || p[-1] == '\n' || p[-1] == '\r')) {
-      const char *eol = strchr(p, '\n');
-      size_t adv = eol ? (size_t)(eol - p) + 1 : strlen(p);
-      if (append_cstr(&tmp, &len, &cap, "// include skipped\n") != 0) {
-        free(tmp);
-        return -1;
-      }
-      p += adv;
-      continue;
-    }
-    if (strncmp(p, "texture2D", 9) == 0 && !word_char(p[9])) {
-      if (append(&tmp, &len, &cap, "texture", 7) != 0) {
-        free(tmp);
-        return -1;
-      }
-      p += 9;
-      continue;
-    }
-    if (strncmp(p, "gl_FragColor", 12) == 0 && !word_char(p[12])) {
-      if (append(&tmp, &len, &cap, "xw_FragColor", 12) != 0) {
-        free(tmp);
-        return -1;
-      }
-      p += 12;
-      continue;
-    }
-    if (strncmp(p, "attribute", 9) == 0 && !word_char(p[9])) {
-      if (append(&tmp, &len, &cap, "in", 2) != 0) {
-        free(tmp);
-        return -1;
-      }
-      p += 9;
-      continue;
-    }
-    if (strncmp(p, "varying", 7) == 0 && !word_char(p[7])) {
-      const char *kw = is_vertex ? "out" : "in";
-      if (append(&tmp, &len, &cap, kw, strlen(kw)) != 0) {
-        free(tmp);
-        return -1;
-      }
-      p += 7;
-      continue;
-    }
-    if (append(&tmp, &len, &cap, p, 1) != 0) {
-      free(tmp);
-      return -1;
-    }
-    p++;
-  }
-  const char *pre = "";
-  if (!is_vertex && strstr(tmp ? tmp : "", "xw_FragColor") &&
-      !strstr(tmp ? tmp : "", "out vec4 xw_FragColor"))
-    pre = "#version 330 core\nout vec4 xw_FragColor;\n";
-  if (is_vertex && !strstr(tmp ? tmp : "", "#version"))
-    pre = "#version 330 core\n";
-  size_t need = strlen(pre) + len + 1;
-  if (need > n) {
-    free(tmp);
-    return -1;
-  }
-  memcpy(dst, pre, strlen(pre));
-  memcpy(dst + strlen(pre), tmp ? tmp : "", len + 1);
-  free(tmp);
   return 0;
 }
+
+/* Try to match `#include "name"` on a line; the resolver wins over the
+ * built-in headers. Returns 1 and fills name when matched. */
+static int match_include(const char *line, char *name, size_t n) {
+  const char *p = line;
+  const char *q1, *q2;
+  size_t nl;
+  while (*p == ' ' || *p == '\t') p++;
+  if (strncmp(p, "#include", 8) != 0)
+    return 0;
+  p += 8;
+  q1 = strchr(p, '"');
+  if (!q1)
+    return 0;
+  q2 = strchr(q1 + 1, '"');
+  if (!q2)
+    return 0;
+  nl = (size_t)(q2 - q1 - 1);
+  if (nl == 0 || nl >= n)
+    return 0;
+  memcpy(name, q1 + 1, nl);
+  name[nl] = '\0';
+  return 1;
+}
+
+#define XW_INCLUDE_DEPTH_MAX 8
+
+/* Copy `text` into the buffer, expanding #include lines. A missing header
+ * becomes a comment (the engine does the same) rather than an error. */
+static int emit_source(char **tmp, size_t *len, size_t *cap, const char *text,
+                       XWShaderInclude inc, void *user, int depth) {
+  const char *p = text;
+  while (*p) {
+    const char *eol = strchr(p, '\n');
+    size_t line_len = eol ? (size_t)(eol - p) + 1 : strlen(p);
+    char name[256];
+    if (match_include(p, name, sizeof(name))) {
+      const char *content = inc ? inc(user, name) : NULL;
+      if (!content)
+        content = xw_shader_builtin_header(name);
+      if (content && depth < XW_INCLUDE_DEPTH_MAX) {
+        if (append_cstr(tmp, len, cap, "// begin include ") != 0 ||
+            append_cstr(tmp, len, cap, name) != 0 ||
+            append_cstr(tmp, len, cap, "\n") != 0 ||
+            emit_source(tmp, len, cap, content, inc, user, depth + 1) != 0 ||
+            append_cstr(tmp, len, cap, "// end include\n") != 0)
+          return -1;
+      } else if (append_cstr(tmp, len, cap, "// include not found: ") != 0 ||
+                 append_cstr(tmp, len, cap, name) != 0 ||
+                 append_cstr(tmp, len, cap, "\n") != 0) {
+        return -1;
+      }
+    } else if (line_len >= 8 && strncmp(p, "#version", 8) == 0) {
+      /* the generated header owns #version; drop any in the source */
+    } else if (append(tmp, len, cap, p, line_len) != 0) {
+      return -1;
+    }
+    p += line_len;
+  }
+  return 0;
+}
+
+int xw_shader_preprocess(const char *src, char *dst, size_t n, int is_vertex,
+                         const XWSceneCombo *combos, int n_combos,
+                         XWShaderInclude inc, void *user) {
+  char *tmp = NULL;
+  size_t len = 0, cap = 0;
+  int i;
+  if (!src || !dst || n == 0)
+    return -1;
+  if (append_cstr(&tmp, &len, &cap, "#version 330\nprecision highp float;\n") != 0 ||
+      append_cstr(&tmp, &len, &cap, dialect_defines) != 0 ||
+      append_cstr(&tmp, &len, &cap,
+                  is_vertex ? vertex_defines : fragment_defines) != 0)
+    goto fail;
+  for (i = 0; i < n_combos; i++) {
+    char def[128];
+    int dl;
+    if (!combos[i].key[0])
+      continue;
+    dl = snprintf(def, sizeof(def), "#define %s %s\n", combos[i].key,
+                  combos[i].value[0] ? combos[i].value : "1");
+    if (dl <= 0 || dl >= (int)sizeof(def))
+      continue;
+    if (append(&tmp, &len, &cap, def, (size_t)dl) != 0)
+      goto fail;
+  }
+  if (emit_combos(&tmp, &len, &cap, src, combos, n_combos) != 0)
+    goto fail;
+  if (emit_source(&tmp, &len, &cap, src, inc, user, 0) != 0)
+    goto fail;
+  if (len + 1 > n)
+    goto fail;
+  memcpy(dst, tmp, len + 1);
+  free(tmp);
+  return 0;
+fail:
+  free(tmp);
+  return -1;
+}
+
+int xw_shader_translate_stage(const char *src, char *dst, size_t n,
+                              int is_vertex) {
+  return xw_shader_preprocess(src, dst, n, is_vertex, NULL, 0, NULL, NULL);
+}
+
+int xw_shader_translate(const char *src, char *dst, size_t n) {
+  return xw_shader_preprocess(src, dst, n, 0, NULL, 0, NULL, NULL);
+}
+
+/* ------------------------------------------------------------------ */
+/* Annotated uniform defaults                                          */
+/* ------------------------------------------------------------------ */
 
 static const char *skip_spaces(const char *p, const char *end) {
   while (p < end && (*p == ' ' || *p == '\t')) p++;
@@ -234,7 +391,6 @@ int xw_shader_collect_defaults(const char *src, XWShaderDef *defs, int *ndefs,
     if (n >= cap)
       break;
     q = skip_spaces(q, end);
-    /* type */
     tl = 0;
     while (q + tl < end && tl < sizeof(type) - 1 &&
            ((q[tl] >= 'a' && q[tl] <= 'z') ||
@@ -264,7 +420,6 @@ int xw_shader_collect_defaults(const char *src, XWShaderDef *defs, int *ndefs,
       goto next;
     memcpy(name, q, nl);
     name[nl] = '\0';
-    /* only annotated uniforms carry usable defaults */
     cmt = strstr(q, "//");
     if (!cmt || cmt >= end)
       goto next;
@@ -300,10 +455,8 @@ int xw_shader_collect_defaults(const char *src, XWShaderDef *defs, int *ndefs,
       if (got <= 0)
         goto next;
     }
-    /* mat4 has no scalar default; skip (identity comes from draw) */
     if (strcmp(type, "mat4") == 0)
       goto next;
-    /* dedupe by name (vertex + fragment declare the same uniforms) */
     for (int i = 0; i < n; i++) {
       if (strcmp(defs[i].name, name) == 0)
         goto next;
@@ -313,9 +466,7 @@ int xw_shader_collect_defaults(const char *src, XWShaderDef *defs, int *ndefs,
     /* scalar defaults splat across vector uniforms (HLSL convention) */
     if (got == 1) {
       for (int k = 1; k < kind; k++) v[k] = v[0];
-      got = kind;
     }
-    (void)got;
     defs[n].kind = kind;
     memcpy(defs[n].v, v, sizeof(v));
     n++;

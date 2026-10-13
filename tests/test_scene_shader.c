@@ -30,32 +30,117 @@ static char *slurp(const char *path) {
   return b;
 }
 
-static void test_sample_translates(void) {
-  TEST_BEGIN("sample shader translates without banned words");
-  char *src = slurp("tests/data/scene/shader_sample.txt");
-  TEST_CHECK(src != NULL);
-  if (!src) return;
-  char dst[4096];
+static void test_header_shape(void) {
+  TEST_BEGIN("emits GLSL 330 header, dialect and stage defines");
+  char dst[8192];
+  const char *src = "void main() { gl_FragColor = vec4(1.0); }\n";
   TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
-  TEST_CHECK(strstr(dst, "gl_FragColor") == NULL);
-  TEST_CHECK(strstr(dst, "attribute") == NULL);
-  TEST_CHECK(strstr(dst, "varying") == NULL);
-  TEST_CHECK(strstr(dst, "texture2D") == NULL);
-  TEST_CHECK(strstr(dst, "xw_FragColor") != NULL);
-  free(src);
+  TEST_CHECK(strncmp(dst, "#version 330", 12) == 0);
+  TEST_CHECK(strstr(dst, "#define texSample2D texture") != NULL);
+  TEST_CHECK(strstr(dst, "#define mul(x, y)") != NULL);
+  TEST_CHECK(strstr(dst, "#define saturate(x)") != NULL);
+  TEST_CHECK(strstr(dst, "#define CAST4(x)") != NULL);
+  /* fragment stage mapping */
+  TEST_CHECK(strstr(dst, "#define varying in") != NULL);
+  TEST_CHECK(strstr(dst, "out vec4 out_FragColor") != NULL);
+  TEST_CHECK(strstr(dst, "#define gl_FragColor out_FragColor") != NULL);
 }
 
-static void test_keywords_rewritten(void) {
-  TEST_BEGIN("attribute/varying/texture2D rewritten, include expanded");
+static void test_vertex_stage(void) {
+  TEST_BEGIN("vertex stage maps attribute/varying to in/out");
+  char dst[8192];
+  const char *src =
+      "attribute vec3 a_Position;\n"
+      "varying vec2 vUv;\n"
+      "void main() { vUv = a_TexCoord; }\n";
+  TEST_CHECK_EQ_INT(xw_shader_translate_stage(src, dst, sizeof(dst), 1), 0);
+  TEST_CHECK(strstr(dst, "#define attribute in") != NULL);
+  TEST_CHECK(strstr(dst, "#define varying out") != NULL);
+  TEST_CHECK(strstr(dst, "out vec4 out_FragColor") == NULL);
+  TEST_CHECK(strstr(dst, "attribute vec3 a_Position") != NULL);
+}
+
+static void test_constants_documented(void) {
+  TEST_BEGIN("common.h constants match the published values");
+  char dst[16384];
   const char *src =
       "#include \"common.h\"\n"
-      "attribute vec2 pos; varying vec2 uv;\n"
-      "void main() { gl_FragColor = texture2D(tex, uv); }\n";
-  char dst[4096];
+      "void main() { float a = M_PI_2 + M_PI_HALF + SQRT_2; }\n";
   TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
+  /* M_PI_2 is 2*pi in Wallpaper Engine, M_PI_HALF is pi/2 */
+  TEST_CHECK(strstr(dst, "#define M_PI_2 6.28318530718") != NULL);
+  TEST_CHECK(strstr(dst, "#define M_PI_HALF 1.57079632679") != NULL);
+  TEST_CHECK(strstr(dst, "#define M_PI 3.14159265359") != NULL);
+  TEST_CHECK(strstr(dst, "#define SQRT_2 1.41421356237") != NULL);
+  /* function bodies come along with the header */
+  TEST_CHECK(strstr(dst, "vec2 rotateVec2(") != NULL);
+  TEST_CHECK(strstr(dst, "vec3 hsv2rgb(") != NULL);
   TEST_CHECK(strstr(dst, "#include") == NULL);
-  TEST_CHECK(strstr(dst, "in vec2 pos") != NULL);
-  TEST_CHECK(strstr(dst, "texture(tex, uv)") != NULL);
+}
+
+static void test_include_resolution(void) {
+  TEST_BEGIN("builtin headers resolve, unknown includes degrade");
+  char dst[16384];
+  const char *src =
+      "#include \"common_blending.h\"\n"
+      "void main() { vec3 c = ApplyBlending(BLENDMODE, vec3(0), vec3(1), 0.5); }\n";
+  TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
+  TEST_CHECK(strstr(dst, "vec3 ApplyBlending(") != NULL);
+  TEST_CHECK(strstr(dst, "#include") == NULL);
+
+  const char *missing = "#include \"does_not_exist.h\"\nvoid main() {}\n";
+  TEST_CHECK_EQ_INT(xw_shader_translate(missing, dst, sizeof(dst)), 0);
+  TEST_CHECK(strstr(dst, "#include") == NULL);
+  TEST_CHECK(strstr(dst, "does_not_exist.h") != NULL);
+}
+
+static const char *resolver_cb(void *user, const char *name) {
+  (void)user;
+  if (strcmp(name, "custom.h") == 0)
+    return "float custom_helper(float x) { return x * 2.0; }\n";
+  return NULL;
+}
+
+static void test_resolver_precedence(void) {
+  TEST_BEGIN("external resolver wins and is used for unknown names");
+  char dst[16384];
+  const char *src =
+      "#include \"custom.h\"\n"
+      "#include \"common.h\"\n"
+      "void main() { float y = custom_helper(M_PI); }\n";
+  TEST_CHECK_EQ_INT(
+      xw_shader_preprocess(src, dst, sizeof(dst), 0, NULL, 0, resolver_cb, NULL),
+      0);
+  TEST_CHECK(strstr(dst, "custom_helper") != NULL);
+  TEST_CHECK(strstr(dst, "vec2 rotateVec2(") != NULL);
+}
+
+static void test_combos(void) {
+  TEST_BEGIN("combo annotations and material combos become defines");
+  char dst[16384];
+  const char *src =
+      "// [COMBO] {\"material\":\"m\",\"combo\":\"BLENDMODE\",\"type\":\"imageblending\",\"default\":32}\n"
+      "// [COMBO] {\"material\":\"m\",\"combo\":\"MASK\",\"type\":\"options\",\"default\":0}\n"
+      "void main() {}\n";
+  XWSceneCombo combos[1];
+  memset(combos, 0, sizeof(combos));
+  snprintf(combos[0].key, sizeof(combos[0].key), "BLENDMODE");
+  snprintf(combos[0].value, sizeof(combos[0].value), "3");
+  TEST_CHECK_EQ_INT(
+      xw_shader_preprocess(src, dst, sizeof(dst), 0, combos, 1, NULL, NULL), 0);
+  /* explicit material combo wins over the annotation default */
+  TEST_CHECK(strstr(dst, "#define BLENDMODE 3") != NULL);
+  TEST_CHECK(strstr(dst, "#define BLENDMODE 32") == NULL);
+  TEST_CHECK(strstr(dst, "#define MASK 0") != NULL);
+}
+
+static void test_version_line_dropped(void) {
+  TEST_BEGIN("a source #version is dropped in favour of the generated one");
+  char dst[8192];
+  const char *src = "#version 120\nvoid main() {}\n";
+  TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
+  TEST_CHECK(strstr(dst, "#version 120") == NULL);
+  TEST_CHECK(strstr(dst, "#version 330") != NULL);
 }
 
 static void test_bad_inputs(void) {
@@ -66,29 +151,27 @@ static void test_bad_inputs(void) {
   TEST_CHECK_EQ_INT(xw_shader_translate("void main(){}", dst, 2), -1);
 }
 
-static void test_prelude_unconditional(void) {
-  TEST_BEGIN("builtins present even without #include");
-  const char *src =
-      "uniform float g_Time;\n"
-      "void main() { float a = saturate(frac(M_PI_2 * g_Time)); }\n";
-  char dst[4096];
-  TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
-  TEST_CHECK(strstr(dst, "#define saturate(x)") != NULL);
-  TEST_CHECK(strstr(dst, "#define frac(x)") != NULL);
-  TEST_CHECK(strstr(dst, "#define M_PI_2") != NULL);
-  TEST_CHECK(strstr(dst, "ApplyBlending") != NULL);
+static void test_builtin_lookup(void) {
+  TEST_BEGIN("builtin header lookup by name");
+  TEST_CHECK(xw_shader_builtin_header("common.h") != NULL);
+  TEST_CHECK(xw_shader_builtin_header("common_fragment.h") != NULL);
+  TEST_CHECK(xw_shader_builtin_header("common_vertex.h") != NULL);
+  TEST_CHECK(xw_shader_builtin_header("common_blending.h") != NULL);
+  TEST_CHECK(xw_shader_builtin_header("nope.h") == NULL);
+  TEST_CHECK(xw_shader_builtin_header(NULL) == NULL);
 }
 
-static void test_combo_defaults(void) {
-  TEST_BEGIN("combo annotation defaults become defines");
-  const char *src =
-      "// [COMBO] {\"material\":\"ui_editor_properties_blend_mode\",\"combo\":\"BLENDMODE\",\"type\":\"imageblending\",\"default\":32}\n"
-      "// [COMBO] {\"material\":\"x\",\"combo\":\"MASK\",\"type\":\"options\",\"default\":0}\n"
-      "void main() {}\n";
-  char dst[4096];
+static void test_sample_translates(void) {
+  TEST_BEGIN("sample shader translates without banned words");
+  char *src = slurp("tests/data/scene/shader_sample.txt");
+  TEST_CHECK(src != NULL);
+  if (!src) return;
+  char dst[8192];
   TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
-  TEST_CHECK(strstr(dst, "#define BLENDMODE 32") != NULL);
-  TEST_CHECK(strstr(dst, "#define MASK 0") != NULL);
+  TEST_CHECK(strstr(dst, "texture2D") == NULL);
+  TEST_CHECK(strstr(dst, "#include") == NULL);
+  TEST_CHECK(strstr(dst, "#version 330") != NULL);
+  free(src);
 }
 
 static void test_collect_defaults(void) {
@@ -130,32 +213,18 @@ static void test_collect_defaults(void) {
   TEST_CHECK_EQ_INT(xw_shader_collect_defaults(NULL, defs, &n, 4), -1);
 }
 
-static void test_vertex_stage(void) {
-  TEST_BEGIN("vertex stage maps varying to out, injects prelude");
-  const char *src =
-      "#include \"common.h\"\n"
-      "attribute vec3 a_Position;\n"
-      "varying vec2 vUv;\n"
-      "void main() { vUv = a_TexCoord; gl_Position = mul(vec4(a_Position, 1.0), m); }\n";
-  char dst[4096];
-  TEST_CHECK_EQ_INT(xw_shader_translate_stage(src, dst, sizeof(dst), 1), 0);
-  TEST_CHECK(strstr(dst, "out vec2 vUv") != NULL);
-  TEST_CHECK(strstr(dst, "texSample2D(s, uv)") != NULL);
-  TEST_CHECK(strstr(dst, "#include") == NULL);
-  /* fragment default keeps the old mapping */
-  TEST_CHECK_EQ_INT(
-      xw_shader_translate("varying vec2 vUv;", dst, sizeof(dst)), 0);
-  TEST_CHECK(strstr(dst, "in vec2 vUv") != NULL);
-}
-
 int main(void) {
   TEST_SUITE("scene_shader");
-  test_sample_translates();
-  test_keywords_rewritten();
-  test_bad_inputs();
+  test_header_shape();
   test_vertex_stage();
-  test_prelude_unconditional();
-  test_combo_defaults();
+  test_constants_documented();
+  test_include_resolution();
+  test_resolver_precedence();
+  test_combos();
+  test_version_line_dropped();
+  test_bad_inputs();
+  test_builtin_lookup();
+  test_sample_translates();
   test_collect_defaults();
   TEST_SUMMARY();
 }
