@@ -39,6 +39,22 @@ static int parse_vec_str(const char *s, float *v, int n) {
 
 /* Real workshop files store vectors as "x y [z]" strings; our fixtures
  * use JSON arrays. Both accepted. */
+
+/* Emitter distances: the engine writes a vector ("1200 700 0") for
+ * boxrandom and a single radius number for sphererandom. */
+static void get_dist3(struct json_object *o, const char *key, float *v) {
+  struct json_object *a = NULL;
+  enum json_type t;
+  if (!v || !json_object_object_get_ex(o, key, &a) || !a)
+    return;
+  t = json_object_get_type(a);
+  if (t == json_type_string) {
+    parse_vec_str(json_object_get_string(a), v, 3);
+  } else if (t == json_type_double || t == json_type_int) {
+    v[0] = v[1] = v[2] = (float)json_object_get_double(a);
+  }
+}
+
 /* A "scripted property" wraps its base value as {"script": .., "script
  * properties": .., "value": <the vector>}; the engine evaluates the script
  * per frame, we apply the base value so the object still lands somewhere
@@ -510,20 +526,22 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
     struct json_object *e0 = json_object_array_get_idx(w, 0);
     struct json_object *r = NULL, *s3 = NULL;
     if (e0 && json_object_get_type(e0) == json_type_object) {
+      struct json_object *nm = NULL;
       if (json_object_object_get_ex(e0, "rate", &r) && r)
         o->particle.rate = (float)json_object_get_double(r);
+      if (json_object_object_get_ex(e0, "name", &nm) && nm &&
+          json_object_get_type(nm) == json_type_string)
+        o->particle.emitter_sphere =
+            strcmp(json_object_get_string(nm), "sphererandom") == 0;
       if (json_object_object_get_ex(e0, "origin", &s3) && s3 &&
           json_object_get_type(s3) == json_type_string)
         parse_vec_str(json_object_get_string(s3), o->particle.origin, 3);
-      if (json_object_object_get_ex(e0, "distancemin", &s3) && s3 &&
-          json_object_get_type(s3) == json_type_string)
-        parse_vec_str(json_object_get_string(s3), o->particle.dist_min, 3);
-      if (json_object_object_get_ex(e0, "distancemax", &s3) && s3 &&
-          json_object_get_type(s3) == json_type_string)
-        parse_vec_str(json_object_get_string(s3), o->particle.dist_max, 3);
+      get_dist3(e0, "distancemin", o->particle.dist_min);
+      get_dist3(e0, "distancemax", o->particle.dist_max);
       if (json_object_object_get_ex(e0, "directions", &s3) && s3 &&
           json_object_get_type(s3) == json_type_string)
         parse_vec_str(json_object_get_string(s3), o->particle.dirs, 3);
+      get_vec3(e0, "sign", o->particle.sign);
     }
   }
   if (json_object_object_get_ex(cfg, "initializer", &w) && w &&

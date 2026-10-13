@@ -1,0 +1,37 @@
+{
+    "animationmode": "sequence",
+    "children": null,
+    "emitter": [
+        {
+            "directions": "1 0.03 1",
+            "distancemax": 1000,
+            "distancemin": 10,
+            "id": 5,
+            "name": "sphererandom",
+            "origin": "150 550 0",
+            "rate": 25,
+            "sign": "0 0 1"
+        }
+    ],
+    "flags": 0,
+    "initializer": [
+        {
+            "max": 20,
+            "min": 10,
+            "name": "sizerandom"
+        }
+    ],
+    "material": "materials/particle/snow.json",
+    "maxcount": 1000,
+    "operator": [
+        {
+            "name": "movement"
+        }
+    ],
+    "renderer": [
+        {
+            "name": "sprite"
+        }
+    ],
+    "sequencemultiplier": 1
+}

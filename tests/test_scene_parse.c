@@ -374,6 +374,39 @@ static void test_turbulent_parse(void) {
   xw_scene_free(&s);
 }
 
+static void test_emitter_geometry(void) {
+  XWScene s;
+  XWError err = {0};
+  const XWParticleCfg *box, *sp;
+  TEST_BEGIN("emitter geometry: directions default, scalar distance, sphere");
+  memset(&s, 0, sizeof(s));
+  TEST_CHECK_EQ_INT(xw_scene_parse("tests/data/scene/sphereemitter", &s, &err), 0);
+  TEST_CHECK_EQ_INT(s.n_objects, 2);
+  if (s.n_objects != 2) {
+    xw_scene_free(&s);
+    return;
+  }
+  /* boxrandom carries a vector distancemax and no `directions`: the engine
+   * defaults directions to (1,1,1), so the spawn box must survive intact */
+  box = &s.objects[0].particle;
+  TEST_CHECK_EQ_INT(box->emitter_sphere, 0);
+  TEST_CHECK_EQ_INT((int)box->dist_max[0], 1200);
+  TEST_CHECK_EQ_INT((int)box->dist_max[1], 700);
+  TEST_CHECK(box->dirs[0] > 0.99f && box->dirs[0] < 1.01f);
+  TEST_CHECK(box->dirs[1] > 0.99f && box->dirs[1] < 1.01f);
+  TEST_CHECK(box->dirs[2] > 0.99f && box->dirs[2] < 1.01f);
+  /* sphererandom spells its radii as plain numbers, not a vector string */
+  sp = &s.objects[1].particle;
+  TEST_CHECK_EQ_INT(sp->emitter_sphere, 1);
+  TEST_CHECK_EQ_INT((int)sp->dist_min[0], 10);
+  TEST_CHECK_EQ_INT((int)sp->dist_max[0], 1000);
+  TEST_CHECK(sp->dirs[0] > 0.99f && sp->dirs[0] < 1.01f);
+  TEST_CHECK(sp->dirs[1] > 0.02f && sp->dirs[1] < 0.04f);
+  TEST_CHECK_EQ_INT((int)sp->sign[0], 0);
+  TEST_CHECK_EQ_INT((int)sp->sign[2], 1);
+  xw_scene_free(&s);
+}
+
 int main(void) {
   TEST_SUITE("scene_parse");
   test_parse_fixture();
@@ -386,5 +419,6 @@ int main(void) {
   test_visible_dict();
   test_scripted_vec_props();
   test_turbulent_parse();
+  test_emitter_geometry();
   TEST_SUMMARY();
 }

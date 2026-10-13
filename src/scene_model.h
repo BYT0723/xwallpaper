@@ -112,6 +112,8 @@ typedef struct XWParticleCfg {
   float dist_min[3];  /* spawn box inner extent */
   float dist_max[3];  /* spawn box outer extent */
   float dirs[3];      /* per-axis multiplier (directions, Y flipped) */
+  int emitter_sphere; /* "sphererandom" (disk/shell) instead of "boxrandom" */
+  float sign[3];      /* per-axis sign force: 0 both, 1 positive, -1 negative */
   float vel_min[3];   /* velocityrandom min (Y flipped at spawn) */
   float vel_max[3];   /* velocityrandom max */
   float gravity_v[3]; /* movement gravity (Y flipped) */

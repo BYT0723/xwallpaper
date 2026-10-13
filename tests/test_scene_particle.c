@@ -307,6 +307,59 @@ static void test_no_turbulent_velocity(void) {
   xw_emitter_free(&e);
 }
 
+/* sphererandom: particles live on a disk/shell of radius distanceMin..Max
+ * instead of filling the spawn box (whose corners reach r*sqrt(2)). */
+static XWParticleCfg cfg_sphere(int perspective) {
+  XWParticleCfg c;
+  memset(&c, 0, sizeof(c));
+  mult_defaults(&c);
+  c.emitter_sphere = 1;
+  c.flags = perspective ? 4 : 0;
+  c.rate = 60.0f;
+  c.max_count = 500;
+  c.life = 100.0f;
+  c.size_min = c.size_max = 4.0f;
+  c.color[0] = c.color[1] = c.color[2] = c.color[3] = 1.0f;
+  c.origin[0] = 150.0f;
+  c.origin[1] = 550.0f; /* flipped to -550 at spawn */
+  c.dist_min[0] = c.dist_min[1] = c.dist_min[2] = 10.0f;
+  c.dist_max[0] = c.dist_max[1] = c.dist_max[2] = 100.0f;
+  c.dirs[0] = c.dirs[1] = c.dirs[2] = 1.0f;
+  return c;
+}
+
+static void test_sphere_disk(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_sphere(0);
+  int i;
+  TEST_BEGIN("sphererandom stays inside the radius, not the box corners");
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  TEST_CHECK_EQ_INT(xw_emitter_update(&e, 1.0f), 60);
+  for (i = 0; i < e.alive; i++) {
+    float dx = e.parts[i].x - 150.0f;
+    float dy = e.parts[i].y + 550.0f;
+    float r = sqrtf(dx * dx + dy * dy);
+    /* no velocity here, so the spawn position survives the step */
+    TEST_CHECK(r >= 9.5f && r <= 100.5f);
+  }
+  xw_emitter_free(&e);
+}
+
+static void test_sphere_shell_perspective(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_sphere(4);
+  int i;
+  TEST_BEGIN("perspective sphererandom projects inside the same radius");
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  TEST_CHECK_EQ_INT(xw_emitter_update(&e, 1.0f), 60);
+  for (i = 0; i < e.alive; i++) {
+    float dx = e.parts[i].x - 150.0f;
+    float dy = e.parts[i].y + 550.0f;
+    TEST_CHECK(sqrtf(dx * dx + dy * dy) <= 100.5f);
+  }
+  xw_emitter_free(&e);
+}
+
 int main(void) {
   TEST_SUITE("scene_particle");
   test_spawn_and_die();
@@ -319,6 +372,8 @@ int main(void) {
   test_turbulent_forward_clamp();
   test_turbulent_offset_and_determinism();
   test_no_turbulent_velocity();
+  test_sphere_disk();
+  test_sphere_shell_perspective();
   test_bad_inputs();
   TEST_SUMMARY();
 }

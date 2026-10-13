@@ -268,22 +268,63 @@ void xw_emitter_free(XWEmitter *e) {
   e->acc = 0.0f;
 }
 
-/* Spawn following the engine's box emitter (CParticle::createBoxEmitter):
- * positions live in centered pixel space with Y up, the emitter origin is
- * Y-flipped, the spawn box is the distanceMin/Max extent with a random sign
- * per axis, scaled by the flipped directions vector. */
+/* Spawn following the engine's emitters (CParticle::createBoxEmitter /
+ * createSphereEmitter): positions live in centered pixel space with Y up,
+ * the emitter origin is Y-flipped, `directions` scales the offset per axis
+ * and `sign` forces an axis positive/negative.
+ *
+ * boxrandom draws a random extent per axis inside distanceMin/Max;
+ * sphererandom draws a radius instead - orthographic particles fill a 2D
+ * annulus (uniform by area), perspective ones a 3D shell (uniform by
+ * volume). */
 static void spawn_one(XWEmitter *e) {
   XWParticle *p = &e->parts[e->alive];
   float rnd[3];
   int ax;
   float speed = dyn_or_one(&e->cfg.speed_mult);
-  for (ax = 0; ax < 3; ax++) {
-    float d = e->cfg.dist_min[ax] +
-              next_unit(&e->rng) * (e->cfg.dist_max[ax] - e->cfg.dist_min[ax]);
-    if (next_unit(&e->rng) < 0.5f)
-      d = -d;
-    /* directions.y is flipped along with the emitter origin */
-    rnd[ax] = d * (ax == 1 ? -e->cfg.dirs[1] : e->cfg.dirs[ax]);
+  if (e->cfg.emitter_sphere) {
+    float lo = e->cfg.dist_min[0], hi = e->cfg.dist_max[0], r;
+    if (lo < 0.0f)
+      lo = 0.0f;
+    if (hi < lo) {
+      r = lo;
+      lo = hi;
+      hi = r;
+    }
+    if ((e->cfg.flags & 4) == 0) {
+      float ang = next_unit(&e->rng) * 6.28318530718f;
+      r = sqrtf(lo * lo + next_unit(&e->rng) * (hi * hi - lo * lo));
+      rnd[0] = r * cosf(ang);
+      rnd[1] = r * sinf(ang);
+      rnd[2] = next_unit(&e->rng) * hi;
+      if (next_unit(&e->rng) < 0.5f)
+        rnd[2] = -rnd[2];
+    } else {
+      float th = next_unit(&e->rng) * 6.28318530718f;
+      float ct = next_unit(&e->rng) * 2.0f - 1.0f;
+      float st = sqrtf(1.0f - ct * ct);
+      r = cbrtf(lo * lo * lo +
+                next_unit(&e->rng) * (hi * hi * hi - lo * lo * lo));
+      rnd[0] = st * cosf(th) * r;
+      rnd[1] = st * sinf(th) * r;
+      rnd[2] = ct * r;
+    }
+    for (ax = 0; ax < 3; ax++) {
+      rnd[ax] *= e->cfg.dirs[ax];
+      if (e->cfg.sign[ax] == 1.0f)
+        rnd[ax] = fabsf(rnd[ax]);
+      else if (e->cfg.sign[ax] == -1.0f)
+        rnd[ax] = -fabsf(rnd[ax]);
+    }
+  } else {
+    for (ax = 0; ax < 3; ax++) {
+      float d = e->cfg.dist_min[ax] +
+                next_unit(&e->rng) * (e->cfg.dist_max[ax] - e->cfg.dist_min[ax]);
+      if (next_unit(&e->rng) < 0.5f)
+        d = -d;
+      /* directions.y is flipped along with the emitter origin */
+      rnd[ax] = d * (ax == 1 ? -e->cfg.dirs[1] : e->cfg.dirs[ax]);
+    }
   }
   p->x = e->cfg.origin[0] + rnd[0];
   p->y = -e->cfg.origin[1] + rnd[1];

@@ -1,0 +1,34 @@
+{
+    "animationmode": "sequence",
+    "children": null,
+    "emitter": [
+        {
+            "distancemax": "1200 700 0",
+            "id": 5,
+            "name": "boxrandom",
+            "origin": "0 0 0",
+            "rate": 2000
+        }
+    ],
+    "flags": 0,
+    "initializer": [
+        {
+            "max": 21,
+            "min": 15,
+            "name": "sizerandom"
+        }
+    ],
+    "material": "materials/particle/rainrefractive_1_1.json",
+    "maxcount": 10000,
+    "operator": [
+        {
+            "name": "movement"
+        }
+    ],
+    "renderer": [
+        {
+            "name": "spritetrail"
+        }
+    ],
+    "sequencemultiplier": 1
+}
