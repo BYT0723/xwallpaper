@@ -33,6 +33,8 @@ struct XWGl {
   GLuint points_vbo;
   GLuint rect_vao;
   GLuint rect_vbo;
+  GLuint part_vao;
+  GLuint part_vbo;
   GLuint fbos[2];
   GLuint fbo_tex[2];
   struct {
@@ -340,6 +342,10 @@ void xw_gl_destroy(XWGl *g) {
     glDeleteVertexArrays(1, &g->points_vao);
     glDeleteBuffers(1, &g->rect_vbo);
     glDeleteVertexArrays(1, &g->rect_vao);
+    if (g->part_vao)
+      glDeleteVertexArrays(1, &g->part_vao);
+    if (g->part_vbo)
+      glDeleteBuffers(1, &g->part_vbo);
     glXMakeCurrent(g->dpy, None, NULL);
     glXDestroyContext(g->dpy, g->ctx);
   }
@@ -1472,6 +1478,21 @@ int xw_gl_bind_named(XWGl *g, const char *name) {
   return -1;
 }
 
+int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
+                              const unsigned int *texs, int ntex,
+                              const float *verts, int nverts,
+                              const XWSceneConst *consts, int n_consts) {
+  (void)g;
+  (void)prog;
+  (void)texs;
+  (void)ntex;
+  (void)verts;
+  (void)nverts;
+  (void)consts;
+  (void)n_consts;
+  return -1;
+}
+
 int xw_gl_texture_frame_count(XWGl *g, unsigned int tex) {
   (void)g;
   (void)tex;
@@ -1870,6 +1891,80 @@ int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
     }
   }
   return -1;
+}
+
+int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
+                              const unsigned int *texs, int ntex,
+                              const float *verts, int nverts,
+                              const XWSceneConst *consts, int n_consts) {
+  char uname[48];
+  GLint loc;
+  int i;
+  if (!g || !prog || !verts || nverts <= 0)
+    return -1;
+  if (!g->part_vao) {
+    glGenVertexArrays(1, &g->part_vao);
+    glGenBuffers(1, &g->part_vbo);
+  }
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glUseProgram(prog);
+  for (i = 0; i < ntex && i < XW_GL_WE_SLOTS; i++) {
+    int tw = 0, th = 0, rw = 0, rh = 0;
+    snprintf(uname, sizeof(uname), "g_Texture%d", i);
+    loc = glGetUniformLocation(prog, uname);
+    if (loc >= 0 && texs[i]) {
+      glActiveTexture((GLenum)(GL_TEXTURE0 + i));
+      glBindTexture(GL_TEXTURE_2D, texs[i]);
+      glUniform1i(loc, i);
+    }
+    snprintf(uname, sizeof(uname), "g_Texture%dResolution", i);
+    loc = glGetUniformLocation(prog, uname);
+    if (loc >= 0 && texs[i] && xw_gl_texture_size(g, texs[i], &tw, &th, &rw,
+                                                  &rh) == 0)
+      glUniform4f(loc, (float)tw, (float)th, (float)rw, (float)rh);
+  }
+  glActiveTexture(GL_TEXTURE0);
+  bind_mvp(g, prog);
+  loc = glGetUniformLocation(prog, "g_Time");
+  if (loc >= 0) {
+    /* callers keep the clock in the emitter; reuse the passed constant */
+    (void)loc;
+  }
+  if (g->w > 0 && g->h > 0) {
+    loc = glGetUniformLocation(prog, "g_TexelSize");
+    if (loc >= 0)
+      glUniform2f(loc, 1.0f / g->w, 1.0f / g->h);
+  }
+  bind_prog_defaults(g, prog, consts, n_consts);
+  glBindVertexArray(g->part_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, g->part_vbo);
+  glBufferData(GL_ARRAY_BUFFER,
+               (GLsizeiptr)((size_t)nverts * XW_PARTICLE_FLOATS *
+                            sizeof(float)),
+               verts, GL_DYNAMIC_DRAW);
+  {
+    const GLsizei stride = XW_PARTICLE_FLOATS * sizeof(float);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void *)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, stride,
+                          (void *)(3 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride,
+                          (void *)(7 * sizeof(float)));
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride,
+                          (void *)(11 * sizeof(float)));
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, stride,
+                          (void *)(15 * sizeof(float)));
+  }
+  glDrawArrays(GL_TRIANGLES, 0, nverts);
+  for (i = 0; i < 5; i++)
+    glDisableVertexAttribArray((GLuint)i);
+  glBindVertexArray(0);
+  glUseProgram(0);
+  return 0;
 }
 
 int xw_gl_texture_uv_rect(XWGl *g, unsigned int tex, float time,

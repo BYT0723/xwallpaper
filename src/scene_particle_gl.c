@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "scene_image.h"
 #include "scene_particle_gl.h"
 #include "scene_tex.h"
 
@@ -47,6 +48,84 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
   if (xw_gl_upload(g, path, &tex, err) != 0) {
     memset(err, 0, sizeof(*err));
     return 1;
+  }
+  /* the engine runs the particle material's pass per quad (genericparticle
+   * and friends); fall back to our simplified renderers when absent */
+  if (o->particle.pshader[0]) {
+    char shpath[1152];
+    unsigned int texs[XW_GL_WE_SLOTS];
+    unsigned int pp = 0, used = 0;
+    float *verts;
+    int ntex = o->particle.n_ptextures, ti, nv = 0, ok = 1;
+    memset(texs, 0, sizeof(texs));
+    if (xw_scene_resolve_shader(dir, o->particle.pshader, shpath,
+                                sizeof(shpath)) != 0)
+      ok = 0;
+    for (ti = 0; ok && ti < ntex && ti < XW_GL_WE_SLOTS; ti++) {
+      xw_scene_resolve_texture(g, dir, o->particle.ptextures[ti], &texs[ti],
+                               NULL);
+      if (texs[ti])
+        used |= 1u << ti;
+    }
+    if (ok && xw_gl_program_we(g, shpath, o->particle.pcombos,
+                               o->particle.n_pcombos, used, &pp, err) != 0)
+      ok = 0;
+    if (ok) {
+      verts = malloc((size_t)e->alive * 6 * XW_PARTICLE_FLOATS *
+                     sizeof(float));
+      if (!verts) {
+        XW_ERROR_SET(err, 1, "out of memory");
+        return -1;
+      }
+      for (i = 0; i < e->alive; i++) {
+        const XWParticle *p = &e->parts[i];
+        static const float corner[4][2] = {
+          {0.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f}, {0.0f, 0.0f}};
+        static const int idx[6] = {0, 1, 2, 0, 2, 3};
+        float nf = (float)(nframes > 0 ? nframes : 1);
+        float life;
+        int k;
+        if (strcmp(o->particle.animation_mode, "randomframe") == 0)
+          life = (floorf(p->rnd * nf) + 0.5f) / nf;
+        else
+          life = p->frame / nf;
+        for (k = 0; k < 6; k++) {
+          const float *c = corner[idx[k]];
+          float *v = verts + ((size_t)nv + (size_t)k) * XW_PARTICLE_FLOATS;
+          v[0] = p->x;
+          v[1] = p->y;
+          v[2] = 0.0f;
+          v[3] = c[0];
+          v[4] = c[1];
+          v[5] = p->rot;
+          v[6] = p->size;
+          v[7] = p->r;
+          v[8] = p->g;
+          v[9] = p->b;
+          v[10] = p->a * alpha;
+          v[11] = p->vx;
+          v[12] = p->vy;
+          v[13] = 0.0f;
+          v[14] = life;
+          v[15] = 0.0f;
+          v[16] = 0.0f;
+        }
+        nv += 6;
+      }
+      if (xw_gl_blend_begin(g, o->particle.pblend) != 0)
+        goto out_pq;
+      if (xw_gl_draw_particle_quads(g, pp, texs, ntex, verts, nv,
+                                    o->particle.pconsts,
+                                    o->particle.n_pconsts) != 0) {
+        xw_gl_blend_end(g);
+        goto out_pq;
+      }
+      xw_gl_blend_end(g);
+      rc = 0;
+    out_pq:
+      free(verts);
+      return rc;
+    }
   }
   if (strcmp(o->particle.renderer, "spritetrail") == 0) {
     XWStreak *st;

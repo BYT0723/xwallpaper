@@ -92,6 +92,21 @@ static const XWSceneFbo *find_fbo(const XWSceneEffect *fx, const char *name) {
   return NULL;
 }
 
+int xw_scene_resolve_shader(const char *dir, const char *ref, char *out,
+                            size_t n) {
+  return resolve_shader(dir, ref, out, n);
+}
+
+void xw_scene_resolve_texture(XWGl *gl, const char *dir, const char *ref,
+                              unsigned int *tex, float res[4]) {
+  XWWeSlot slot;
+  fill_slot(gl, dir, ref, &slot);
+  if (tex)
+    *tex = slot.tex;
+  if (res)
+    memcpy(res, slot.res, sizeof(slot.res));
+}
+
 /* Returns 0 drawn, 1 skipped (missing texture), -1 frame error.
  * Effect passes that cannot resolve or compile degrade to the base
  * image (or last good pass) instead of dropping the object. */

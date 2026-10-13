@@ -628,14 +628,66 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
         json_object_array_length(mp) >= 1) {
       struct json_object *m0 = json_object_array_get_idx(mp, 0);
       struct json_object *tx = NULL;
-      if (m0 && json_object_get_type(m0) == json_type_object &&
-          json_object_object_get_ex(m0, "textures", &tx) && tx &&
-          json_object_get_type(tx) == json_type_array &&
-          json_object_array_length(tx) >= 1) {
-        struct json_object *t0 = json_object_array_get_idx(tx, 0);
-        if (t0 && json_object_get_type(t0) == json_type_string)
-          copy_str(o->particle.sprite, sizeof(o->particle.sprite),
-                   json_object_get_string(t0));
+      if (m0 && json_object_get_type(m0) == json_type_object) {
+        struct json_object *sv = NULL, *cv = NULL, *kv = NULL;
+        size_t ti;
+        if (json_object_object_get_ex(m0, "shader", &sv) && sv &&
+            json_object_get_type(sv) == json_type_string)
+          copy_str(o->particle.pshader, sizeof(o->particle.pshader),
+                   json_object_get_string(sv));
+        if (json_object_object_get_ex(m0, "blending", &sv) && sv &&
+            json_object_get_type(sv) == json_type_string) {
+          const char *bn = json_object_get_string(sv);
+          if (strcmp(bn, "translucent") == 0)
+            o->particle.pblend = XW_BLEND_TRANSLUCENT;
+          else if (strcmp(bn, "additive") == 0)
+            o->particle.pblend = XW_BLEND_ADDITIVE;
+          else
+            o->particle.pblend = XW_BLEND_NORMAL;
+        }
+        if (json_object_object_get_ex(m0, "textures", &tx) && tx &&
+            json_object_get_type(tx) == json_type_array) {
+          size_t tn = json_object_array_length(tx);
+          for (ti = 0; ti < tn && ti < XW_PARTICLE_TEX_MAX; ti++) {
+            struct json_object *t = json_object_array_get_idx(tx, ti);
+            if (t && json_object_get_type(t) == json_type_string)
+              copy_str(o->particle.ptextures[ti],
+                       sizeof(o->particle.ptextures[0]),
+                       json_object_get_string(t));
+          }
+          o->particle.n_ptextures = (int)(tn > XW_PARTICLE_TEX_MAX
+                                              ? XW_PARTICLE_TEX_MAX
+                                              : tn);
+          if (o->particle.n_ptextures > 0 && o->particle.ptextures[0][0])
+            copy_str(o->particle.sprite, sizeof(o->particle.sprite),
+                     o->particle.ptextures[0]);
+        }
+        if (json_object_object_get_ex(m0, "combos", &cv) && cv &&
+            json_object_get_type(cv) == json_type_object) {
+          json_object_object_foreach(cv, ck, cval) {
+            if (o->particle.n_pcombos >= XW_SCENE_COMBOS_MAX)
+              break;
+            copy_str(o->particle.pcombos[o->particle.n_pcombos].key,
+                     sizeof(o->particle.pcombos[0].key), ck);
+            copy_str(o->particle.pcombos[o->particle.n_pcombos].value,
+                     sizeof(o->particle.pcombos[0].value),
+                     json_object_get_string(cval));
+            o->particle.n_pcombos++;
+          }
+        }
+        if (json_object_object_get_ex(m0, "constantshadervalues", &kv) && kv &&
+            json_object_get_type(kv) == json_type_object) {
+          json_object_object_foreach(kv, kk, kval) {
+            if (o->particle.n_pconsts >= XW_SCENE_CONSTS_MAX)
+              break;
+            copy_str(o->particle.pconsts[o->particle.n_pconsts].key,
+                     sizeof(o->particle.pconsts[0].key), kk);
+            copy_str(o->particle.pconsts[o->particle.n_pconsts].value,
+                     sizeof(o->particle.pconsts[0].value),
+                     json_object_get_string(kval));
+            o->particle.n_pconsts++;
+          }
+        }
       }
     }
     if (mj)

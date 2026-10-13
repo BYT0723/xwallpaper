@@ -88,6 +88,16 @@ int xw_gl_draw_streaks(XWGl *g, unsigned int prog, unsigned int tex,
 int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
                       const XWPoint *pts, int n);
 
+/* Particle quads: the engine's 17-float vertex layout (a_Position vec3,
+ * a_TexCoordVec4 vec4, a_Color vec4, a_TexCoordVec4C1 vec4,
+ * a_TexCoordC2 vec2), six vertices per particle. textures are bound to
+ * g_Texture0..N. */
+#define XW_PARTICLE_FLOATS 17
+int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
+                              const unsigned int *texs, int ntex,
+                              const float *verts, int nverts,
+                              const XWSceneConst *consts, int n_consts);
+
 /* Current sprite-sheet frame of a texture at `time`, normalised. Returns
  * {0,0,1,1} for textures without a TEXS animation block. */
 int xw_gl_texture_uv_rect(XWGl *g, unsigned int tex, float time,

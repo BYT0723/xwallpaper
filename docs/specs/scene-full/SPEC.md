@@ -272,3 +272,11 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
      （`a_Position`/`a_TexCoordVec4`/`a_Color`/`a_TexCoordVec4C1`/`a_TexCoordC2`）。
 - **下一步**：实现**粒子材质 pass 渲染**（属性绑定 + 17 float 顶点流 + 绑定 sprite/法线/combos/常量），
   跑真 `genericparticle`，修掉 3003908979 的白色方块（应为折射雨滴）。
+- **粒子材质 pass 脚手架（2026-10-13，未激活）**：已解析粒子材质的完整 pass（shader/textures/combos/
+  constants/blending），并按参考的 **17 float/顶点**布局（`a_Position`/`a_TexCoordVec4`/`a_Color`/
+  `a_TexCoordVec4C1`/`a_TexCoordC2`）加了粒子四边形绘制路径与属性钉位；当材质 shader 能编译时启用，
+  否则安全回退到现有 sprite/spritetrail 渲染。
+  **阻塞**：真 `genericparticle.vert` 经我们的方言转译后编译失败——glslang 报
+  `too many parameters to 'vec4' constructor`，但按其给出的行号（0:170）定位到的行并无该调用，
+  怀疑与 `#define in_ParticleRotation vec3(...)` 之类的宏展开或行号映射有关，尚未定位。
+  解决后即可让 3003908979 这类折射粒子显示正常。

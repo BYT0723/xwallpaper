@@ -483,8 +483,18 @@ static int emit_source(char **tmp, size_t *len, size_t *cap, const char *text,
     } else {
       const char *loc = NULL;
       if (is_vertex && line_contains(p, line_len, "attribute")) {
+        /* particle shaders declare a wider attribute set; match the
+         * longest names first so a_TexCoordVec4 does not hit a_TexCoord */
         if (line_contains(p, line_len, "a_Position"))
           loc = "layout(location=0) ";
+        else if (line_contains(p, line_len, "a_TexCoordVec4C1"))
+          loc = "layout(location=3) ";
+        else if (line_contains(p, line_len, "a_TexCoordVec4"))
+          loc = "layout(location=1) ";
+        else if (line_contains(p, line_len, "a_TexCoordC2"))
+          loc = "layout(location=4) ";
+        else if (line_contains(p, line_len, "a_Color"))
+          loc = "layout(location=2) ";
         else if (line_contains(p, line_len, "a_TexCoord"))
           loc = "layout(location=1) ";
       }

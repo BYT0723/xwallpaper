@@ -7,6 +7,7 @@
 #define XW_SCENE_BINDS_MAX 8
 #define XW_SCENE_CONSTS_MAX 12
 #define XW_SCENE_PASS_TEX_MAX 4
+#define XW_PARTICLE_TEX_MAX 4
 
 typedef struct XWSceneConst {
   char key[32];
@@ -112,6 +113,16 @@ typedef struct XWParticleCfg {
   float vel_max[3];   /* velocityrandom max */
   float gravity_v[3]; /* movement gravity (Y flipped) */
   float drag;         /* movement drag */
+  /* particle material pass (the engine runs it per particle quad, e.g.
+   * the built-in genericparticle shader) */
+  char pshader[XW_SCENE_PATH_MAX];
+  char ptextures[XW_PARTICLE_TEX_MAX][XW_SCENE_PATH_MAX];
+  int n_ptextures;
+  XWSceneCombo pcombos[XW_SCENE_COMBOS_MAX];
+  int n_pcombos;
+  XWSceneConst pconsts[XW_SCENE_CONSTS_MAX];
+  int n_pconsts;
+  XWBlend pblend;
   char renderer[32];  /* "sprite" | "spritetrail" | "rope" ... */
   float trail_max;    /* renderer maxlength in pixels (trail length) */
   char animation_mode[24]; /* "sequence" | "" (sprite-sheet animation) */
