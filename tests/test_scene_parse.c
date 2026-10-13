@@ -178,6 +178,14 @@ static void test_realrain(void) {
     if (rain) {
       TEST_CHECK_EQ_INT(rain->type, XW_OBJ_PARTICLE);
       TEST_CHECK_EQ_INT(rain->visible, 1);
+      /* spritetrail renderer params feed the TRAILRENDERER shader path */
+      TEST_CHECK_EQ_INT(rain->particle.has_trail, 1);
+      TEST_CHECK(rain->particle.trail_length > 4.99f &&
+                 rain->particle.trail_length < 5.01f);
+      TEST_CHECK(rain->particle.trail_max > 29.99f &&
+                 rain->particle.trail_max < 30.01f);
+      TEST_CHECK(rain->particle.trail_min > -0.01f &&
+                 rain->particle.trail_min < 0.01f);
     }
     if (snd) {
       TEST_CHECK_EQ_INT(snd->type, XW_OBJ_SOUND);

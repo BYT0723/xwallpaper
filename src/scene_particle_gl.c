@@ -56,6 +56,9 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
     char shpath[1152];
     unsigned int texs[XW_GL_WE_SLOTS];
     unsigned int pp = 0, used = 0;
+    XWSceneCombo combos[XW_SCENE_COMBOS_MAX + 2];
+    float rv0[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float rv1[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     float *verts;
     int ntex = o->particle.n_ptextures, ti, nv = 0, ok = 1;
     memset(texs, 0, sizeof(texs));
@@ -68,9 +71,39 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
       if (texs[ti])
         used |= 1u << ti;
     }
-    if (ok && xw_gl_program_we(g, shpath, o->particle.pcombos,
-                               o->particle.n_pcombos, used, &pp, err) != 0)
-      ok = 0;
+    /* spritetrail runs the shader's TRAILRENDERER path: it reads the
+     * velocity from the thick vertex format (a_TexCoordVec4C1) and needs
+     * the trail lengths in g_RenderVar0 plus the sprite aspect in
+     * g_RenderVar1 (common_particles.h) */
+    {
+      int ncombos = o->particle.n_pcombos, k;
+      if (ncombos < 0)
+        ncombos = 0;
+      if (ncombos > XW_SCENE_COMBOS_MAX)
+        ncombos = XW_SCENE_COMBOS_MAX;
+      memcpy(combos, o->particle.pcombos,
+             sizeof(XWSceneCombo) * (size_t)ncombos);
+      if (o->particle.has_trail) {
+        static const char *const extra[] = {"TRAILRENDERER", "THICKFORMAT"};
+        for (k = 0; k < 2; k++) {
+          snprintf(combos[ncombos].key, sizeof(combos[ncombos].key), "%s",
+                   extra[k]);
+          snprintf(combos[ncombos].value, sizeof(combos[ncombos].value), "1");
+          ncombos++;
+        }
+        rv0[0] = o->particle.trail_length;
+        rv0[1] = o->particle.trail_max; /* length() clamp, see the header */
+        rv0[2] = o->particle.trail_min;
+        {
+          int tw = 0, th = 0, rw = 0, rh = 0;
+          if (xw_gl_texture_size(g, tex, &tw, &th, &rw, &rh) == 0 && rw > 0 &&
+              rh > 0)
+            rv1[3] = (float)rh / (float)rw;
+        }
+      }
+      if (xw_gl_program_we(g, shpath, combos, ncombos, used, &pp, err) != 0)
+        ok = 0;
+    }
     if (ok) {
       /* samplers the material leaves empty fall back to the shader's own
        * annotated default; _rt_FullFrameBuffer is the scene so far (the
@@ -138,7 +171,7 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
         goto out_pq;
       if (xw_gl_draw_particle_quads(g, pp, texs, XW_GL_WE_SLOTS, verts, nv,
                                     o->particle.pconsts,
-                                    o->particle.n_pconsts) != 0) {
+                                    o->particle.n_pconsts, rv0, rv1) != 0) {
         xw_gl_blend_end(g);
         goto out_pq;
       }

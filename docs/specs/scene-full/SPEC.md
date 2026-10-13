@@ -341,5 +341,13 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   `color.rgb *= texSample2D(g_Texture3, ...)`，而 `g_Texture3` 的默认是 `_rt_FullFrameBuffer`（渲染目标、
   非文件）→ 我们跳过 → 采样未绑定纹理得黑色 → 颜色乘 0 → 雨滴不可见。现已在粒子路径对每个空槽解析
   注释默认，`_rt_FullFrameBuffer` 用"当前已累积场景"的窗口后台缓冲快照作为纹理源；雨滴重新可见。
-  **仍缺**：下落雨丝用的是 `spritetrail` 渲染器，引擎靠 `TRAILRENDERER` combo + `g_RenderVar0`
-  （length/maxlength）沿速度方向拉长四边形；我们未定义该 combo，故目前是点状而非条状。
+  随后又发现两处根因并修复（见下一条）。
+- **粒子着色器路径的投影 + spritetrail（2026-10-13 已修）**：2178468632 的雨此前不可见有两处根因：
+  ① **投影**：着色器路径把粒子顶点（引擎像素、居中空间，发射盒 ±1200）配**单位 MVP**直接上传，
+  所有粒子都落在裁剪空间外被丢弃，只有原点附近的幸存且以 NDC 尺度绘制（这就是早期"白方块"的来源）；
+  点精灵路径是在 CPU 转 NDC 的，所以不受影响。现在粒子绘制绑定由目标尺寸推出的**正交投影**。
+  ② **spritetrail**：引擎把该渲染器实现在 `genericparticle` 内、由 `TRAILRENDERER` combo 驱动——
+  顶点着色器用 thick 格式（`a_TexCoordVec4C1`）里的速度 + 拖尾长度推导带状四边形。现在解析渲染器的
+  `length`/`maxlength`/`minlength`，对这些粒子定义 `TRAILRENDERER` + `THICKFORMAT`，并喂
+  `g_RenderVar0`（长度）、`g_RenderVar1`（精灵宽高比）与 common_particles.h 需要的正交相机参数。
+  效果：2178468632 出现下落雨丝；3003908979 / 3497575235 无回归（雨滴四边形尺寸也变正确）。

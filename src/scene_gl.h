@@ -96,7 +96,9 @@ int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
 int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
                               const unsigned int *texs, int ntex,
                               const float *verts, int nverts,
-                              const XWSceneConst *consts, int n_consts);
+                              const XWSceneConst *consts, int n_consts,
+                              const float render_var0[4],
+                              const float render_var1[4]);
 
 /* Current sprite-sheet frame of a texture at `time`, normalised. Returns
  * {0,0,1,1} for textures without a TEXS animation block. */

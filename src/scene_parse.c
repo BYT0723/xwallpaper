@@ -463,10 +463,18 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
                  json_object_get_string(rn));
       if (json_object_object_get_ex(r0, "maxlength", &rm) && rm)
         o->particle.trail_max = (float)json_object_get_double(rm);
+      if (json_object_object_get_ex(r0, "length", &rm) && rm)
+        o->particle.trail_length = (float)json_object_get_double(rm);
+      if (json_object_object_get_ex(r0, "minlength", &rm) && rm)
+        o->particle.trail_min = (float)json_object_get_double(rm);
     }
   }
   if (o->particle.trail_max <= 0.0f)
     o->particle.trail_max = 30.0f;
+  /* engine defaults for the trail renderer (CParticle's member defaults) */
+  if (o->particle.trail_length <= 0.0f)
+    o->particle.trail_length = 0.05f;
+  o->particle.has_trail = strcmp(o->particle.renderer, "spritetrail") == 0;
   if (json_object_object_get_ex(cfg, "animationmode", &w) && w &&
       json_object_get_type(w) == json_type_string)
     copy_str(o->particle.animation_mode, sizeof(o->particle.animation_mode),

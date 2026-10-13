@@ -1485,7 +1485,11 @@ int xw_gl_bind_named(XWGl *g, const char *name) {
 int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
                               const unsigned int *texs, int ntex,
                               const float *verts, int nverts,
-                              const XWSceneConst *consts, int n_consts) {
+                              const XWSceneConst *consts, int n_consts,
+                              const float render_var0[4],
+                              const float render_var1[4]) {
+  (void)render_var0;
+  (void)render_var1;
   (void)g;
   (void)prog;
   (void)texs;
@@ -1746,6 +1750,7 @@ static void bind_mvp(XWGl *g, GLuint prog) {
     "g_ModelViewProjectionMatrixInverse",
     "g_EffectModelViewProjectionMatrix",
     "g_ModelMatrix",
+    "g_ModelMatrixInverse",
     "g_EffectModelMatrix",
     "g_ViewProjectionMatrix",
     NULL,
@@ -1965,7 +1970,9 @@ int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
 int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
                               const unsigned int *texs, int ntex,
                               const float *verts, int nverts,
-                              const XWSceneConst *consts, int n_consts) {
+                              const XWSceneConst *consts, int n_consts,
+                              const float render_var0[4],
+                              const float render_var1[4]) {
   char uname[48];
   GLint loc;
   int i;
@@ -1994,6 +2001,53 @@ int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
   }
   glActiveTexture(GL_TEXTURE0);
   bind_mvp(g, prog);
+  /* The particle vertex stream carries engine pixels in centred space (the
+   * emitter box, e.g. +/-1200), so unlike the image passes - whose quads are
+   * already NDC - the projection has to scale them into clip space; with an
+   * identity matrix every particle sits far outside [-1,1] and is clipped. */
+  if (g->w > 0 && g->h > 0) {
+    float ortho[16] = {2.0f / (float)g->w, 0, 0, 0, 0, 2.0f / (float)g->h,
+                       0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    loc = glGetUniformLocation(prog, "g_ModelViewProjectionMatrix");
+    if (loc >= 0)
+      glUniformMatrix4fv(loc, 1, GL_FALSE, ortho);
+    loc = glGetUniformLocation(prog, "g_ViewProjectionMatrix");
+    if (loc >= 0)
+      glUniformMatrix4fv(loc, 1, GL_FALSE, ortho);
+  }
+  /* common_particles.h environment: the orthographic camera sits at z=1000
+   * so the trail's cross(eyeDir, velocity) yields a visible XY direction,
+   * and g_RenderVar0/1 carry the trail lengths and the texture ratio */
+  loc = glGetUniformLocation(prog, "g_EyePosition");
+  if (loc >= 0)
+    glUniform3f(loc, 0.0f, 0.0f, 1000.0f);
+  loc = glGetUniformLocation(prog, "g_ViewRight");
+  if (loc >= 0)
+    glUniform3f(loc, 1.0f, 0.0f, 0.0f);
+  loc = glGetUniformLocation(prog, "g_ViewUp");
+  if (loc >= 0)
+    glUniform3f(loc, 0.0f, 1.0f, 0.0f);
+  loc = glGetUniformLocation(prog, "g_OrientationRight");
+  if (loc >= 0)
+    glUniform3f(loc, 1.0f, 0.0f, 0.0f);
+  loc = glGetUniformLocation(prog, "g_OrientationUp");
+  if (loc >= 0)
+    glUniform3f(loc, 0.0f, 1.0f, 0.0f);
+  loc = glGetUniformLocation(prog, "g_OrientationForward");
+  if (loc >= 0)
+    glUniform3f(loc, 0.0f, 0.0f, 1.0f);
+  loc = glGetUniformLocation(prog, "g_RenderVar0");
+  if (loc >= 0)
+    glUniform4f(loc, render_var0 ? render_var0[0] : 0.0f,
+                render_var0 ? render_var0[1] : 0.0f,
+                render_var0 ? render_var0[2] : 0.0f,
+                render_var0 ? render_var0[3] : 0.0f);
+  loc = glGetUniformLocation(prog, "g_RenderVar1");
+  if (loc >= 0)
+    glUniform4f(loc, render_var1 ? render_var1[0] : 0.0f,
+                render_var1 ? render_var1[1] : 0.0f,
+                render_var1 ? render_var1[2] : 0.0f,
+                render_var1 ? render_var1[3] : 1.0f);
   loc = glGetUniformLocation(prog, "g_Time");
   if (loc >= 0) {
     /* callers keep the clock in the emitter; reuse the passed constant */

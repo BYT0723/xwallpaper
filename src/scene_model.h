@@ -125,6 +125,12 @@ typedef struct XWParticleCfg {
   XWBlend pblend;
   char renderer[32];  /* "sprite" | "spritetrail" | "rope" ... */
   float trail_max;    /* renderer maxlength in pixels (trail length) */
+  /* spritetrail renders through genericparticle's TRAILRENDERER path: the
+   * shader stretches the quad along the velocity, scaled by `length` and
+   * clamped to maxlength/minlength */
+  int has_trail;
+  float trail_length;
+  float trail_min;
   char animation_mode[24]; /* "sequence" | "" (sprite-sheet animation) */
   float seq_mult;          /* sequencemultiplier: sheet animation speed */
   float size_exponent;     /* sizerandom exponent (1 = linear) */
