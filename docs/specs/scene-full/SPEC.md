@@ -368,3 +368,15 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   白方块（已实测）。同时对齐 `CParticle::setupPass`：粒子**恒**定义 `THICKFORMAT`（我们的顶点布局就是 thick
   格式），且槽 0 **永不**被 shader 的 `util/white` 默认覆盖（引擎把槽 0 绑到粒子自身的贴图）。
 - **已知差异**：雨的颗粒度/密度与官方预览仍有差距（逐粒子贴图选择、REFRACT 帧缓冲贡献、alpha 未完全对齐）。
+- **`.pkg` 场景读不到 project.json（2026-10-14 已修）**：`scene.pkg` 会被解包到临时目录再从那里解析，而
+  `project.json` 在 **.pkg 旁边**、不在包内 → 属性永远为空（`n_props=0`）→ 所有 `{user, value}` 覆盖都退回内联值。
+  2178468632 因此 `rain_speed` 用 1（作者设 0.5）、`rain_intensity` 用 0.39（设 1）、最明显的是
+  `size_changer` 用 2（设 1）→ 雨滴**大一倍**。现在解包时把同目录的 project.json 一并带入；斑点的 size 由
+  15/21/20 变为 7.5/10.7/10。
+- **A/B 基准（重要工具）**：参考实现自带截图，可直接当 ground truth：
+  `xvfb-run -a -s "-screen 0 1920x1080x24" linux-wallpaperengine --assets-dir <assets> --window 0x0x1920x1080
+   --screenshot /tmp/ref.png --screenshot-delay 60 --silent <壁纸目录>`，再与我们的 `shot` 同尺寸逐像素比。
+  2178468632 当前差距 **0.0278**（修复前 0.0486）。**教训**：之前用整帧 RMSE 判断"渲染了没有"是错的
+  （混入帧时序噪声）；必须**看放大截图** + 用参考截图做基准。
+- **已知差距**：斑点（speckles）在天空形成细密"细胞/砂纹"观感，而参考是更细的线状雨；逐粒子贴图选择、
+  REFRACT 帧缓冲贡献与 alpha 仍未完全对齐。

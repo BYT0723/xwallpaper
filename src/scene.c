@@ -304,6 +304,28 @@ static int resolve_dir(XWSceneCtx *c, const char *optpath, XWError *err) {
       return -1;
     }
     xw_pkg_close(pkg);
+    /* project.json holds the wallpaper's user properties (the sliders) and
+     * sits next to the .pkg rather than inside it: bring it along so the
+     * {user, value} overrides resolve against the author's values */
+    {
+      char proj[1152], dst[1152];
+      snprintf(proj, sizeof(proj), "%.512s/project.json", optpath);
+      if (stat(proj, &st) == 0) {
+        FILE *in = fopen(proj, "rb");
+        if (in) {
+          snprintf(dst, sizeof(dst), "%.1000s/project.json", tmp);
+          FILE *outp = fopen(dst, "wb");
+          if (outp) {
+            char buf[8192];
+            size_t got;
+            while ((got = fread(buf, 1, sizeof(buf), in)) > 0)
+              fwrite(buf, 1, got, outp);
+            fclose(outp);
+          }
+          fclose(in);
+        }
+      }
+    }
     snprintf(c->dir, sizeof(c->dir), "%s", tmp);
     snprintf(c->tmpdir, sizeof(c->tmpdir), "%s", tmp);
   }
