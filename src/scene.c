@@ -365,6 +365,7 @@ static int paint_gl(XWSceneCtx *c) {
                                     c->script, &c->scene.objects[i])
                               : 1.0f;
     }
+    xw_gl_frame_begin(c->gl);
     if (xw_scene_image_render(c->gl, &c->scene, c->dir, t, alphas, &rerr) == 0)
       rc = render_overlays(c, alphas, &rerr);
     free(alphas);

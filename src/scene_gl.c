@@ -36,6 +36,9 @@ struct XWGl {
   GLuint part_vao;
   GLuint part_vbo;
   GLuint ffb_tex; /* screen-sized copy of the scene so far */
+  unsigned ffb_frame; /* frame the copy belongs to (the engine refreshes it
+                       * once per frame, not once per object) */
+  unsigned ffb_stamp;
   GLuint fbos[2];
   GLuint fbo_tex[2];
   struct {
@@ -1558,6 +1561,10 @@ int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex) {
   return -1;
 }
 
+void xw_gl_frame_begin(XWGl *g) {
+  (void)g;
+}
+
 void xw_gl_particle_perspective(XWGl *g, float fov_deg, float nearz,
                                 float farz, float out[16]) {
   (void)g;
@@ -1836,6 +1843,14 @@ static void bind_prog_defaults(XWGl *g, GLuint prog,
 /* The engine's `_rt_FullFrameBuffer` is the scene as accumulated so far;
  * every object composites onto the window, so a copy of the back buffer
  * taken here is that render target. */
+/* The engine refreshes its full-frame buffer once per frame; reusing the
+ * copy keeps every object sampling the same scene and avoids stacking the
+ * effect of the objects drawn earlier in the frame. */
+void xw_gl_frame_begin(XWGl *g) {
+  if (g)
+    g->ffb_frame++;
+}
+
 int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex) {
   if (!g || !tex || g->w <= 0 || g->h <= 0)
     return -1;
@@ -1845,6 +1860,11 @@ int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex) {
     if (!g->ffb_tex)
       return -1;
   }
+  if (g->ffb_stamp == g->ffb_frame) {
+    *tex = g->ffb_tex;
+    return 0;
+  }
+  g->ffb_stamp = g->ffb_frame;
   glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
   glReadBuffer(GL_BACK);
   glBindTexture(GL_TEXTURE_2D, g->ffb_tex);

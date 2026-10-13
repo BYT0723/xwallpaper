@@ -167,6 +167,10 @@ int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
 int xw_gl_target_size(XWGl *g, int *w, int *h);
 
 /* WE builtin util/ textures (black/white/noflow/perlin_256), cached. */
+/* Mark the start of a frame: the scene snapshot below is refreshed once per
+ * frame, like the engine's full-frame buffer. */
+void xw_gl_frame_begin(XWGl *g);
+
 /* Copy the scene accumulated so far (the window back buffer) into a
  * texture - the engine's `_rt_FullFrameBuffer`. Returns 0 and fills `tex`. */
 int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex);
