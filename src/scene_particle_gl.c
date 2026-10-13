@@ -16,7 +16,7 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
   unsigned int tex = 0, prog = 0;
   XWPoint *pts = NULL;
   float speed = o->particle.seq_mult > 0.0f ? o->particle.seq_mult : 1.0f;
-  int nframes = xw_gl_texture_frame_count(g, tex);
+  int nframes = 0; /* filled once the sprite is uploaded */
   int i, rc = -1;
   if (!g || !o || !e || !dir) {
     XW_ERROR_SET(err, 1, "invalid args");
@@ -50,13 +50,14 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
     memset(err, 0, sizeof(*err));
     return 1;
   }
+  nframes = xw_gl_texture_frame_count(g, tex);
   /* the engine runs the particle material's pass per quad (genericparticle
    * and friends); fall back to our simplified renderers when absent */
   if (o->particle.pshader[0]) {
     char shpath[1152];
     unsigned int texs[XW_GL_WE_SLOTS];
     unsigned int pp = 0, used = 0;
-    XWSceneCombo combos[XW_SCENE_COMBOS_MAX + 2];
+    XWSceneCombo combos[XW_SCENE_COMBOS_MAX + 3];
     float rv0[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float rv1[4] = {0.0f, 0.0f, 0.0f, 1.0f};
     float *verts;
@@ -83,22 +84,27 @@ int xw_scene_particle_render(XWGl *g, const XWSceneObject *o, XWEmitter *e,
         ncombos = XW_SCENE_COMBOS_MAX;
       memcpy(combos, o->particle.pcombos,
              sizeof(XWSceneCombo) * (size_t)ncombos);
-      if (o->particle.has_trail) {
-        static const char *const extra[] = {"TRAILRENDERER", "THICKFORMAT"};
-        for (k = 0; k < 2; k++) {
-          snprintf(combos[ncombos].key, sizeof(combos[ncombos].key), "%s",
-                   extra[k]);
-          snprintf(combos[ncombos].value, sizeof(combos[ncombos].value), "1");
-          ncombos++;
+      {
+        const char *extra[3];
+        int nextra = 0;
+        if (o->particle.has_trail) {
+          extra[nextra++] = "TRAILRENDERER";
+          extra[nextra++] = "THICKFORMAT";
+          rv0[0] = o->particle.trail_length;
+          rv0[1] = o->particle.trail_max; /* length() clamp, see the header */
+          rv0[2] = o->particle.trail_min;
         }
-        rv0[0] = o->particle.trail_length;
-        rv0[1] = o->particle.trail_max; /* length() clamp, see the header */
-        rv0[2] = o->particle.trail_min;
         {
           int tw = 0, th = 0, rw = 0, rh = 0;
           if (xw_gl_texture_size(g, tex, &tw, &th, &rw, &rh) == 0 && rw > 0 &&
               rh > 0)
             rv1[3] = (float)rh / (float)rw;
+        }
+        for (k = 0; k < nextra; k++) {
+          snprintf(combos[ncombos].key, sizeof(combos[ncombos].key), "%s",
+                   extra[k]);
+          snprintf(combos[ncombos].value, sizeof(combos[ncombos].value), "1");
+          ncombos++;
         }
       }
       if (xw_gl_program_we(g, shpath, combos, ncombos, used, &pp, err) != 0)

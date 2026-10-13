@@ -22,9 +22,19 @@ static float dir_angle(float ax, float ay, float bx, float by) {
  * emitter origin Y-flipped, spawn box = distanceMin/Max extent, velocity
  * from velocityrandom (Y flipped) and gravity from the movement operator
  * (Y flipped too). */
+/* The instance overrides are real inputs now (a wallpaper's sliders); a
+ * zero-initialised struct is 'constant 0', so set the neutral value. */
+static void mult_defaults(XWParticleCfg *c) {
+  c->count_mult.kind = c->life_mult.kind = c->speed_mult.kind = XW_DYN_CONSTANT;
+  c->size_mult.kind = XW_DYN_CONSTANT;
+  c->count_mult.constant = c->life_mult.constant = c->speed_mult.constant = 1.0f;
+  c->size_mult.constant = 1.0f;
+}
+
 static XWParticleCfg cfg60(void) {
   XWParticleCfg c;
   memset(&c, 0, sizeof(c));
+  mult_defaults(&c);
   c.rate = 60.0f;
   c.max_count = 500;
   c.life = 2.0f;
@@ -165,6 +175,7 @@ static void test_bad_inputs(void) {
 static XWParticleCfg cfg_turb(void) {
   XWParticleCfg c;
   memset(&c, 0, sizeof(c));
+  mult_defaults(&c);
   c.rate = 200.0f;
   c.max_count = 400;
   c.life = 100.0f;

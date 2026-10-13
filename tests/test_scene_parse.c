@@ -186,6 +186,18 @@ static void test_realrain(void) {
                  rain->particle.trail_max < 30.01f);
       TEST_CHECK(rain->particle.trail_min > -0.01f &&
                  rain->particle.trail_min < 0.01f);
+      /* {user} sliders resolve against the wallpaper's project.json values
+       * rather than the inline fallbacks: rain_speed is 0.5, rain_intensity
+       * 1 (the particle's inline fallback would be 1 and 0.39) */
+      TEST_CHECK_EQ_INT(rain->particle.speed_mult.kind, XW_DYN_CONSTANT);
+      TEST_CHECK(rain->particle.speed_mult.constant > 0.49f &&
+                 rain->particle.speed_mult.constant < 0.51f);
+      TEST_CHECK_EQ_INT(rain->particle.life_mult.kind, XW_DYN_CONSTANT);
+      TEST_CHECK(rain->particle.life_mult.constant > 0.99f &&
+                 rain->particle.life_mult.constant < 1.01f);
+      TEST_CHECK_EQ_INT(rain->particle.count_mult.kind, XW_DYN_CONSTANT);
+      TEST_CHECK(rain->particle.count_mult.constant > 0.99f &&
+                 rain->particle.count_mult.constant < 1.01f);
     }
     if (snd) {
       TEST_CHECK_EQ_INT(snd->type, XW_OBJ_SOUND);
@@ -233,9 +245,12 @@ static void test_realrain(void) {
                  rain->particle.gravity < 51.0);
       TEST_CHECK_EQ_INT(rain->alpha.kind, XW_DYN_USER);
       TEST_CHECK_EQ_STR(rain->alpha.ref, "opacity");
-      TEST_CHECK_EQ_INT(rain->particle.count_mult.kind, XW_DYN_USER);
-      TEST_CHECK_EQ_STR(rain->particle.count_mult.ref, "rain_intensity");
-      TEST_CHECK_EQ_STR(rain->particle.speed_mult.ref, "rain_speed");
+      /* resolved against project.json (rain_intensity 1, rain_speed 0.5) */
+      TEST_CHECK_EQ_INT(rain->particle.count_mult.kind, XW_DYN_CONSTANT);
+      TEST_CHECK(rain->particle.count_mult.constant > 0.99f &&
+                 rain->particle.count_mult.constant < 1.01f);
+      TEST_CHECK(rain->particle.speed_mult.constant > 0.49f &&
+                 rain->particle.speed_mult.constant < 0.51f);
       TEST_CHECK(rain->particle.sprite[0] != '\0');
     }
   }

@@ -351,3 +351,15 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   `length`/`maxlength`/`minlength`，对这些粒子定义 `TRAILRENDERER` + `THICKFORMAT`，并喂
   `g_RenderVar0`（长度）、`g_RenderVar1`（精灵宽高比）与 common_particles.h 需要的正交相机参数。
   效果：2178468632 出现下落雨丝；3003908979 / 3497575235 无回归（雨滴四边形尺寸也变正确）。
+- **壁纸属性（project.json）未生效（2026-10-13 已修）**：这是"特效感觉不对"的主因。对象的
+  `{"user": name, "value": fallback}` 覆盖项此前一律取 **value**（内联回退值），从不查 project.json 里
+  声明的属性值。2178468632 的雨因此速度用了 1（属性 `rain_speed` 实为 **0.5**）、寿命用了 0.39
+  （`rain_intensity` 实为 1）→ 雨又快又短，尺寸/密度也与预览不符。现在解析完 project.json 后统一把
+  `{user}` 解析为属性值（属性缺省时才用回退值），并对粒子的 count/lifetime/size/speed 生效
+  （此前 count/lifetime/size 解析了但**从未使用**）。另引入 `XW_DYN_UNSET`：零初始化的覆盖项表示
+  "无覆盖"（中性值 1.0），不再被当成"常量 0"（那会让池大小/寿命/尺寸清零）。
+- **顺带修**：粒子渲染里 `nframes` 在精灵上传**之前**取样，恒为 0，导致 `randomframe` 永远选第 0 帧。
+- **已知**：`util/perlin_256` 之外，`drizzle` 等精灵是**图集**（2178468632 的 drizzle 为 1024×512 /
+  8 帧 256²，12.5s/帧）。引擎在 shader 内用 `SPRITESHEET` + `g_RenderVar1`（帧宽高/张数/宽高比）选帧；
+  我试过打开该 combo，但顶点里 `uvOffsets *= step(0.001, a_TexCoordVec4.xy)` 与我们 0/1 的角点 UV
+  互相作用，整帧变成白点，故**已回退**，留待把该交互弄清楚后再开。

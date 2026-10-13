@@ -687,7 +687,7 @@ float xw_script_resolve_alpha(XWScript *s, const XWSceneObject *o) {
   const char *v;
   char *end;
   double d;
-  if (!o)
+  if (!o || o->alpha.kind == XW_DYN_UNSET)
     return 1.0f;
   if (!s || o->alpha.kind == XW_DYN_CONSTANT)
     return o->alpha.constant;

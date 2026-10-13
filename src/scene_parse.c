@@ -16,6 +16,7 @@ static void copy_str(char *dst, size_t n, const char *src) {
 }
 
 static int parse_project_props(const char *dir, XWScene *out, XWError *err);
+static void resolve_user_props(XWScene *s);
 static struct json_object *slurp_json(const char *dir, const char *rel);
 
 #ifdef XW_HAVE_JSONC
@@ -418,6 +419,7 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
   parse_mult(jo, "count", &o->particle.count_mult);
   parse_mult(jo, "lifetime", &o->particle.life_mult);
   parse_mult(jo, "speed", &o->particle.speed_mult);
+  parse_mult(jo, "size", &o->particle.size_mult);
   /* NOTE: real walls nest these under "instanceoverride"; our fixtures
    * and a future normalize pass may hoist them. Accept both. */
   if (json_object_object_get_ex(jo, "instanceoverride", &w) && w &&
@@ -444,6 +446,7 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
     parse_mult(w, "count", &o->particle.count_mult);
     parse_mult(w, "lifetime", &o->particle.life_mult);
     parse_mult(w, "speed", &o->particle.speed_mult);
+    parse_mult(w, "size", &o->particle.size_mult);
   }
   cfg = slurp_json(dir, json_object_get_string(v));
   if (!cfg)
@@ -1139,12 +1142,44 @@ int xw_scene_parse(const char *dir, XWScene *out, XWError *err) {
     xw_scene_free(out);
     return -1;
   }
+  resolve_user_props(out);
   return 0;
 fail:
   json_object_put(root);
   xw_scene_free(out);
   return -1;
 #endif
+}
+
+/* A wallpaper's `{user, value}` settings resolve against the properties it
+ * declares in project.json: the property's value wins, and the inline value
+ * is only the fallback for a property the wallpaper does not declare. */
+static float prop_float(const XWScene *s, const char *name, float fallback) {
+  int i;
+  for (i = 0; i < s->n_props; i++)
+    if (strcmp(s->props[i].name, name) == 0 && s->props[i].value[0])
+      return (float)strtod(s->props[i].value, NULL);
+  return fallback;
+}
+
+static void resolve_user(XWDynFloat *d, const XWScene *s) {
+  if (d->kind != XW_DYN_USER || !d->ref[0])
+    return;
+  d->constant = prop_float(s, d->ref, d->constant);
+  d->kind = XW_DYN_CONSTANT;
+}
+
+static void resolve_user_props(XWScene *s) {
+  int i;
+  for (i = 0; i < s->n_objects; i++) {
+    XWSceneObject *o = &s->objects[i];
+    /* alpha keeps its XW_DYN_USER form: the script layer resolves it against
+     * the live property store */
+    resolve_user(&o->particle.count_mult, s);
+    resolve_user(&o->particle.life_mult, s);
+    resolve_user(&o->particle.speed_mult, s);
+    resolve_user(&o->particle.size_mult, s);
+  }
 }
 
 static int parse_project_props(const char *dir, XWScene *out, XWError *err) {

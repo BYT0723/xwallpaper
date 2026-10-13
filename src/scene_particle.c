@@ -16,6 +16,11 @@ static float next_unit(unsigned int *rng) {
   return (float)(*rng >> 8) * (1.0f / 16777216.0f);
 }
 
+/* {user, value} instance overrides: 1.0 when unresolved. */
+static float dyn_or_one(const XWDynFloat *d) {
+  return d && d->kind == XW_DYN_CONSTANT ? d->constant : 1.0f;
+}
+
 /* ------------------------------------------------------------------ */
 /* Perlin / curl noise for the turbulentvelocityrandom initializer      */
 /* ------------------------------------------------------------------ */
@@ -237,6 +242,15 @@ int xw_emitter_init(XWEmitter *e, const XWParticleCfg *cfg) {
     e->cfg.life = 0.0f;
   if (e->cfg.rate < 0.0f)
     e->cfg.rate = 0.0f;
+  /* the wallpaper's count slider scales the pool (the engine multiplies
+   * maxCount by the instance override) */
+  {
+    float cm = dyn_or_one(&e->cfg.count_mult);
+    if (cm > 0.0f && cm != 1.0f) {
+      float scaled = (float)e->cfg.max_count * cm;
+      e->cfg.max_count = scaled >= 1.0f ? (int)scaled : 1;
+    }
+  }
   e->parts = calloc(e->cfg.max_count > 0 ? (size_t)e->cfg.max_count : 1,
                     sizeof(XWParticle));
   if (!e->parts)
@@ -262,9 +276,7 @@ static void spawn_one(XWEmitter *e) {
   XWParticle *p = &e->parts[e->alive];
   float rnd[3];
   int ax;
-  float speed = e->cfg.speed_mult.kind == XW_DYN_CONSTANT
-                    ? e->cfg.speed_mult.constant
-                    : 1.0f;
+  float speed = dyn_or_one(&e->cfg.speed_mult);
   for (ax = 0; ax < 3; ax++) {
     float d = e->cfg.dist_min[ax] +
               next_unit(&e->rng) * (e->cfg.dist_max[ax] - e->cfg.dist_min[ax]);
@@ -285,7 +297,7 @@ static void spawn_one(XWEmitter *e) {
   if (e->cfg.has_turb)
     apply_turbulent(&e->cfg, &e->rng, e->t, p->x, p->y, &p->vx, &p->vy);
   p->age = 0.0f;
-  p->life = e->cfg.life;
+  p->life = e->cfg.life * dyn_or_one(&e->cfg.life_mult);
   /* sizerandom: exponent-shaped draw, halved like the engine does */
   {
     float t = next_unit(&e->rng);
@@ -293,7 +305,7 @@ static void spawn_one(XWEmitter *e) {
     float adj = powf(t, exp);
     p->size = (e->cfg.size_min +
                adj * (e->cfg.size_max - e->cfg.size_min)) /
-              2.0f;
+              2.0f * dyn_or_one(&e->cfg.size_mult);
   }
   p->r = e->cfg.color[0];
   p->g = e->cfg.color[1];
@@ -342,9 +354,7 @@ int xw_emitter_update(XWEmitter *e, float dt) {
     e->acc = 0.0f;
   for (i = 0; i < e->alive; i++) {
     XWParticle *p = &e->parts[i];
-    float speed = e->cfg.speed_mult.kind == XW_DYN_CONSTANT
-                      ? e->cfg.speed_mult.constant
-                      : 1.0f;
+    float speed = dyn_or_one(&e->cfg.speed_mult);
     /* movement operator: integrate, then apply gravity (Y flipped) + drag */
     p->x += p->vx * dt;
     p->y += p->vy * dt;

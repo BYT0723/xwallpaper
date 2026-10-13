@@ -78,7 +78,9 @@ typedef enum {
 /* Animatable float: number -> CONSTANT, {"user": name} -> USER,
  * {"expression": src} -> EXPRESSION (ref holds the source). */
 typedef enum {
-  XW_DYN_CONSTANT = 0,
+  XW_DYN_UNSET = 0, /* a zero-initialised struct means "no override", so the
+                     * neutral value (1.0) applies instead of 0 */
+  XW_DYN_CONSTANT,
   XW_DYN_USER,
   XW_DYN_EXPRESSION,
 } XWDynKind;
@@ -104,6 +106,7 @@ typedef struct XWParticleCfg {
   XWDynFloat count_mult;
   XWDynFloat life_mult;
   XWDynFloat speed_mult;
+  XWDynFloat size_mult;
   /* faithful emitter/operator data (engine space: centered pixels, Y up) */
   float origin[3];    /* emitter origin, Y flipped at spawn */
   float dist_min[3];  /* spawn box inner extent */
