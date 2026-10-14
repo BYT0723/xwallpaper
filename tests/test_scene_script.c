@@ -507,6 +507,47 @@ static void test_this_scene_layers(void) {
   xw_script_destroy(s);
 }
 
+/* Layer scripts import the engine's built-in modules and read engine values
+ * (runtime, frametime, canvasSize) plus the audio buffers. */
+static void test_engine_api(void) {
+  XWScript *s = make_engine();
+  XWScene sc;
+  XWSceneObject o;
+  TEST_BEGIN("engine values and the built-in modules reach the scripts");
+  TEST_CHECK(s != NULL);
+  if (!s)
+    return;
+  memset(&sc, 0, sizeof(sc));
+  memset(&o, 0, sizeof(o));
+  o.visible = 1;
+  o.prop_script[XW_PROP_ORIGIN] = strdup(
+      "import * as WEVector from 'WEVector';\n"
+      "export function update(value) {\n"
+      "  var v = WEVector.angleVector2(0, engine.canvasSize.x);\n"
+      "  var b = engine.registerAudioBuffers(engine.AUDIO_RESOLUTION_16);\n"
+      "  value.x = v.x + b.average[0] + engine.runtime;\n"
+      "  value.y = WEMath.mix(0, 10, 0.5) + engine.frametime;\n"
+      "  return value;\n"
+      "}");
+  sc.camera.ortho_w = 1920.0f;
+  sc.camera.ortho_h = 1080.0f;
+  sc.objects = &o;
+  sc.n_objects = 1;
+  xw_script_set_scene(s, &sc);
+  xw_script_set_frame(s, 2.5, 0.25);
+  xw_script_apply_object_props(s, &o);
+  /* 1920 (canvas) + 0 (silent audio) + 2.5 (runtime) */
+  TEST_CHECK(o.origin[0] > 1922.4f && o.origin[0] < 1922.6f);
+  /* mix(0, 10, 0.5) + 0.25 (frametime) */
+  TEST_CHECK(o.origin[1] > 5.24f && o.origin[1] < 5.26f);
+  xw_script_set_scene(s, NULL);
+  for (int k = 0; k < XW_PROP_COUNT; k++) {
+    free(o.prop_script[k]);
+    o.prop_script[k] = NULL;
+  }
+  xw_script_destroy(s);
+}
+
 int main(void) {
   TEST_SUITE("scene_script");
   test_eval_arithmetic();
@@ -521,5 +562,6 @@ int main(void) {
   test_prop_scripts();
   test_apply_object_props();
   test_this_scene_layers();
+  test_engine_api();
   TEST_SUMMARY();
 }

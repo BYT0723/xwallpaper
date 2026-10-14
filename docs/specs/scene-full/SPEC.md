@@ -845,3 +845,28 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
 | 2794098047 | 0.00690 ✓ | **修正** ✓：其 `init(value){ initialValue = value.x; }` ✓ 是 `update` 平滑算法的基准 ✓，不调 `init` 时该值缺失 ✗（参考无法渲染此包 ✗，无法对照 ✓） |
 
 **未实现**（保守 ✓，脚本抛错即忽略 ✓）：`createLayer` ✗、`getInitialLayerConfig` ✗（动态建层 ✗）、模块系统（`import WEVector` ✗）、`engine` ✗。
+
+## engine API + 模块系统（2026-10-14 续 4）
+
+**语料实测的 API 面** ✓：`engine.runtime`(18) / `engine.canvasSize`(4) / `engine.registerAudioBuffers`(2) /
+`engine.AUDIO_RESOLUTION_16`(1) / `engine.frametime`(1)；模块只有 **`WEVector`**(1) 与 **`WEMath`**(1) ✓。
+
+**落地** ✓
+- `engine` ✓：`runtime`（秒 ✓，`xw_script_now_ms()/1000` ✓）、`frametime`（本帧 dt 秒 ✓）、
+  `canvasSize`（= 场景正交投影尺寸 ✓）、`registerAudioBuffers(res)`（返回全 0 的 `{average,left,right}` ✓）、
+  `AUDIO_RESOLUTION_16/32/64` ✓
+- `WEVector` ✓（`angleVector2` 及 add/subtract/scale/length/normalize ✓）、`WEMath` ✓（mix/clamp/lerp/radians/degrees ✓）
+- **模块系统** ✓：`import ... from '…';` 语句在预处理时**剥离** ✓（引擎内建模块在这里就是全局对象 ✓）
+- 帧值接线 ✓：`xw_script_set_frame()` ✓ 在 `render_overlays` 里（dt 所在处 ✓）于属性脚本运行**之前**调用 ✓
+- 单测 ✓：`test_engine_api` ✓（`import WEVector` + `canvasSize` + `runtime`/`frametime` + 音频缓冲 ✓，数值断言 ✓）
+
+**实测（与上一版对比）**
+
+| 壁纸 | 差异 | 判定 |
+|---|---|---|
+| 2178468632 / 3003908979 / 2887099508 / 3610097897 / 3808922316 | **0** ✓ | 未用到新 API ✓ |
+| 3422426571 | 0.00133 ✓ | 其 `update` 用 `engine.canvasSize` ✓；对参考 **0.376882 → 0.376882** ✓ 中性 ✓ |
+| 2794098047 | 0.00396 ✓ | 其平滑算法用 `engine.frametime` ✓ |
+
+**修正性质** ✓：此前 `engine.*` 是 `undefined` ✗ → `update` 返回 **NaN** ✗ → 我们跳过并保留基准值 ✓；
+现在能**正确计算** ✓（`value.x = slider * canvasSize.x` ✓、`smoothValue += audioDelta * min(1, frametime*smoothing)` ✓）。

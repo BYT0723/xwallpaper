@@ -447,6 +447,12 @@ static int render_overlays(XWSceneCtx *c, float t, const float *alphas,
     dt = 0.0f;
   if (dt > 0.25f)
     dt = 0.25f;
+  /* engine.runtime / engine.frametime for this frame, before the scripted
+   * object properties run below */
+  if (c->script)
+    xw_script_set_frame(c->script,
+                        (double)xw_script_now_ms(c->script) / 1000.0,
+                        (double)dt);
   if (!c->emitters || !c->texts || !c->order)
     return -1;
   for (k = 0; k < c->order_n; k++) {

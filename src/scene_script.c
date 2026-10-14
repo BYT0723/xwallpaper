@@ -50,6 +50,8 @@ struct XWScript {
   int objr_n;
   int *order;
   int n_order;
+  double runtime_s;
+  double frametime_s;
 };
 
 static uint64_t mono_ms(void) {
@@ -658,6 +660,13 @@ const char *xw_script_last_error(const XWScript *s) {
   return s ? s->last_error : "";
 }
 
+void xw_script_set_frame(XWScript *s, double runtime_s, double frametime_s) {
+  if (!s)
+    return;
+  s->runtime_s = runtime_s;
+  s->frametime_s = frametime_s;
+}
+
 int xw_script_set_scene(XWScript *s, XWScene *scene) {
   if (!s)
     return -1;
@@ -763,6 +772,37 @@ struct XWTextLayer {
   char text[XW_TEXT_LAYER_MAX];
 };
 
+static const char *engine_api_prelude =
+    "var engine = {\n"
+    "  runtime: 0, frametime: 0.016,\n"
+    "  canvasSize: { x: 1920, y: 1080 },\n"
+    "  AUDIO_RESOLUTION_16: 16, AUDIO_RESOLUTION_32: 32,\n"
+    "  AUDIO_RESOLUTION_64: 64,\n"
+    "  registerAudioBuffers: function (res) {\n"
+    "    var n = (typeof res === 'number' && res > 0) ? res : 16;\n"
+    "    function zeros() {\n"
+    "      var a = new Array(n);\n"
+    "      for (var i = 0; i < n; i++) a[i] = 0;\n"
+    "      return a;\n"
+    "    }\n"
+    "    return { average: zeros(), left: zeros(), right: zeros() };\n"
+    "  }\n"
+    "};\n"
+    "var WEVector = {\n"
+    "  angleVector2: function (angle, length) {\n"
+    "    var l = (typeof length === 'number') ? length : 1;\n"
+    "    return { x: Math.cos(angle) * l, y: Math.sin(angle) * l };\n"
+    "  },\n"
+    "  add: function (a, b) { return { x: a.x + b.x, y: a.y + b.y }; },\n"
+    "  subtract: function (a, b) { return { x: a.x - b.x, y: a.y - b.y }; },\n"
+    "  scale: function (a, s) { return { x: a.x * s, y: a.y * s }; },\n"
+    "  length: function (a) { return Math.sqrt(a.x * a.x + a.y * a.y); },\n"
+    "  normalize: function (a) {\n"
+    "    var l = Math.sqrt(a.x * a.x + a.y * a.y) || 1;\n"
+    "    return { x: a.x / l, y: a.y / l };\n"
+    "  }\n"
+    "};\n";
+
 static const char *text_layer_prelude =
     "var __layerProps = {};\n"
     "function createScriptProperties() {\n"
@@ -781,11 +821,31 @@ static const char *text_layer_prelude =
     " error: function () {} };\n";
 
 /* Drop the `export ` keyword (token-wise: a declaration modifier, never part
- * of an identifier). */
+ * of an identifier) and whole `import ... from '...';` statements: those are
+ * only valid in a module, and the engine's built-in modules (WEVector,
+ * WEMath) are plain globals here. */
+static int at_word_start(const char *src, const char *p) {
+  if (p == src)
+    return 1;
+  return !(p[-1] == '_' || (p[-1] >= 'a' && p[-1] <= 'z') ||
+           (p[-1] >= 'A' && p[-1] <= 'Z') ||
+           (p[-1] >= '0' && p[-1] <= '9'));
+}
+
 static void strip_export(const char *src, char *out, size_t n) {
   size_t o = 0;
   const char *p = src;
   while (*p && o + 1 < n) {
+    if (strncmp(p, "import", 6) == 0 && at_word_start(src, p) &&
+        (p[6] == ' ' || p[6] == '\t' || p[6] == '\n')) {
+      p += 6;
+      while (*p && *p != ';')
+        p++;
+      if (*p == ';')
+        p++;
+      out[o++] = '\n';
+      continue;
+    }
     if (strncmp(p, "export", 6) == 0 &&
         (p[6] == ' ' || p[6] == '\t' || p[6] == '\n' || p[6] == '\r') &&
         (p == src || !(p[-1] == '_' ||
@@ -822,7 +882,8 @@ int xw_script_text_layer_create(XWTextLayer **out, const char *src,
     free(l);
     return -1;
   }
-  if (xw_script_eval(l->js, text_layer_prelude, "layer-prelude.js", err) != 0) {
+  if (xw_script_eval(l->js, text_layer_prelude, "layer-prelude.js", err) != 0 ||
+      xw_script_eval(l->js, engine_api_prelude, "engine-prelude.js", err) != 0) {
     xw_script_text_layer_free(l);
     return -1;
   }
@@ -1043,6 +1104,19 @@ void xw_script_prop_bind(XWPropScript *p, XWScene *scene, int *order,
   JS_SetPropertyStr(ctx, global, "thisScene", obj);
   handle = layer_handle(ctx, scene, owner);
   JS_SetPropertyStr(ctx, global, "thisLayer", handle);
+  /* engine.canvasSize is the scene's orthogonal projection */
+  if (scene) {
+    JSValue eng = JS_GetPropertyStr(ctx, global, "engine");
+    if (JS_IsObject(eng)) {
+      JSValue cs = JS_NewObject(ctx);
+      JS_SetPropertyStr(ctx, cs, "x",
+                        JS_NewFloat64(ctx, (double)scene->camera.ortho_w));
+      JS_SetPropertyStr(ctx, cs, "y",
+                        JS_NewFloat64(ctx, (double)scene->camera.ortho_h));
+      JS_SetPropertyStr(ctx, eng, "canvasSize", cs);
+    }
+    JS_FreeValue(ctx, eng);
+  }
   JS_FreeValue(ctx, global);
   /* the engine runs init() once when the layer is created; a script whose
    * init throws is logged and skipped, which is what the engine does too */
@@ -1081,6 +1155,7 @@ int xw_script_prop_create(XWPropScript **out, const char *src, XWError *err) {
     return -1;
   }
   if (xw_script_eval(p->js, text_layer_prelude, "layer-prelude.js", err) != 0 ||
+      xw_script_eval(p->js, engine_api_prelude, "engine-prelude.js", err) != 0 ||
       xw_script_eval(p->js, prop_script_prelude, "prop-prelude.js", err) != 0) {
     xw_script_prop_free(p);
     return -1;
@@ -1178,6 +1253,19 @@ int xw_script_prop_update_bool(XWPropScript *p, int in, int *out) {
 
 /* Run an object's scripted transform properties for this frame. Scripts that
  * throw, or that declare no update(), leave the parsed value alone. */
+/* engine.runtime / engine.frametime are live values the scripts read. */
+static void prop_sync_time(XWPropScript *p, double runtime_s, double ft_s) {
+  JSContext *ctx = p->js->ctx;
+  JSValue global = JS_GetGlobalObject(ctx);
+  JSValue eng = JS_GetPropertyStr(ctx, global, "engine");
+  if (JS_IsObject(eng)) {
+    JS_SetPropertyStr(ctx, eng, "runtime", JS_NewFloat64(ctx, runtime_s));
+    JS_SetPropertyStr(ctx, eng, "frametime", JS_NewFloat64(ctx, ft_s));
+  }
+  JS_FreeValue(ctx, eng);
+  JS_FreeValue(ctx, global);
+}
+
 void xw_script_apply_object_props(XWScript *s, XWSceneObject *o) {
   XWObjPropRunners *r;
   float in3[3], out3[3];
@@ -1217,7 +1305,9 @@ void xw_script_apply_object_props(XWScript *s, XWSceneObject *o) {
         continue;
       }
       xw_script_prop_bind(r->p[k], s->scene, s->order, s->n_order, i);
+      prop_sync_time(r->p[k], s->runtime_s, s->frametime_s);
     }
+    prop_sync_time(r->p[k], s->runtime_s, s->frametime_s);
     if (k == XW_PROP_VISIBLE) {
       int b = o->visible;
       if (xw_script_prop_update_bool(r->p[k], o->visible, &b) == 0)

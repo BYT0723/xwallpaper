@@ -37,6 +37,9 @@ const char *xw_script_last_error(const XWScript *s);
 int xw_script_set_scene(XWScript *s, XWScene *scene);
 int xw_script_set_props(XWScript *s, const XWUserProp *props, int n);
 
+/* engine.runtime / engine.frametime for this frame, in seconds. */
+void xw_script_set_frame(XWScript *s, double runtime_s, double frametime_s);
+
 /* Mouse position in window pixels (backend feeds from X events). */
 void xw_script_set_mouse(XWScript *s, float x, float y);
 
