@@ -52,4 +52,12 @@ float xw_particle_texture_ratio(int tex_w, int tex_h, int real_w, int real_h,
 
 int xw_core_present_uvs(float *u0, float *v0, float *u1, float *v1);
 
+/* Dependency-ordered render list. The engine walks the objects in scene
+ * order and emits each object's dependencies before it (a DFS post-order),
+ * skipping self-references, unknown ids and repeats. Fills `order` with
+ * indices into `objs` and returns how many were written; `scratch` must
+ * have room for `n` bytes. */
+int xw_scene_render_order(const XWSceneObject *objs, int n, int *order,
+                          unsigned char *scratch);
+
 #endif

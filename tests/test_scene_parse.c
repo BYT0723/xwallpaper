@@ -500,6 +500,11 @@ static void test_particle_angular_parse(void) {
   TEST_CHECK_EQ_INT(sp->has_angular_movement, 1);
   TEST_CHECK(sp->am_drag == 0.0f);
   TEST_CHECK(sp->am_force_z == 0.0f);
+  /* `dependencies` are numeric ids in the real format; they are kept as
+   * strings so they can be compared against the object ids directly */
+  TEST_CHECK_EQ_INT(s.objects[0].n_deps, 0);
+  TEST_CHECK_EQ_INT(s.objects[1].n_deps, 1);
+  TEST_CHECK_EQ_STR(s.objects[1].deps[0], "1");
   xw_scene_free(&s);
 }
 

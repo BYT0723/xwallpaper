@@ -113,3 +113,36 @@ float xw_particle_texture_ratio(int tex_w, int tex_h, int real_w, int real_h,
     return ((float)tex_h * frame_h) / ((float)tex_w * frame_w);
   return real_w > 0 ? (float)real_h / (float)real_w : 1.0f;
 }
+
+/* DFS post-order over `dependencies`: emit every dependency (recursively)
+ * before the object itself. Mirrors CScene::addObjectToRenderOrder, which
+ * also skips self-references, unknown ids and objects already emitted. */
+static void render_order_visit(const XWSceneObject *objs, int n, int i,
+                               int *order, int *n_out, unsigned char *done) {
+  int d, k;
+  if (done[i])
+    return;
+  done[i] = 1;
+  for (d = 0; d < objs[i].n_deps; d++) {
+    if (strcmp(objs[i].deps[d], objs[i].id) == 0)
+      continue;
+    for (k = 0; k < n; k++) {
+      if (strcmp(objs[k].id, objs[i].deps[d]) == 0) {
+        render_order_visit(objs, n, k, order, n_out, done);
+        break;
+      }
+    }
+  }
+  order[(*n_out)++] = i;
+}
+
+int xw_scene_render_order(const XWSceneObject *objs, int n, int *order,
+                          unsigned char *scratch) {
+  int i, c = 0;
+  if (!order || n < 0 || (n > 0 && (!objs || !scratch)))
+    return -1;
+  memset(scratch, 0, (size_t)n);
+  for (i = 0; i < n; i++)
+    render_order_visit(objs, n, i, order, &c, scratch);
+  return c;
+}

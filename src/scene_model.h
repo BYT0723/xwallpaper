@@ -2,6 +2,8 @@
 #define XW_SCENE_MODEL_H
 
 #define XW_SCENE_ID_MAX 64
+/* most dependencies an object may declare (the engine's scenes use a handful) */
+#define XW_SCENE_DEPS_MAX 16
 #define XW_SCENE_PATH_MAX 256
 #define XW_SCENE_COMBOS_MAX 8
 #define XW_SCENE_BINDS_MAX 8
@@ -192,6 +194,10 @@ typedef struct XWSoundCfg {
 typedef struct XWSceneObject {
   char id[XW_SCENE_ID_MAX];
   XWObjType type;
+  /* `dependencies`: ids this object must be drawn after (the engine emits a
+   * DFS post-order over them); stored as strings, matching `id` */
+  char deps[XW_SCENE_DEPS_MAX][XW_SCENE_ID_MAX];
+  int n_deps;
   char model[XW_SCENE_PATH_MAX];
   char material[XW_SCENE_PATH_MAX];
   char texture[XW_SCENE_PATH_MAX]; /* image base texture, "" = none */

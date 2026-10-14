@@ -849,6 +849,28 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
 /* Real workshop ids are numbers with a separate name; prefer the name. */
 static void parse_id(struct json_object *jo, XWSceneObject *o) {
   struct json_object *v = NULL;
+  /* `dependencies`: numeric ids the engine emits before this object; keep
+   * them as strings so they compare directly against `id`. Parsed first
+   * because the id/name lookup below returns early. */
+  if (json_object_object_get_ex(jo, "dependencies", &v) && v &&
+      json_object_get_type(v) == json_type_array) {
+    int di;
+    size_t dn = json_object_array_length(v);
+    for (di = 0; di < (int)dn && o->n_deps < XW_SCENE_DEPS_MAX; di++) {
+      struct json_object *e = json_object_array_get_idx(v, di);
+      if (!e)
+        continue;
+      if (json_object_get_type(e) == json_type_int)
+        snprintf(o->deps[o->n_deps], sizeof(o->deps[0]), "%d",
+                 json_object_get_int(e));
+      else if (json_object_get_type(e) == json_type_string)
+        copy_str(o->deps[o->n_deps], sizeof(o->deps[0]),
+                 json_object_get_string(e));
+      else
+        continue;
+      o->n_deps++;
+    }
+  }
   if (json_object_object_get_ex(jo, "name", &v) && v &&
       json_object_get_type(v) == json_type_string) {
     copy_str(o->id, sizeof(o->id), json_object_get_string(v));

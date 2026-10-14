@@ -105,6 +105,44 @@ static void test_particle_texture_ratio(void) {
              1.01f);
 }
 
+static void test_render_order(void) {
+  XWSceneObject o[6];
+  int order[6];
+  unsigned char scratch[6];
+  TEST_BEGIN("dependencies render before their dependents (DFS post-order)");
+  memset(o, 0, sizeof(o));
+  strcpy(o[0].id, "10");
+  strcpy(o[1].id, "11");
+  strcpy(o[1].deps[0], "13");
+  o[1].n_deps = 1;
+  strcpy(o[2].id, "12");
+  strcpy(o[2].deps[0], "11");
+  strcpy(o[2].deps[1], "13");
+  o[2].n_deps = 2;
+  strcpy(o[3].id, "13");
+  strcpy(o[4].id, "14"); /* self-dependency is ignored */
+  strcpy(o[4].deps[0], "14");
+  o[4].n_deps = 1;
+  strcpy(o[5].id, "15"); /* unknown dependency is ignored */
+  strcpy(o[5].deps[0], "999");
+  strcpy(o[5].deps[1], "10"); /* and an already-emitted one is not repeated */
+  o[5].n_deps = 2;
+  TEST_CHECK_EQ_INT(xw_scene_render_order(o, 6, order, scratch), 6);
+  TEST_CHECK_EQ_INT(order[0], 0);
+  TEST_CHECK_EQ_INT(order[1], 3); /* 11's dependency, emitted before 11 */
+  TEST_CHECK_EQ_INT(order[2], 1);
+  TEST_CHECK_EQ_INT(order[3], 2);
+  TEST_CHECK_EQ_INT(order[4], 4);
+  TEST_CHECK_EQ_INT(order[5], 5);
+  /* a plain scene keeps its order */
+  o[1].n_deps = 0;
+  o[2].n_deps = 0;
+  TEST_CHECK_EQ_INT(xw_scene_render_order(o, 6, order, scratch), 6);
+  TEST_CHECK_EQ_INT(order[0], 0);
+  TEST_CHECK_EQ_INT(order[1], 1);
+  TEST_CHECK_EQ_INT(order[5], 5);
+}
+
 int main(void) {
   TEST_SUITE("scene_core");
   test_fbo_table();
@@ -113,5 +151,6 @@ int main(void) {
   test_blend_modes();
   test_present_bloom();
   test_particle_texture_ratio();
+  test_render_order();
   TEST_SUMMARY();
 }
