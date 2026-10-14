@@ -3,7 +3,7 @@
 - 日期：2026-10-14
 - 本侧：`src/scene*.c/.h`（分支 `refactor/scene-render-pipeline`，HEAD `b5a1eee`）
 - 参考：`/home/walter/Workspace/Github/linux-wallpaperengine`（GPL-3.0，仅作行为对标，不取代码）
-- 结论摘要：**总体功能相似度约 65%（区间 60–70%）**；渲染主链路（shader/material/effect/image）已达
+- 结论摘要：**总体功能相似度约 66%（区间 60–70%）**；渲染主链路（shader/material/effect/image）已达
   80–90%，差距集中在**高级粒子特性、脚本 API、文本排版、相机/合成顺序**四块。
 
 ---
@@ -91,20 +91,20 @@
 
 置信度：中高（渲染顺序在 `scene_image.c` / `scene.c` 直接可见为 per-type 循环）。
 
-### 3.4 粒子系统 —— 覆盖 **≈53%**（差距最大）
+### 3.4 粒子系统 —— 覆盖 **≈62%**（差距最大）
 
 | 能力 | 参考 | 本侧 |
 |---|---|---|
-| emitter `boxrandom` | ✅ | ✅（通用 distancemin/max 盒） |
+| emitter `boxrandom` / `sphererandom` | ✅ | ✅（盒 + 圆盘/球壳） |
 | emitter `sphererandom` | ✅ | 🔴 |
 | `rate` / `origin` / `directions` | ✅ | ✅ |
 | `instantaneous` / `duration` / `delay` / 周期发射 / `limitOnePerFrame` | ✅ | 🔴 |
 | initializer 数量 | **9** | **7** |
 | ↳ `velocityrandom` `sizerandom` `alpharandom` `colorrandom` `rotationrandom` `lifetimerandom` `turbulentvelocityrandom` | ✅ | ✅ |
 | ↳ `angularvelocityrandom` `mapsequencearoundcontrolpoint` | ✅ | 🔴 |
-| operator 数量 | **12** | **2** |
-| ↳ `movement`（gravity/drag）`alphafade` | ✅ | ✅ |
-| ↳ `angularmovement` `sizechange` `alphachange` `colorchange` `turbulence` `vortex` `controlpointattract` `oscillatealpha` `oscillatesize` `oscillateposition` | ✅ | 🔴 |
+| operator 数量 | **12** | **5** |
+| ↳ `movement`（gravity/drag）`alphafade` `oscillateposition` `oscillatealpha` `oscillatesize` | ✅ | ✅ |
+| ↳ `angularmovement` `sizechange` `alphachange` `colorchange` `turbulence` `vortex` `controlpointattract` | ✅ | 🔴 |
 | renderer `sprite` / `spritetrail` | ✅ | ✅ |
 | renderer `rope` / `ropetrail` | ✅ | 🔴 |
 | 材质 pass（17 float/顶点：`a_Position/a_TexCoordVec4/a_Color/…`） | ✅ | ✅ `genericparticle` 可编译运行 |
@@ -189,16 +189,16 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
 |---|---|---|---|
 | shader / material 管线 | 90% | 20% | 18.0 |
 | image / effect 运行时 | 78% | 20% | 15.6 |
-| 粒子系统 | 53% | 20% | 10.6 |
+| 粒子系统 | 62% | 20% | 12.4 |
 | 合成与渲染顺序 | 57% | 12% | 6.8 |
 | 脚本 | 32% | 8% | 2.6 |
 | 文本 | 38% | 6% | 2.3 |
 | 相机 | 47% | 5% | 2.4 |
 | 音频 | 60% | 5% | 3.0 |
 | 打包 / 解码 | 85% | 4% | 3.4 |
-| **合计** | | 100% | **≈64.7%** |
+| **合计** | | 100% | **≈66.5%** |
 
-> **总体功能相似度 ≈ 65%（区间 60–70%）**
+> **总体功能相似度 ≈ 66%（区间 60–70%）**
 
 交叉验证（不是同一个数，但方向一致）：
 
@@ -214,7 +214,7 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
   粒子材质 pass、图集逐帧、正交/透视投影、TEXV/TEXS 解码、assets 探测。→ 这些是"相似度"的主要来源。
 - **B 类｜保守降级（有替代路径，观感可接受）**：跨对象 `_rt_imageLayerComposite_*`、不可解析的
   `_rt_*`/shader 失败时保留底图、视频纹理交给独立后端。→ 不崩、不画垃圾，但不等于参考。
-- **C 类｜未实现（静默忽略）**：12 个 operator 中的 10 个、`rope/ropetrail`、控制点、子粒子、
+- **C 类｜未实现（静默忽略）**：12 个 operator 中的 7 个、`rope/ropetrail`、控制点、子粒子、
   振荡器、`fullscreen`/`alignment`/`passthrough`/`solidlayer`、`animationlayers`、puppet 网格、
   bloom 渲染、依赖排序、频谱音频、脚本模块/`engine`/`thisScene` 全量、文本脚本层、相机 eye/center。
 - **D 类｜近似实现（参数或算法非逐位一致）**：
@@ -224,6 +224,19 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
   - 逐粒子贴图选择 / REFRACT 帧缓冲贡献 / alpha 对齐（当前残留的雨观感差异）。
 
 ---
+
+## 5.5 2026-10-14 更新（数据驱动的重排 + 两项修正）
+
+- **重排依据**：对 9 份真实壁纸做**全量 JSON 统计**（emitter / initializer / operator / renderer / 脚本 API 用量），
+  而不是按模块代码量推断。据此把 `_rt_imageLayerComposite_*` 降为低优先，把振荡器与粒子缺省提前。
+- **修正 1**：`_rt_imageLayerComposite_*` 对当前壁纸**零收益** —— 参考的 `CImage::render()` 在
+  `visible==false` 时直接 `return`，且 `CFBO` 创建时清成**透明黑**（"Layer framebuffers must start transparent"），
+  所以"空目标"参与混合近似无操作；**我们的保守降级行为等价**。
+- **修正 2**：`directions` 缺省 `(1,1,1)` **早已实现**（`scene_parse.c`）—— 我在数据调查中判其为"缺失"是**误报**。
+- **本轮落地**：`sphererandom`（12/22 emitter）、三个振荡器 operator（14 实例）、
+  粒子配置缺省（`rate` 10 / `maxcount` 100，影响 8+3 处，此前**整层不可见**）。
+- **新增缺口记录**：球发射器的 `speedmin/speedmax`（向外初速度，语料 1 处）；
+  `angularmovement`(4) / `angularvelocityrandom`(4) / `controlpointattract`(4) 仍缺（下一轮候选）。
 
 ## 6. 结论与风险
 

@@ -444,3 +444,19 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   **顺带更正**：`directions` 缺省 `(1,1,1)` **早已实现**（`scene_parse.c` 的粒子初始化处）——
   我之前在数据调查中把它判为缺失是**误报**。
   **仍缺**：球发射器的 `speedmin/speedmax`（向外初速度；语料中仅 3808922316 使用且值为 1）。
+- **振荡器 operator（2026-10-14 已实现）**：语料里 6 个粒子系统使用 `oscillateposition`(9) / `oscillatealpha`(5)，
+  此前只有 `movement`/`alphafade` → 这些系统**失去摇摆与闪烁**。语义（照 `CParticle::createOscillate*Operator`）：
+  每个粒子**只抽一次** frequency/scale/phase（phase 跨度 `phaseMin..phaseMax+2π`），之后按 age 驱动——
+  `oscillateposition` 逐轴积分 `-scale*w*sin(w*age+phase)*dt`（引擎的 `w = 2π·f/2π` **化简为 f**）再乘 `mask`；
+  `oscillatealpha`/`oscillatesize` 用 `mix(scaleMin, scaleMax, (cos(w·age+phase)+1)/2)` 缩放**基准值**。
+  `alphafade` 末尾**同步振荡器的 alpha 基准**（参考同款做法）→ 两者是**串接**而非互相覆盖。
+  缺省照 `ObjectParser::parseOperator`：position freq 0..5 / scale 0..10 / mask (1,1,0)；alpha 0..10 / 0..1；
+  size 0.8..1.2。`oscillatesize` 语料中 0 次但同族，一并实现。
+  **仍缺**：`angularmovement`(4)、`angularvelocityrandom`(4)、`controlpointattract`(4)（下一轮）。
+- **粒子配置缺省（2026-10-14 已修，重要）**：**30 个粒子配置里 8 个没有 `maxcount`、3 个 emitter 没有 `rate`**，
+  我们两者都缺省成 **0** → **池为 0 → 一颗都不发**：2889253135 的 dust motes/bokeh、3422426571 的雪
+  **整层缺失**。引擎缺省为 `rate` **10**（`parseParticleEmitter`）、`maxcount` **100**、
+  `animationmode` **"sequence"**（`parseParticle`）。修后真机对比 2889253135 出现此前完全没有的 bokeh 光斑
+  （对上一版整帧 RMSE 0.0297）。另确认：`starttime` 参考**解析但从未使用**（我们同样忽略，属正确）。
+- **球发射器 `speedmin/speedmax`（未做）**：参考的球发射器会额外把初速度设为"从球心向外"方向 ×
+  `rand(speedmin,speedmax)`（盒发射器不做）；语料中仅 3808922316 使用且 min=max=1，影响很小，记入待做。
