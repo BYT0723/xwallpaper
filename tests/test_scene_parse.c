@@ -448,6 +448,41 @@ static void test_particle_defaults(void) {
   xw_scene_free(&s);
 }
 
+static void test_particle_angular_parse(void) {
+  XWScene s;
+  XWError err = {0};
+  const XWParticleCfg *box, *sp;
+  TEST_BEGIN("angular movement and angular velocity parse with engine defaults");
+  memset(&s, 0, sizeof(s));
+  TEST_CHECK_EQ_INT(xw_scene_parse("tests/data/scene/sphereemitter", &s, &err), 0);
+  TEST_CHECK_EQ_INT(s.n_objects, 2);
+  if (s.n_objects != 2) {
+    xw_scene_free(&s);
+    return;
+  }
+  /* the box config spells both out: a constant -0.05 rad/s spin, drag 0.5
+   * and a z force of 2 */
+  box = &s.objects[0].particle;
+  TEST_CHECK_EQ_INT(box->has_av_random, 1);
+  TEST_CHECK(box->av_min > -0.06f && box->av_min < -0.04f);
+  TEST_CHECK(box->av_max > -0.06f && box->av_max < -0.04f);
+  TEST_CHECK(box->av_exponent > 0.99f && box->av_exponent < 1.01f);
+  TEST_CHECK_EQ_INT(box->has_angular_movement, 1);
+  TEST_CHECK(box->am_drag > 0.49f && box->am_drag < 0.51f);
+  TEST_CHECK(box->am_force_z > 1.99f && box->am_force_z < 2.01f);
+  /* the sphere config omits both: the engine defaults to a +-5 rad/s draw
+   * with no drag and no force */
+  sp = &s.objects[1].particle;
+  TEST_CHECK_EQ_INT(sp->has_av_random, 1);
+  TEST_CHECK(sp->av_min > -5.01f && sp->av_min < -4.99f);
+  TEST_CHECK(sp->av_max > 4.99f && sp->av_max < 5.01f);
+  TEST_CHECK(sp->av_exponent > 0.99f && sp->av_exponent < 1.01f);
+  TEST_CHECK_EQ_INT(sp->has_angular_movement, 1);
+  TEST_CHECK(sp->am_drag == 0.0f);
+  TEST_CHECK(sp->am_force_z == 0.0f);
+  xw_scene_free(&s);
+}
+
 int main(void) {
   TEST_SUITE("scene_parse");
   test_parse_fixture();
@@ -462,5 +497,6 @@ int main(void) {
   test_turbulent_parse();
   test_emitter_geometry();
   test_particle_defaults();
+  test_particle_angular_parse();
   TEST_SUMMARY();
 }

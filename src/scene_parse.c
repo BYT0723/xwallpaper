@@ -599,6 +599,18 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
         /* 2D sprites roll in the Z axis */
         o->particle.rot_min = lo[2];
         o->particle.rot_max = hi[2];
+      } else if (strcmp(name, "angularvelocityrandom") == 0) {
+        struct json_object *ex = NULL;
+        float lo[3] = {0.0f, 0.0f, -5.0f}, hi[3] = {0.0f, 0.0f, 5.0f};
+        o->particle.has_av_random = 1;
+        o->particle.av_exponent = 1.0f;
+        get_vec3(it, "min", lo);
+        get_vec3(it, "max", hi);
+        if (json_object_object_get_ex(it, "exponent", &ex) && ex)
+          o->particle.av_exponent = (float)json_object_get_double(ex);
+        /* the engine spins a vec3; our quad only uses the in-plane Z axis */
+        o->particle.av_min = lo[2];
+        o->particle.av_max = hi[2];
       } else if (strcmp(name, "lifetimerandom") == 0) {
         struct json_object *lo = NULL, *hi = NULL;
         float lmin = 1.0f, lmax = 1.0f;
@@ -698,6 +710,15 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
           osc->freq_max = 10.0f;
           osc->scale_min = 0.8f;
           osc->scale_max = 1.2f;
+        } else if (strcmp(opname, "angularmovement") == 0) {
+          struct json_object *v = NULL;
+          float fv[3] = {0.0f, 0.0f, 0.0f};
+          o->particle.has_angular_movement = 1;
+          if (json_object_object_get_ex(it, "drag", &v) && v)
+            o->particle.am_drag = (float)json_object_get_double(v);
+          get_vec3(it, "force", fv);
+          o->particle.am_force_z = fv[2];
+          continue;
         }
         if (osc) {
           struct json_object *v = NULL;

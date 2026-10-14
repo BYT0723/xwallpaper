@@ -168,6 +168,12 @@ typedef struct XWParticleCfg {
   /* oscillator operators (each runs at most once, like the engine's single
    * per-particle oscillator state) */
   XWOscillate osc_pos, osc_alpha, osc_size;
+  /* angularmovement operator + angularvelocityrandom initializer (the
+   * engine works on a vec3; only the in-plane z spin reaches our quad) */
+  int has_angular_movement;
+  float am_drag, am_force_z;
+  int has_av_random;
+  float av_min, av_max, av_exponent;
 } XWParticleCfg;
 
 typedef struct XWTextCfg {

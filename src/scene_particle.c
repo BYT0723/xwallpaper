@@ -374,6 +374,14 @@ static void spawn_one(XWEmitter *e) {
   if (e->cfg.rot_max != e->cfg.rot_min)
     p->rot = e->cfg.rot_min +
              next_unit(&e->rng) * (e->cfg.rot_max - e->cfg.rot_min);
+  /* angularvelocityrandom: an exponent-shaped draw, scaled by the speed
+   * override (the engine draws all three axes; we keep the in-plane one) */
+  if (e->cfg.has_av_random) {
+    float ex = e->cfg.av_exponent > 0.0f ? e->cfg.av_exponent : 1.0f;
+    p->av = (e->cfg.av_min +
+             powf(next_unit(&e->rng), ex) * (e->cfg.av_max - e->cfg.av_min)) *
+            speed;
+  }
   p->rnd = next_unit(&e->rng);
   p->frame = 0.0f;
   /* oscillator operators draw their per-particle frequency/scale/phase once
@@ -484,6 +492,22 @@ int xw_emitter_update(XWEmitter *e, float dt) {
       p->size = p->osc_sbase *
                 (e->cfg.osc_size.scale_min +
                  cv * (e->cfg.osc_size.scale_max - e->cfg.osc_size.scale_min));
+    }
+    /* angularmovement: spin by the current angular velocity, accelerate with
+     * the force, decay with drag, then wrap the angle (the engine keeps it in
+     * (-pi, pi] so the sprite rotation stays well conditioned) */
+    if (e->cfg.has_angular_movement) {
+      float df;
+      p->rot += p->av * dt * speed;
+      p->av += e->cfg.am_force_z * dt * speed;
+      df = 1.0f - e->cfg.am_drag * dt;
+      if (df < 0.0f)
+        df = 0.0f;
+      p->av *= df;
+      while (p->rot > 3.14159265f)
+        p->rot -= 6.28318530718f;
+      while (p->rot < -3.14159265f)
+        p->rot += 6.28318530718f;
     }
     if (p->age > p->life) {
       e->alive--;

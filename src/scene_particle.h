@@ -24,6 +24,7 @@ typedef struct XWParticle {
   float osc_sf, osc_sp;                  /* oscillatesize: frequency, phase */
   float osc_abase;                       /* alpha base the oscillator scales */
   float osc_sbase;                       /* size base the oscillator scales */
+  float av;                              /* angular velocity (in-plane, rad/s) */
 } XWParticle;
 
 typedef struct XWEmitter {

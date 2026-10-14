@@ -16,6 +16,11 @@
             "max": 21,
             "min": 15,
             "name": "sizerandom"
+        },
+        {
+            "max": "0 0 -0.05",
+            "min": "0 0 -0.05",
+            "name": "angularvelocityrandom"
         }
     ],
     "material": "materials/particle/rainrefractive_1_1.json",
@@ -23,6 +28,11 @@
     "operator": [
         {
             "name": "movement"
+        },
+        {
+            "drag": 0.5,
+            "force": "0 0 2",
+            "name": "angularmovement"
         },
         {
             "name": "oscillateposition"

@@ -472,6 +472,94 @@ static void test_oscillate_size(void) {
   xw_emitter_free(&e);
 }
 
+static void test_angular_velocity_random(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_single();
+  int i;
+  TEST_BEGIN("angularvelocityrandom spins at the drawn rate, inside its range");
+  c.has_av_random = 1;
+  c.av_min = c.av_max = 2.0f; /* a constant draw keeps the rate exact */
+  c.has_angular_movement = 1; /* drag 0 and force 0: pure integration */
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  for (i = 0; i < 120; i++) xw_emitter_update(&e, 1.0f / 60.0f);
+  TEST_CHECK(e.alive > 0);
+  if (e.alive > 0) {
+    float age = e.parts[0].age;
+    TEST_CHECK(age > 0.5f && age < 1.5f);
+    /* rotation accumulates angularVelocity*dt each step */
+    TEST_CHECK(fabsf(e.parts[0].rot - 2.0f * age) < 0.05f);
+  }
+  xw_emitter_free(&e);
+}
+
+static void test_angular_velocity_random_range(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg60();
+  int i, distinct = 0;
+  float first = 0.0f;
+  TEST_BEGIN("angularvelocityrandom draws inside min..max");
+  c.life = 100.0f;
+  c.has_av_random = 1;
+  c.av_min = -5.0f;
+  c.av_max = 5.0f;
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  TEST_CHECK(xw_emitter_update(&e, 2.0f) > 50);
+  for (i = 0; i < e.alive; i++) {
+    TEST_CHECK(e.parts[i].av >= -5.01f && e.parts[i].av <= 5.01f);
+    if (i == 0)
+      first = e.parts[i].av;
+    else if (fabsf(e.parts[i].av - first) > 1e-3f)
+      distinct = 1;
+  }
+  TEST_CHECK(distinct); /* the draw really varies per particle */
+  xw_emitter_free(&e);
+}
+
+static void test_angular_movement_force(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_single();
+  int i;
+  TEST_BEGIN("angularmovement integrates the force and wraps the rotation");
+  c.has_av_random = 1;
+  c.av_min = c.av_max = 0.0f;
+  c.has_angular_movement = 1;
+  c.am_force_z = 2.0f;
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  /* long enough that the accumulated rotation wraps several times */
+  for (i = 0; i < 600; i++) xw_emitter_update(&e, 1.0f / 60.0f);
+  TEST_CHECK(e.alive > 0);
+  if (e.alive > 0) {
+    float age = e.parts[0].age;
+    /* angularVelocity = force*age, so the wrapped rotation keeps the value
+     * inside (-pi, pi] instead of growing without bound */
+    TEST_CHECK(e.parts[0].av > 2.0f * age - 0.05f);
+    TEST_CHECK(e.parts[0].rot > -3.1416f && e.parts[0].rot <= 3.1416f);
+  }
+  xw_emitter_free(&e);
+}
+
+static void test_angular_movement_drag(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_single();
+  int i;
+  TEST_BEGIN("angularmovement drag decays the angular velocity");
+  c.has_av_random = 1;
+  c.av_min = c.av_max = 10.0f;
+  c.has_angular_movement = 1;
+  c.am_drag = 1.0f;
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  for (i = 0; i < 120; i++) xw_emitter_update(&e, 1.0f / 60.0f);
+  TEST_CHECK(e.alive > 0);
+  if (e.alive > 0) {
+    float age = e.parts[0].age;
+    /* av(t) = 10*(1 - drag*dt)^steps ~ 10*e^-t for drag 1 */
+    float expect = 10.0f * expf(-age);
+    TEST_CHECK(e.parts[0].av > expect * 0.9f && e.parts[0].av < expect * 1.1f);
+    TEST_CHECK(e.parts[0].av < 10.0f);
+  }
+  xw_emitter_free(&e);
+}
+
 int main(void) {
   TEST_SUITE("scene_particle");
   test_spawn_and_die();
@@ -490,6 +578,10 @@ int main(void) {
   test_oscillate_alpha();
   test_oscillate_alpha_follows_fade();
   test_oscillate_size();
+  test_angular_velocity_random();
+  test_angular_velocity_random_range();
+  test_angular_movement_force();
+  test_angular_movement_drag();
   test_bad_inputs();
   TEST_SUMMARY();
 }
