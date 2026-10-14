@@ -321,11 +321,13 @@ static void free_tmpdir(XWSceneCtx *c) {
 static int resolve_dir(XWSceneCtx *c, const char *optpath, XWError *err) {
   char probe[1152], pkgpath[1152];
   struct stat st;
+  int loose;
   snprintf(c->dir, sizeof(c->dir), "%s", optpath);
   snprintf(probe, sizeof(probe), "%.512s/scene.json", optpath);
-  if (stat(probe, &st) == 0)
-    return 0;
+  loose = stat(probe, &st) == 0;
   snprintf(pkgpath, sizeof(pkgpath), "%.512s/scene.pkg", optpath);
+  if (loose && stat(pkgpath, &st) != 0)
+    return 0; /* a loose scene with no package: use the directory as it is */
   if (stat(pkgpath, &st) != 0) {
     XW_ERROR_SET(err, 1, "cannot open scene.json");
     return -1;
@@ -341,8 +343,10 @@ static int resolve_dir(XWSceneCtx *c, const char *optpath, XWError *err) {
         xw_pkg_extract_all(pkg, tmp) != 0) {
       if (pkg)
         xw_pkg_close(pkg);
-      XW_ERROR_SET(err, 1, "cannot unpack scene.pkg");
       rmdir(tmp);
+      if (loose)
+        return 0; /* a loose scene that stands on its own still works */
+      XW_ERROR_SET(err, 1, "cannot unpack scene.pkg");
       return -1;
     }
     xw_pkg_close(pkg);
@@ -366,6 +370,25 @@ static int resolve_dir(XWSceneCtx *c, const char *optpath, XWError *err) {
           }
           fclose(in);
         }
+      }
+    }
+    /* the engine mounts the directory and the package together, so a loose
+     * scene.json overrides the scene while the package still supplies the
+     * models, materials and textures it references */
+    if (loose) {
+      char dst[1152];
+      FILE *in = fopen(probe, "rb");
+      snprintf(dst, sizeof(dst), "%.1000s/scene.json", tmp);
+      if (in) {
+        FILE *outp = fopen(dst, "wb");
+        if (outp) {
+          char buf[8192];
+          size_t got;
+          while ((got = fread(buf, 1, sizeof(buf), in)) > 0)
+            fwrite(buf, 1, got, outp);
+          fclose(outp);
+        }
+        fclose(in);
       }
     }
     snprintf(c->dir, sizeof(c->dir), "%s", tmp);
