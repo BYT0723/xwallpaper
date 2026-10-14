@@ -478,3 +478,17 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   `{"animation":…, "value":…}`（关键帧）与 `{"script":…, "value":…}` 两种——2887099508 里 **17 个对象**
   用前者。现 `parse_dynfloat` 对**任何带数值 `value` 的 dict** 取基准值（`user` 非字符串时不再误当引用）。
   修后该壁纸从"整包拒绝"变为**正常出图**。
+- **相机 eye/lookAt 实为无操作（2026-10-14 证伪，重要）**：曾计划"实现相机 `eye`/`center` lookAt"以修正
+  大画布构图，**动手前先验证前提**发现：全语料 9 张壁纸的 `center - eye` **恒为 `(0,0,-1)`**、`up=+Y`
+  → `lookAt = T(-eye)`，而正交投影里已 `glm::translate(projection, eye)` → 两者**正好抵消** →
+  **eye/lookAt 对正交相机是净无操作**（参考源码里那句 TODO "THROWS OFF POINTS" 也印证了这点）。
+  **结论：不做。** 教训：**先验证前提再实现**，否则会白做一整个特性。
+- **两处对报告的更正**：① 报告称"自动投影尺寸（isAuto）🔴未实现" —— 实际 `xw_camera_auto_size()`
+  **早已实现**（与参考 `CScene` 的 isAuto 逻辑一致）；② 报告称"eye/center lookAt 🔴" —— 见上，实为无操作。
+- **拖尾宽高比 `g_RenderVar1.w`（2026-10-14 已修）**：该值喂给 `common_particles.h` 的 `textureRatio`，
+  **缩放拖尾的长度轴**。引擎算的是**每帧**宽高比 `(atlasH×frameH)/(atlasW×frameW)`（无 sheet 时才用
+  `realH/realW`）；我们此前用了**图集**的 `h/w` → `drizzle`（1024×512、4×2 方形帧）得到 **0.5 而非 1.0**
+  → **每条雨丝短了一半**（"短横划线"而非"细长竖丝"）。修后真机确认：拖尾恢复为**细长竖丝**，与参考形状一致。
+  **数值注意**：整帧对参考的 RMSE 由 0.0225 → **0.0271**（变差）——因为拖尾变长覆盖更多像素，而
+  **斑点才是数值主导项**（斑点贡献 58.5 vs 拖尾 17.5）且仍然过亮过密。**这是下一个目标，不是本次修复的缺陷。**
+  公式已单测（scene_core，含 sheet 与非 sheet 两种情形）。

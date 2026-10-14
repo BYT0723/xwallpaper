@@ -162,9 +162,9 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
 | 正交投影（`orthogonalprojection`） | ✅ | ✅ |
 | 透视（fov/nearz/farz，粒子 `flags&4`） | ✅ | ✅ |
 | `clearcolor` | ✅ | ✅ |
-| `eye` / `center` lookAt（相机平移） | ✅ | 🔴 |
+| `eye` / `center` lookAt（相机平移） | ✅ | 🟡 **实为无操作**（语料 `center=eye+(0,0,-1)`，与投影的 `translate(eye)` 抵消） |
 | `cameraparallax` | ✅ | 🔴（只解析标志） |
-| 自动投影尺寸（`isAuto`） | ✅ | 🔴 |
+| 自动投影尺寸（`isAuto`） | ✅ | ✅ `xw_camera_auto_size`（**报告此前误判为缺失**） |
 | 脚本可写相机 | ✅ | 🔴 |
 | bloom 参数 | ✅ | 🟡 解析未渲染 |
 
@@ -193,12 +193,12 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
 | 合成与渲染顺序 | 57% | 12% | 6.8 |
 | 脚本 | 32% | 8% | 2.6 |
 | 文本 | 38% | 6% | 2.3 |
-| 相机 | 47% | 5% | 2.4 |
+| 相机 | 55% | 5% | 2.75 |
 | 音频 | 60% | 5% | 3.0 |
 | 打包 / 解码 | 85% | 4% | 3.4 |
-| **合计** | | 100% | **≈66.5%** |
+| **合计** | | 100% | **≈66.9%** |
 
-> **总体功能相似度 ≈ 66%（区间 60–70%）**
+> **总体功能相似度 ≈ 67%（区间 60–70%）**
 
 交叉验证（不是同一个数，但方向一致）：
 
@@ -241,6 +241,10 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
   真实 text 对象的格式（内容在 `text` 本身 + 同级 `font`/`pointsize`/`color`）**此前根本不被解析**，
   2887099508 因此**整包加载失败**。已按真实格式修复。**教训：能力矩阵的每一行都必须用真包核对**，
   不能只看代码"看起来支持"。
+- **又一次前提证伪（2026-10-14）**：计划中的"相机 eye/lookAt"经验证是**净无操作**（语料恒为
+  `center=eye+(0,0,-1)`，与投影的 `translate(eye)` 抵消）→ 不做；同时更正报告里"auto 投影尺寸"的误判（其实已实现）。
+- **2026-10-14 第三批落地**：拖尾 `g_RenderVar1.w` 改为引擎的**每帧**宽高比（雨丝由"短划线"恢复为"细长竖丝"）。
+  整帧 RMSE 0.0225→0.0271 变差，原因是**斑点仍是数值主导项**（下一个目标）。
 - **2026-10-14 第二批落地**：`angularmovement` + `angularvelocityrandom`（角运动）；
   真实 text 格式；animated/scripted 数值兜底（`{"animation":…,"value":…}`）。
   2887099508 从"整包拒绝"变为正常出图。
