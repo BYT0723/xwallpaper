@@ -160,6 +160,18 @@ static int parse_dynfloat(struct json_object *o, const char *key,
     copy_str(d->ref, sizeof(d->ref), json_object_get_string(u));
     return 0;
   }
+  /* a "scripted property" wraps its base value as
+   * {"script": .., "value": <number>}: the engine runs the script each frame
+   * (2887099508 fades layers on cursor enter/leave), we apply the base so the
+   * object still loads instead of failing the whole scene */
+  if (json_object_object_get_ex(v, "script", &u) && u) {
+    struct json_object *w = NULL;
+    if (json_object_object_get_ex(v, "value", &w) && w &&
+        (json_object_get_type(w) == json_type_double ||
+         json_object_get_type(w) == json_type_int))
+      d->constant = (float)json_object_get_double(w);
+    return 0;
+  }
   return -1;
 }
 

@@ -341,6 +341,11 @@ static void test_scripted_vec_props(void) {
     TEST_CHECK(s.objects[0].scale[0] > 0.49f && s.objects[0].scale[0] < 0.51f);
     TEST_CHECK((int)s.objects[0].size[0] == 100);
     TEST_CHECK((int)s.objects[0].size[1] == 200);
+    /* a scripted alpha unwraps to its base value instead of failing the load
+     * (2887099508 carries one on almost every object) */
+    TEST_CHECK_EQ_INT(s.objects[0].alpha.kind, XW_DYN_CONSTANT);
+    TEST_CHECK(s.objects[0].alpha.constant > 0.24f &&
+               s.objects[0].alpha.constant < 0.26f);
   }
   xw_scene_free(&s);
 }

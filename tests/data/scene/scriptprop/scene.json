@@ -14,7 +14,11 @@
         "value": "2700.00000 238.00000 0.00000"
       },
       "scale": { "value": "0.50000 0.50000 0.50000" },
-      "size": "100 200"
+      "size": "100 200",
+      "alpha": {
+        "script": "'use strict';\nexport function update(value) { return value * 0.5; }\n",
+        "value": 0.25
+      }
     }
   ]
 }
