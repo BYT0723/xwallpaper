@@ -86,7 +86,7 @@
 | effect 内命名 target | ✅ | ✅ |
 | `dependencies` 驱动的对象渲染顺序 | ✅ `addObjectToRenderOrder` | ✅ 同款 DFS 后序（2026-10-14） |
 | 场景空间合成目标 | ✅ | 🔴 |
-| bloom（`_rt_Bloom` + 内建 effect 图） | ✅ | 🔴 只解析了 `bloom` 标志，未渲染 |
+| bloom（`_rt_Bloom` + 内建 effect 图） | ✅ | 🔴 只解析标志；语料仅 2 张、强度 0.04/0.16 → 收益小 |
 | fullscreen 图层参与投影尺寸 | ✅ | 🔴 |
 
 置信度：中高（渲染顺序在 `scene_image.c` / `scene.c` 直接可见为 per-type 循环）。
@@ -137,7 +137,7 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
 |---|---|---|
 | 加载 / 循环（`playbackmode`）/ 音量 / mute | ✅ | ✅（SDL_mixer） |
 | 每对象多音源 | ✅ | ✅ |
-| **频谱分析**（喂音频反应 uniform） | ✅ `AudioStream` | 🔴（恒 0） |
+| **频谱分析**（喂音频反应 uniform） | ✅ `AudioStream` | ⚪ 恒 0，但语料**0 个 shader 引用** → 无影响 ✓ |
 | 媒体集成（DBus media source）/ 录音驱动 | ✅ | 🔴 |
 
 ### 3.7 脚本（JS）—— 覆盖 **≈32%**
