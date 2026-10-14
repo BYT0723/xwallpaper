@@ -91,7 +91,7 @@
 
 置信度：中高（渲染顺序在 `scene_image.c` / `scene.c` 直接可见为 per-type 循环）。
 
-### 3.4 粒子系统 —— 覆盖 **≈62%**（差距最大）
+### 3.4 粒子系统 —— 覆盖 **≈72%**（差距最大）
 
 | 能力 | 参考 | 本侧 |
 |---|---|---|
@@ -101,10 +101,11 @@
 | `instantaneous` / `duration` / `delay` / 周期发射 / `limitOnePerFrame` | ✅ | 🔴 |
 | initializer 数量 | **9** | **7** |
 | ↳ `velocityrandom` `sizerandom` `alpharandom` `colorrandom` `rotationrandom` `lifetimerandom` `turbulentvelocityrandom` | ✅ | ✅ |
-| ↳ `angularvelocityrandom` `mapsequencearoundcontrolpoint` | ✅ | 🔴 |
-| operator 数量 | **12** | **5** |
-| ↳ `movement`（gravity/drag）`alphafade` `oscillateposition` `oscillatealpha` `oscillatesize` | ✅ | ✅ |
-| ↳ `angularmovement` `sizechange` `alphachange` `colorchange` `turbulence` `vortex` `controlpointattract` | ✅ | 🔴 |
+| ↳ `angularvelocityrandom` | ✅ | ✅ |
+| ↳ `mapsequencearoundcontrolpoint` | ✅ | 🔴（语料 0 次） |
+| operator 数量 | **12** | **7** |
+| ↳ `movement`（gravity/drag）`alphafade` `oscillateposition` `oscillatealpha` `oscillatesize` `angularmovement` `controlpointattract` | ✅ | ✅ **语料用到的全部已实现** |
+| ↳ `sizechange` `alphachange` `colorchange` `turbulence` `vortex` | ✅ | 🔴（语料中 0 次） |
 | renderer `sprite` / `spritetrail` | ✅ | ✅ |
 | renderer `rope` / `ropetrail` | ✅ | 🔴 |
 | 材质 pass（17 float/顶点：`a_Position/a_TexCoordVec4/a_Color/…`） | ✅ | ✅ `genericparticle` 可编译运行 |
@@ -189,16 +190,16 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
 |---|---|---|---|
 | shader / material 管线 | 90% | 20% | 18.0 |
 | image / effect 运行时 | 78% | 20% | 15.6 |
-| 粒子系统 | 62% | 20% | 12.4 |
+| 粒子系统 | 72% | 20% | 14.4 |
 | 合成与渲染顺序 | 70% | 12% | 8.4 |
 | 脚本 | 32% | 8% | 2.6 |
 | 文本 | 70% | 6% | 4.2 |
 | 相机 | 55% | 5% | 2.75 |
 | 音频 | 60% | 5% | 3.0 |
 | 打包 / 解码 | 85% | 4% | 3.4 |
-| **合计** | | 100% | **≈70.4%** |
+| **合计** | | 100% | **≈72.4%** |
 
-> **总体功能相似度 ≈ 70%（区间 65–75%）**
+> **总体功能相似度 ≈ 72%（区间 65–75%）**
 
 交叉验证（不是同一个数，但方向一致）：
 
@@ -243,6 +244,8 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
   不能只看代码"看起来支持"。
 - **又一次前提证伪（2026-10-14）**：计划中的"相机 eye/lookAt"经验证是**净无操作**（语料恒为
   `center=eye+(0,0,-1)`，与投影的 `translate(eye)` 抵消）→ 不做；同时更正报告里"auto 投影尺寸"的误判（其实已实现）。
+- **2026-10-14 第七批落地**：**`controlpointattract`** —— 至此**语料中实际用到的 operator 全部实现** ✓
+  （movement/alphafade/三个振荡器/angularmovement/controlpointattract；其余 5 个在语料中 0 次 ✓）。
 - **2026-10-14 第六批落地**：**文本 UTF-8 + 多行**（30 个文本对象里 11 个是 CJK ✓，此前会渲染成乱码 ✓）。
 - **2026-10-14 第五批落地**：**文本脚本层**（`update(value)` 每帧驱动文本，真机已验证时钟/日期 ✓）；
   同时记录**新缺口**：文本定位未走画布→窗口映射 ✗（落在左上角）。
