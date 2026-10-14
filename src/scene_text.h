@@ -19,6 +19,7 @@ typedef struct XWTextItem {
   unsigned int tex;
   int w, h;
   int valid;
+  struct XWTextLayer *layer; /* scripted layer, NULL for static text */
 } XWTextItem;
 
 #endif

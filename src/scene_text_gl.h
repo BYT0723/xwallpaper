@@ -14,4 +14,8 @@ int xw_scene_text_draw(XWGl *g, const XWSceneObject *o, const char *dir,
 /* Drop a cached item's texture (e.g. before backend destroy). */
 void xw_text_item_free(XWGl *g, XWTextItem *it);
 
+/* Drop the texture *and* the scripted layer (backend teardown only: a
+ * re-rasterise keeps the layer so its script state survives). */
+void xw_text_item_destroy(XWGl *g, XWTextItem *it);
+
 #endif

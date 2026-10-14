@@ -183,6 +183,8 @@ typedef struct XWTextCfg {
   char font[XW_SCENE_PATH_MAX];
   float size;
   float color[4];
+  /* inline text-layer script (heap, NULL when the layer is static) */
+  char *script;
 } XWTextCfg;
 
 typedef struct XWSoundCfg {

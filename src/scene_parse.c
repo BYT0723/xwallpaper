@@ -1088,6 +1088,18 @@ static int parse_object_at(const char *dir, struct json_object *jo,
         copy_str(o->text.content, sizeof(o->text.content),
                  json_object_get_string(e));
       }
+      /* a scripted layer runs update(value) every frame to produce the text */
+      if (json_object_object_get_ex(v, "script", &e) && e &&
+          json_object_get_type(e) == json_type_string) {
+        const char *src = json_object_get_string(e);
+        if (src && src[0]) {
+          o->text.script = strdup(src);
+          if (!o->text.script) {
+            XW_ERROR_SET(err, 1, "out of memory");
+            return -1;
+          }
+        }
+      }
       /* font, point size and colour are siblings of `text` */
       if (json_object_object_get_ex(jo, "font", &e) && e &&
           json_object_get_type(e) == json_type_string)
@@ -1441,6 +1453,8 @@ void xw_scene_free(XWScene *s) {
   }
   for (int i = 0; i < s->n_objects; i++) {
     XWSceneObject *o = &s->objects[i];
+    free(o->text.script);
+    o->text.script = NULL;
     if (!o->effects) continue;
     for (int e = 0; e < o->n_effects; e++) free(o->effects[e].passes);
     free(o->effects);

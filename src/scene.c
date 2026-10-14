@@ -107,7 +107,7 @@ static void free_texts(XWSceneCtx *c) {
   if (!c || !c->texts)
     return;
   for (i = 0; i < c->n_texts; i++)
-    xw_text_item_free(c->gl, &c->texts[i]);
+    xw_text_item_destroy(c->gl, &c->texts[i]);
   free(c->texts);
   c->texts = NULL;
   c->n_texts = 0;
