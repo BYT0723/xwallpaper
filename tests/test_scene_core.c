@@ -143,6 +143,29 @@ static void test_render_order(void) {
   TEST_CHECK_EQ_INT(order[5], 5);
 }
 
+static void test_text_place(void) {
+  float dx = 0, dy = 0, sc = 0;
+  TEST_BEGIN("text anchors map from the centred canvas into window pixels");
+  /* a 3440x1440 canvas shown in a 1920x1080 window: the canvas centre is the
+   * window centre and the anchor is the text's middle */
+  xw_text_place(0.0f, 0.0f, 3440.0f, 1440.0f, 1920, 1080, &dx, &dy, &sc);
+  TEST_CHECK(dx > 959.0f && dx < 961.0f);
+  TEST_CHECK(dy > 539.0f && dy < 541.0f);
+  TEST_CHECK(sc > 0.74f && sc < 0.76f); /* 1080/1440 */
+  /* Y is up in the canvas and down in the window */
+  xw_text_place(0.0f, 360.0f, 3440.0f, 1440.0f, 1920, 1080, &dx, &dy, &sc);
+  TEST_CHECK(dx > 959.0f && dx < 961.0f);
+  TEST_CHECK(dy > 269.0f && dy < 271.0f);
+  /* a canvas that matches the window maps 1:1 */
+  xw_text_place(0.0f, 0.0f, 1920.0f, 1080.0f, 1920, 1080, &dx, &dy, &sc);
+  TEST_CHECK(dx > 959.0f && dx < 961.0f);
+  TEST_CHECK(dy > 539.0f && dy < 541.0f);
+  TEST_CHECK(sc > 0.99f && sc < 1.01f);
+  /* degenerate canvases fall back to a 1:1 mapping */
+  xw_text_place(10.0f, 20.0f, 0.0f, 0.0f, 1920, 1080, &dx, &dy, &sc);
+  TEST_CHECK(sc > 0.99f && sc < 1.01f);
+}
+
 int main(void) {
   TEST_SUITE("scene_core");
   test_fbo_table();
@@ -152,5 +175,6 @@ int main(void) {
   test_present_bloom();
   test_particle_texture_ratio();
   test_render_order();
+  test_text_place();
   TEST_SUMMARY();
 }

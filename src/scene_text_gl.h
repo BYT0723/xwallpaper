@@ -9,7 +9,8 @@
  * the resolved object alpha). Strict like the image renderer: missing
  * font fails the frame. */
 int xw_scene_text_draw(XWGl *g, const XWSceneObject *o, const char *dir,
-                       XWTextItem *it, float alpha, XWError *err);
+                       const XWSceneCamera *cam, XWTextItem *it, float alpha,
+                       XWError *err);
 
 /* Drop a cached item's texture (e.g. before backend destroy). */
 void xw_text_item_free(XWGl *g, XWTextItem *it);

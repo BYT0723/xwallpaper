@@ -146,3 +146,17 @@ int xw_scene_render_order(const XWSceneObject *objs, int n, int *order,
     render_order_visit(objs, n, i, order, &c, scratch);
   return c;
 }
+
+void xw_text_place(float ox, float oy, float ortho_w, float ortho_h, int win_w,
+                   int win_h, float *dx, float *dy, float *scale) {
+  float sx, sy;
+  if (!dx || !dy || !scale)
+    return;
+  sx = (ortho_w > 0.0f && win_w > 0) ? (float)win_w / ortho_w : 1.0f;
+  sy = (ortho_h > 0.0f && win_h > 0) ? (float)win_h / ortho_h : 1.0f;
+  *dx = (ox * sx) + (float)win_w * 0.5f;
+  *dy = (float)win_h * 0.5f - (oy * sy);
+  /* glyphs rasterise at the canvas' vertical scale (the same squeeze the
+   * camera applies to everything else) */
+  *scale = sy;
+}

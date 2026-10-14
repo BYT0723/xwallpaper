@@ -113,13 +113,25 @@ int main(void) {
   XWTextItem it;
   memset(&it, 0, sizeof(it));
   memset(&err, 0, sizeof(err));
-  TEST_CHECK_EQ_INT(xw_scene_text_draw(gl, &o, dir, &it, 1.0f, &err), 0);
+  /* the anchor is in the scene's centred canvas space; with a canvas the
+   * size of the window it maps 1:1 and lands at the window centre offset */
+  XWSceneCamera cam;
+  memset(&cam, 0, sizeof(cam));
+  cam.ortho_w = (float)w;
+  cam.ortho_h = (float)h;
+  TEST_CHECK_EQ_INT(xw_scene_text_draw(gl, &o, dir, &cam, &it, 1.0f, &err), 0);
   if (err.code != 0)
     TEST_FAIL("draw: %s", err.msg);
   TEST_CHECK_EQ_INT(xw_gl_present(gl), 0);
   XSync(dpy, False);
 
-  XImage *img = XGetImage(dpy, win->win, 200, 150, 200, 100, AllPlanes, ZPixmap);
+  int tx = (int)((float)w * 0.5f + o.origin[0]) - 100;
+  int ty = (int)((float)h * 0.5f - o.origin[1]) - 50;
+  if (tx < 0)
+    tx = 0;
+  if (ty < 0)
+    ty = 0;
+  XImage *img = XGetImage(dpy, win->win, tx, ty, 200, 100, AllPlanes, ZPixmap);
   TEST_CHECK(img != NULL);
   if (img) {
     int bright = 0;

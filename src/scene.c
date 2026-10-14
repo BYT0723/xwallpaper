@@ -451,7 +451,8 @@ static int render_overlays(XWSceneCtx *c, float t, const float *alphas,
                                        a, rerr, &c->scene.camera) < 0)
         return -1;
     } else if (o->type == XW_OBJ_TEXT) {
-      if (xw_scene_text_draw(c->gl, o, c->dir, &c->texts[i], a, rerr) < 0)
+      if (xw_scene_text_draw(c->gl, o, c->dir, &c->scene.camera, &c->texts[i],
+                             a, rerr) < 0)
         return -1;
     }
   }

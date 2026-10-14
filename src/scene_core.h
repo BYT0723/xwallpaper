@@ -52,6 +52,12 @@ float xw_particle_texture_ratio(int tex_w, int tex_h, int real_w, int real_h,
 
 int xw_core_present_uvs(float *u0, float *v0, float *u1, float *v1);
 
+/* Text anchors live in the scene's centred canvas space (Y up, origin at
+ * the canvas centre); map one to window pixels (Y down) and report the
+ * scale to rasterise its glyphs at. */
+void xw_text_place(float ox, float oy, float ortho_w, float ortho_h, int win_w,
+                   int win_h, float *dx, float *dy, float *scale);
+
 /* Dependency-ordered render list. The engine walks the objects in scene
  * order and emits each object's dependencies before it (a DFS post-order),
  * skipping self-references, unknown ids and repeats. Fills `order` with
