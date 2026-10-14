@@ -93,6 +93,7 @@ int xw_scene_particle_render_cam(XWGl *g, const XWSceneObject *o, XWEmitter *e,
       {
         const char *extra[3];
         int nextra = 0;
+        int sheet = 0;
         /* the engine always runs particles through the thick vertex format
          * (velocity + lifetime in a_TexCoordVec4C1), which is our layout */
         extra[nextra++] = "THICKFORMAT";
@@ -118,6 +119,7 @@ int xw_scene_particle_render_cam(XWGl *g, const XWSceneObject *o, XWEmitter *e,
               /* the cached rect is normalised UV already; g_RenderVar1 wants
                * the frame size in the same units */
               extra[nextra++] = "SPRITESHEET";
+              sheet = 1;
               rv1[2] = (float)nframes;
               rv1[0] = fr[2];
               rv1[1] = fr[3];
@@ -128,9 +130,11 @@ int xw_scene_particle_render_cam(XWGl *g, const XWSceneObject *o, XWEmitter *e,
         }
         {
           int tw = 0, th = 0, rw = 0, rh = 0;
-          if (xw_gl_texture_size(g, tex, &tw, &th, &rw, &rh) == 0 && rw > 0 &&
-              rh > 0)
-            rv1[3] = (float)rh / (float)rw;
+          if (xw_gl_texture_size(g, tex, &tw, &th, &rw, &rh) == 0)
+            /* the shader scales the trail's length axis by this; a sheet
+             * wants its per-frame aspect, not the atlas' */
+            rv1[3] = xw_particle_texture_ratio(tw, th, rw, rh, rv1[0], rv1[1],
+                                               sheet);
         }
         for (k = 0; k < nextra; k++) {
           snprintf(combos[ncombos].key, sizeof(combos[ncombos].key), "%s",

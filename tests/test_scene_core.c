@@ -81,6 +81,30 @@ static void test_present_bloom(void) {
   TEST_CHECK_EQ_INT(xw_bloom_enabled(NULL), 0);
 }
 
+static void test_particle_texture_ratio(void) {
+  TEST_BEGIN("sprite-sheet texture ratio is the per-frame aspect");
+  /* drizzle: a 1024x512 atlas of 8 frames, 4x2, so each frame is 256x256 and
+   * the ratio the shader wants is 1.0 - not the atlas' 512/1024 = 0.5, which
+   * would halve the trail's length axis */
+  TEST_CHECK(xw_particle_texture_ratio(1024, 512, 1024, 512, 0.25f, 0.5f, 1) >
+             0.99f);
+  TEST_CHECK(xw_particle_texture_ratio(1024, 512, 1024, 512, 0.25f, 0.5f, 1) <
+             1.01f);
+  /* a plain (non-sheet) texture keeps the real height/width */
+  TEST_CHECK(xw_particle_texture_ratio(512, 256, 512, 256, 0.0f, 0.0f, 0) >
+             0.49f);
+  TEST_CHECK(xw_particle_texture_ratio(512, 256, 512, 256, 0.0f, 0.0f, 0) <
+             0.51f);
+  /* a square plain texture is 1.0 */
+  TEST_CHECK(xw_particle_texture_ratio(256, 256, 256, 256, 0.0f, 0.0f, 0) >
+             0.99f);
+  /* a wide sheet of 2x1 frames on a 512x256 atlas: frames are 256x256 */
+  TEST_CHECK(xw_particle_texture_ratio(512, 256, 512, 256, 0.5f, 1.0f, 1) >
+             0.99f);
+  TEST_CHECK(xw_particle_texture_ratio(512, 256, 512, 256, 0.5f, 1.0f, 1) <
+             1.01f);
+}
+
 int main(void) {
   TEST_SUITE("scene_core");
   test_fbo_table();
@@ -88,5 +112,6 @@ int main(void) {
   test_camera_auto_size();
   test_blend_modes();
   test_present_bloom();
+  test_particle_texture_ratio();
   TEST_SUMMARY();
 }

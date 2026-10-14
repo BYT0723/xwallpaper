@@ -43,6 +43,13 @@ void xw_blend_funcs(XWBlend m, int *srcRGB, int *dstRGB, int *srcA, int *dstA);
 
 int xw_bloom_enabled(const XWSceneCamera *cam);
 
+/* g_RenderVar1.w: the sprite's per-frame aspect ratio, as the engine's
+ * updateParticleRenderVars computes it (atlasH*frameH)/(atlasW*frameW) for a
+ * sprite sheet and realH/realW otherwise. common_particles.h scales the
+ * trail's length axis by it. */
+float xw_particle_texture_ratio(int tex_w, int tex_h, int real_w, int real_h,
+                                float frame_w, float frame_h, int spritesheet);
+
 int xw_core_present_uvs(float *u0, float *v0, float *u1, float *v1);
 
 #endif

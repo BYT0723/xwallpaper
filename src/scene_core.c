@@ -102,3 +102,14 @@ int xw_core_present_uvs(float *u0, float *v0, float *u1, float *v1) {
   if (v1) *v1 = 1.0f;
   return 0;
 }
+
+float xw_particle_texture_ratio(int tex_w, int tex_h, int real_w, int real_h,
+                                float frame_w, float frame_h, int spritesheet) {
+  /* the engine's updateParticleRenderVars: a sprite sheet uses the atlas
+   * dimensions scaled by the frame fractions (i.e. the per-frame aspect),
+   * anything else the real texture's height/width */
+  if (spritesheet && tex_w > 0 && tex_h > 0 && frame_w > 0.0f &&
+      frame_h > 0.0f)
+    return ((float)tex_h * frame_h) / ((float)tex_w * frame_w);
+  return real_w > 0 ? (float)real_h / (float)real_w : 1.0f;
+}
