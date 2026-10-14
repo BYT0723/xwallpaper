@@ -610,3 +610,11 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   单测：UTF-8 解码（ASCII/2/3 字节/空串/畸形 ✓）、多行高度 ✓、CJK 真实字体出墨 ✓（6/6 ✓）。
   **验证限制（如实）**：这些 CJK 对象的基准位置**在画面外** ✗（如 `待解锁功能` 基准 x=7105 →
   窗口 2244 ✗，脚本在菜单打开时才把它移入 ✓）→ **默认状态下无法目视验证** ✓，本轮以单测为准 ✓。
+- **`controlpointattract` operator（2026-10-14 已实现）**：语料 4 处使用（如 `dust_motes_0`：
+  `controlpoint 1 / origin "0 0 0" / scale -1024 / threshold 32` ✓，**负 scale = 排斥** ✓）。
+  语义（照 `CParticle::createControlPointAttractOperator`）：**先 `threshold /= 2`** ✓，
+  `center = controlPoints[cp].position + origin` ✓，对 `0.001 < distance < threshold` 的粒子施加
+  **径向力** `direction * scale * dt * speed` ✓。控制点表按 `controlpoint[]` 的 `id` 落位
+  （引擎把表 resize 到 8 ✓），缺省照 `ObjectParser`：controlpoint 0 / origin (0,0,0) / scale 100 / threshold 1000 ✓。
+  **至此语料中实际用到的 operator 已全部实现** ✓（movement / alphafade / oscillateposition / oscillatealpha /
+  oscillatesize / angularmovement / controlpointattract；其余在语料中 0 次 ✓）。

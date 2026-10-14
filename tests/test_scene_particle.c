@@ -582,6 +582,45 @@ static void test_alpha_fade_defaults(void) {
   xw_emitter_free(&e);
 }
 
+static void test_controlpoint_attract(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg60();
+  int i, pushed = 0;
+  TEST_BEGIN("controlpointattract pushes particles inside threshold/2");
+  c.life = 100.0f;
+  c.origin[0] = c.origin[1] = 0.0f; /* the control point sits at the origin */
+  c.dist_max[0] = c.dist_max[1] = 50.0f; /* spawn within 50px of it */
+  c.vel_min[0] = c.vel_min[1] = 0.0f;
+  c.vel_max[0] = c.vel_max[1] = 0.0f;
+  c.has_cp_attract = 1;
+  c.cp_index = 0;
+  c.n_control_points = 1;
+  c.cp_scale = -100.0f;    /* negative scale pushes away, as the corpus does */
+  c.cp_threshold = 200.0f; /* threshold/2 = a 100px radius: all are inside */
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  TEST_CHECK_EQ_INT(xw_emitter_update(&e, 1.0f / 60.0f), 1);
+  TEST_CHECK(e.alive > 0);
+  for (i = 0; i < e.alive; i++) {
+    float dx = e.parts[i].x, dy = e.parts[i].y;
+    float d = sqrtf(dx * dx + dy * dy);
+    if (d > 0.5f) {
+      /* radial: the velocity points the same way as the offset */
+      TEST_CHECK(dx * e.parts[i].vx + dy * e.parts[i].vy > 0.0f);
+      pushed++;
+    }
+  }
+  TEST_CHECK(pushed >= 1);
+  xw_emitter_free(&e);
+
+  /* a threshold far below the spawn radius leaves the particles alone */
+  c.cp_threshold = 2.0f; /* a 1px radius */
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  TEST_CHECK_EQ_INT(xw_emitter_update(&e, 1.0f / 60.0f), 1);
+  for (i = 0; i < e.alive; i++)
+    TEST_CHECK(e.parts[i].vx == 0.0f && e.parts[i].vy == 0.0f);
+  xw_emitter_free(&e);
+}
+
 int main(void) {
   TEST_SUITE("scene_particle");
   test_spawn_and_die();
@@ -605,6 +644,7 @@ int main(void) {
   test_angular_movement_force();
   test_angular_movement_drag();
   test_alpha_fade_defaults();
+  test_controlpoint_attract();
   test_bad_inputs();
   TEST_SUMMARY();
 }

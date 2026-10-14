@@ -10,6 +10,8 @@
 #define XW_SCENE_CONSTS_MAX 12
 #define XW_SCENE_PASS_TEX_MAX 4
 #define XW_PARTICLE_TEX_MAX 4
+/* the engine resizes its control point table to 8 */
+#define XW_PARTICLE_CP_MAX 8
 
 typedef struct XWSceneConst {
   char key[32];
@@ -174,6 +176,15 @@ typedef struct XWParticleCfg {
    * engine works on a vec3; only the in-plane z spin reaches our quad) */
   int has_angular_movement;
   float am_drag, am_force_z;
+  /* controlpointattract: a radial force on particles within threshold/2 of a
+   * control point (a negative scale pushes them away) */
+  int has_cp_attract;
+  int cp_index;
+  float cp_origin[3];
+  float cp_scale;
+  float cp_threshold;
+  float cp_offsets[XW_PARTICLE_CP_MAX][3];
+  int n_control_points;
   int has_av_random;
   float av_min, av_max, av_exponent;
 } XWParticleCfg;

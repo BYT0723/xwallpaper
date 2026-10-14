@@ -558,6 +558,32 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
       get_vec3(e0, "sign", o->particle.sign);
     }
   }
+  /* the config's control point table: the attract operator adds its origin
+   * to one of these offsets */
+  if (json_object_object_get_ex(cfg, "controlpoint", &w) && w &&
+      json_object_get_type(w) == json_type_array) {
+    int ci;
+    size_t cn = json_object_array_length(w);
+    for (ci = 0; ci < (int)cn && o->particle.n_control_points < XW_PARTICLE_CP_MAX;
+         ci++) {
+      struct json_object *cp = json_object_array_get_idx(w, ci);
+      struct json_object *id = NULL, *off = NULL;
+      int slot = o->particle.n_control_points;
+      if (!cp || json_object_get_type(cp) != json_type_object)
+        continue;
+      if (json_object_object_get_ex(cp, "id", &id) && id &&
+          json_object_get_type(id) == json_type_int)
+        slot = json_object_get_int(id);
+      if (slot < 0 || slot >= XW_PARTICLE_CP_MAX)
+        continue;
+      if (json_object_object_get_ex(cp, "offset", &off) && off &&
+          json_object_get_type(off) == json_type_string)
+        parse_vec_str(json_object_get_string(off),
+                      o->particle.cp_offsets[slot], 3);
+      if (slot + 1 > o->particle.n_control_points)
+        o->particle.n_control_points = slot + 1;
+    }
+  }
   if (json_object_object_get_ex(cfg, "initializer", &w) && w &&
       json_object_get_type(w) == json_type_array) {
     n = json_object_array_length(w);
@@ -725,6 +751,24 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
           osc->freq_max = 10.0f;
           osc->scale_min = 0.8f;
           osc->scale_max = 1.2f;
+        } else if (strcmp(opname, "controlpointattract") == 0) {
+          struct json_object *v = NULL;
+          float ov[3] = {0.0f, 0.0f, 0.0f};
+          o->particle.has_cp_attract = 1;
+          /* ObjectParser defaults: controlpoint 0, origin (0,0,0),
+           * scale 100, threshold 1000 */
+          o->particle.cp_scale = 100.0f;
+          o->particle.cp_threshold = 1000.0f;
+          if (json_object_object_get_ex(it, "controlpoint", &v) && v &&
+              json_object_get_type(v) == json_type_int)
+            o->particle.cp_index = json_object_get_int(v);
+          if (json_object_object_get_ex(it, "scale", &v) && v)
+            o->particle.cp_scale = (float)json_object_get_double(v);
+          if (json_object_object_get_ex(it, "threshold", &v) && v)
+            o->particle.cp_threshold = (float)json_object_get_double(v);
+          get_vec3(it, "origin", ov);
+          memcpy(o->particle.cp_origin, ov, sizeof(ov));
+          continue;
         } else if (strcmp(opname, "angularmovement") == 0) {
           struct json_object *v = NULL;
           float fv[3] = {0.0f, 0.0f, 0.0f};

@@ -493,6 +493,21 @@ int xw_emitter_update(XWEmitter *e, float dt) {
                 (e->cfg.osc_size.scale_min +
                  cv * (e->cfg.osc_size.scale_max - e->cfg.osc_size.scale_min));
     }
+    /* controlpointattract: a radial force for particles within threshold/2
+     * of the control point (the engine halves the threshold first, and a
+     * negative scale pushes them away) */
+    if (e->cfg.has_cp_attract && e->cfg.cp_index >= 0 &&
+        e->cfg.cp_index < e->cfg.n_control_points) {
+      float thr = e->cfg.cp_threshold * 0.5f;
+      float cx = e->cfg.cp_offsets[e->cfg.cp_index][0] + e->cfg.cp_origin[0];
+      float cy = e->cfg.cp_offsets[e->cfg.cp_index][1] + e->cfg.cp_origin[1];
+      float dx = cx - p->x, dy = cy - p->y;
+      float d = sqrtf(dx * dx + dy * dy);
+      if (d > 0.001f && d < thr) {
+        p->vx += (dx / d) * e->cfg.cp_scale * dt * speed;
+        p->vy += (dy / d) * e->cfg.cp_scale * dt * speed;
+      }
+    }
     /* angularmovement: spin by the current angular velocity, accelerate with
      * the force, decay with drag, then wrap the angle (the engine keeps it in
      * (-pi, pi] so the sprite rotation stays well conditioned) */

@@ -490,6 +490,15 @@ static void test_particle_angular_parse(void) {
   TEST_CHECK_EQ_INT(box->has_angular_movement, 1);
   TEST_CHECK(box->am_drag > 0.49f && box->am_drag < 0.51f);
   TEST_CHECK(box->am_force_z > 1.99f && box->am_force_z < 2.01f);
+  /* controlpointattract names a control point; the config's table keeps the
+   * offsets the operator adds its origin to */
+  TEST_CHECK_EQ_INT(box->has_cp_attract, 1);
+  TEST_CHECK_EQ_INT(box->cp_index, 1);
+  TEST_CHECK(box->cp_scale > -1024.1f && box->cp_scale < -1023.9f);
+  TEST_CHECK(box->cp_threshold > 31.9f && box->cp_threshold < 32.1f);
+  TEST_CHECK_EQ_INT(box->n_control_points, 2);
+  TEST_CHECK((int)box->cp_offsets[1][0] == 10);
+  TEST_CHECK((int)box->cp_offsets[1][1] == 20);
   /* the sphere config omits both: the engine defaults to a +-5 rad/s draw
    * with no drag and no force */
   sp = &s.objects[1].particle;
