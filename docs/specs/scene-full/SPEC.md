@@ -530,3 +530,15 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   `v_TexCoord`（vec4）后 `v_TexCoord += uvFrameSize.xyxy`；片元以 `v_TexCoord.xy` 采样并做**帧间混合**。
   我们传的是**量化后的 `frame/nframes`**（能选中同一帧，但**混合恒为 0**），且我们自己的
   `xw_frames[16]` 简化路径与此不同。需逐行核对这条链，确认采样区域是否比引擎更大（覆盖面积差异的来源）。
+- **帧 UV 映射链核对完毕（2026-10-14）：我们是对的 ✓，排除**。引擎 `genericparticle.vert` 里
+  `v_TexCoord.xy = a_TexCoordVec4.xy` 后调 `ComputeSpriteFrame(frac(in_ParticleLifeTime), v_TexCoord, ...)`
+  → `v_TexCoord` 被写成 `(curCol, curRow, nextCol, nextRow)`，再 `uvOffsets *= step(0.001, corner)`、
+  `v_TexCoord += uvOffsets.xyxy` → **四角正好映射到帧矩形** ✓。片元的帧间混合由 `SPRITESHEETBLEND` 控制，
+  该材质（halo_*）**未定义**该 combo → 混合恒 0 ✓，与我们一致 ✓。`v_ScreenCoord = gl_Position.xyw` ✓
+  （自动计算 ✓，REFRACT 采样坐标正确 ✓）。
+- **overbright 代码路径线索（2026-10-14，未决）**：临时把粒子 pass 的 `g_Overbright` 常量改成 1.0 后，
+  稳态贡献**完全不变**（0.00853289 两次一致）→ 说明**材质常量不是经 `pconsts` 生效**的（应走程序的
+  "注释 default 被 material 名覆盖"路径，见 effect 侧做法）。这既是一个**待查的代码路径**，
+  也意味着"参考的斑点几乎不可见"很可能与它**是否/如何应用 1.25** 有关（我们的斑点 = 背景×1.25 ✓ 可见 ✓，
+  而参考近似不可见 ✓）。**下一步建议**：逐粒子对比我们与参考的单颗像素值（而非整帧统计），
+  或直接核对粒子材质常量的应用路径是否与 effect 侧一致。
