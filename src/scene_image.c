@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -140,13 +141,22 @@ void xw_scene_resolve_texture(XWGl *gl, const char *dir, const char *ref,
  * Effect passes that cannot resolve or compile degrade to the base
  * image (or last good pass) instead of dropping the object. */
 static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
-                         float time, float alpha, XWError *err) {
+                         const XWSceneCamera *cam, float time, float alpha,
+                         XWError *err) {
   char path[1152];
   char shpath[1152];
   unsigned int tex = 0, prog = 0, comp = 0, src = 0;
-  int i, e, dst = 1;
+  int i, e, dst = 1, ffb = 0;
   if (o->texture[0]) {
     snprintf(path, sizeof(path), "%.512s/%.400s", dir, o->texture);
+  } else if (o->mat_tex[0] && strncmp(o->mat_tex, "_rt_", 4) == 0) {
+    /* a material sampling a render target: _rt_FullFrameBuffer is the scene
+     * accumulated so far. Such passthrough layers keep their quad full-screen
+     * but see the scene through their own rectangle (composelayer.vert reads
+     * a_Position for v_ScreenCoord); other targets stay skipped. */
+    if (strcmp(o->mat_tex, "_rt_FullFrameBuffer") != 0)
+      return 1;
+    ffb = 1;
   } else if (o->mat_tex[0]) {
     /* real walls: texture name resolved against the material dir */
     if (xw_tex_resolve(dir, o->material, o->mat_tex, path, sizeof(path)) != 0)
@@ -154,7 +164,10 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
   } else {
     return 1;
   }
-  if (xw_gl_upload(gl, path, &tex, err) != 0) {
+  if (ffb) {
+    if (xw_gl_framebuffer_snapshot(gl, &tex) != 0)
+      return 1;
+  } else if (xw_gl_upload(gl, path, &tex, err) != 0) {
     /* undecodable texture skips the object, not the frame */
     memset(err, 0, sizeof(*err));
     return 1;
@@ -167,10 +180,20 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
    * so resolved alpha modulates arbitrary effect chains uniformly. */
   if (xw_gl_bind_target(gl, 0) != 0)
     return -1;
-  if (xw_gl_draw(gl, prog, tex, time) != 0)
+  if (ffb) {
+    if (xw_gl_draw_window_source(gl, prog, tex, time) != 0)
+      return -1;
+  } else if (xw_gl_draw(gl, prog, tex, time) != 0) {
     return -1;
+  }
   if (xw_gl_fbo_texture(gl, 0, &src) != 0)
     return -1;
+  if (ffb) {
+    float ndc[8];
+    xw_scene_object_ndc_rect(o, cam ? cam->ortho_w : 0.0f,
+                             cam ? cam->ortho_h : 0.0f, ndc);
+    xw_gl_set_shader_quad(gl, ndc);
+  }
   for (e = 0; e < o->n_effects; e++) {
     const XWSceneEffect *fx = &o->effects[e];
     int broken = 0;
@@ -315,6 +338,8 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
     if (broken)
       break;
   }
+  if (ffb)
+    xw_gl_set_shader_quad(gl, NULL);
   if (xw_gl_blend_begin(gl, XW_BLEND_TRANSLUCENT) != 0)
     return -1;
   if (xw_gl_bind_target(gl, -1) != 0) {
@@ -332,14 +357,15 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
 /* Draw a single image object. The engine's dependency order decides when it
  * is called; the caller has already bound the destination and cleared. */
 int xw_scene_image_draw(XWGl *gl, const XWSceneObject *o, const char *dir,
-                        float time, float alpha, XWError *err) {
+                        const XWSceneCamera *cam, float time, float alpha,
+                        XWError *err) {
   if (!gl || !o || !dir)
     return -1;
   if (!o->visible || o->type != XW_OBJ_IMAGE)
     return 0;
   if (!o->texture[0] && !o->mat_tex[0])
     return 0;
-  return render_object(gl, o, dir, time, alpha, err);
+  return render_object(gl, o, dir, cam, time, alpha, err);
 }
 
 int xw_scene_image_render(XWGl *gl, const XWScene *scene, const char *dir,
@@ -360,7 +386,7 @@ int xw_scene_image_render(XWGl *gl, const XWScene *scene, const char *dir,
       continue;
     if (!o->texture[0] && !o->mat_tex[0])
       continue;
-    if (xw_scene_image_draw(gl, o, dir, time, a, err) < 0)
+    if (xw_scene_image_draw(gl, o, dir, &scene->camera, time, a, err) < 0)
       return -1;
   }
   return 0;

@@ -264,8 +264,8 @@ tests/test_scene_shader: tests/test_scene_shader.c src/scene_shader.o
 tests/test_scene_glsl: tests/test_scene_glsl.c src/scene_glsl.o
 	$(CC) $(CFLAGS) $(GLSLANG_CFLAGS) -o $@ $< src/scene_glsl.o $(GLSLANG_LIBS)
 
-tests/test_scene_parse: tests/test_scene_parse.c src/scene_parse.o
-	$(CC) $(CFLAGS) $(SCENE_CFLAGS) -o $@ $< src/scene_parse.o $(SCENE_LIBS) -lm
+tests/test_scene_parse: tests/test_scene_parse.c src/scene_parse.o src/scene_shader.o
+	$(CC) $(CFLAGS) $(SCENE_CFLAGS) -o $@ $< src/scene_parse.o src/scene_shader.o $(SCENE_LIBS) -lm
 
 tests/test_scene_core: tests/test_scene_core.c src/scene_core.o
 	$(CC) $(CFLAGS) -o $@ $< src/scene_core.o

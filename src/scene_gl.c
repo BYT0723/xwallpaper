@@ -29,6 +29,12 @@ struct XWGl {
   int w, h;
   GLuint quad_vao;
   GLuint quad_vbo;
+  /* a WE pass may draw the object's rectangle instead of the whole window
+   * (passthrough layers sample the scene through their own rect) */
+  GLuint we_rect_vao;
+  GLuint we_rect_vbo;
+  int quad_rect_on;
+  float quad_rect[8];
   GLuint points_vao;
   GLuint points_vbo;
   GLuint rect_vao;
@@ -297,6 +303,18 @@ int xw_gl_create(XWGl **out, Display *dpy, Window win, int w, int h,
   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
                         (void *)(2 * sizeof(float)));
   glBindVertexArray(0);
+  glGenVertexArrays(1, &g->we_rect_vao);
+  glGenBuffers(1, &g->we_rect_vbo);
+  glBindVertexArray(g->we_rect_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, g->we_rect_vbo);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(quad_verts), quad_verts,
+               GL_DYNAMIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                        (void *)(2 * sizeof(float)));
+  glBindVertexArray(0);
   glGenVertexArrays(1, &g->points_vao);
   glGenBuffers(1, &g->points_vbo);
   glBindVertexArray(g->points_vao);
@@ -342,6 +360,8 @@ void xw_gl_destroy(XWGl *g) {
     glDeleteTextures(2, g->fbo_tex);
     glDeleteBuffers(1, &g->quad_vbo);
     glDeleteVertexArrays(1, &g->quad_vao);
+    glDeleteBuffers(1, &g->we_rect_vbo);
+    glDeleteVertexArrays(1, &g->we_rect_vao);
     glDeleteBuffers(1, &g->points_vbo);
     glDeleteVertexArrays(1, &g->points_vao);
     glDeleteBuffers(1, &g->rect_vbo);
@@ -1189,7 +1209,7 @@ static GLint alpha_location(GLuint prog) {
 }
 
 static int draw_full(XWGl *g, unsigned int prog, unsigned int tex, float time,
-                     float alpha, int use_alpha) {
+                     float alpha, int use_alpha, int flip_invert) {
   GLint sloc, tloc, aloc;
   if (!g || !prog)
     return -1;
@@ -1211,7 +1231,7 @@ static int draw_full(XWGl *g, unsigned int prog, unsigned int tex, float time,
   }
   aloc = glGetUniformLocation(prog, "xw_flip");
   if (aloc >= 0)
-    glUniform1f(aloc, g->flip ? -1.0f : 1.0f);
+    glUniform1f(aloc, ((g->flip != 0) != (flip_invert != 0)) ? -1.0f : 1.0f);
   glBindVertexArray(g->quad_vao);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glBindVertexArray(0);
@@ -1220,12 +1240,12 @@ static int draw_full(XWGl *g, unsigned int prog, unsigned int tex, float time,
 }
 
 int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time) {
-  return draw_full(g, prog, tex, time, 1.0f, 0);
+  return draw_full(g, prog, tex, time, 1.0f, 0, 0);
 }
 
 int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
                      float alpha) {
-  return draw_full(g, prog, tex, time, alpha, 1);
+  return draw_full(g, prog, tex, time, alpha, 1, 0);
 }
 
 int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
@@ -1537,6 +1557,11 @@ int xw_gl_texture_uv_rect(XWGl *g, unsigned int tex, float time,
   return -1;
 }
 
+void xw_gl_set_shader_quad(XWGl *g, const float ndc[8]) {
+  (void)g;
+  (void)ndc;
+}
+
 int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
                        int *rh) {
   (void)g;
@@ -1710,6 +1735,15 @@ int xw_gl_draw_rect_alpha(XWGl *g, unsigned int prog, unsigned int tex,
 int xw_gl_bind_target(XWGl *g, int fbo) {
   (void)g;
   (void)fbo;
+  return -1;
+}
+
+int xw_gl_draw_window_source(XWGl *g, unsigned int prog, unsigned int tex,
+                             float time) {
+  (void)g;
+  (void)prog;
+  (void)tex;
+  (void)time;
   return -1;
 }
 
@@ -1984,11 +2018,52 @@ int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
       glUniform2f(loc, 0.5f / g->w, 0.5f / g->h);
   }
   bind_prog_defaults(g, prog, consts, n_consts);
+  if (g->quad_rect_on) {
+    /* positions from the object's rectangle, uvs stay the full quad so
+     * shaders that build gl_Position from texcoords still fill the target */
+    float v[16];
+    static const float uv[8] = {0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+    int k;
+    for (k = 0; k < 4; k++) {
+      v[k * 4 + 0] = g->quad_rect[k * 2 + 0];
+      v[k * 4 + 1] = g->quad_rect[k * 2 + 1];
+      v[k * 4 + 2] = uv[k * 2 + 0];
+      v[k * 4 + 3] = uv[k * 2 + 1];
+    }
+    glBindVertexArray(g->we_rect_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, g->we_rect_vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(v), v);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindVertexArray(0);
+    glUseProgram(0);
+    return 0;
+  }
   glBindVertexArray(g->quad_vao);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glBindVertexArray(0);
   glUseProgram(0);
   return 0;
+}
+
+/* WE shaders read a_Position to work out where they are in the scene; a
+ * passthrough layer must see its own rectangle, not the whole window. */
+/* Copy a texture whose rows are already in window order (the frame buffer
+ * snapshot): the object pipeline flips once per stage, so the base copy has
+ * to flip the other way for the result to land upright. */
+int xw_gl_draw_window_source(XWGl *g, unsigned int prog, unsigned int tex,
+                             float time) {
+  return draw_full(g, prog, tex, time, 1.0f, 0, 1);
+}
+
+void xw_gl_set_shader_quad(XWGl *g, const float ndc[8]) {
+  if (!g)
+    return;
+  if (!ndc) {
+    g->quad_rect_on = 0;
+    return;
+  }
+  memcpy(g->quad_rect, ndc, 8 * sizeof(float));
+  g->quad_rect_on = 1;
 }
 
 int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,

@@ -870,3 +870,38 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
 
 **修正性质** ✓：此前 `engine.*` 是 `undefined` ✗ → `update` 返回 **NaN** ✗ → 我们跳过并保留基准值 ✓；
 现在能**正确计算** ✓（`value.x = slider * canvasSize.x` ✓、`smoothValue += audioDelta * min(1, frametime*smoothing)` ✓）。
+
+## compose 层（`_rt_FullFrameBuffer`）打通 —— 阻塞点原来是坐标约定（2026-10-14 续 5）
+
+**根因（数据定案）** ✓：`2887099508` 的 5 个 compose 层，**矩形根本不是画布** ✗：
+
+| 对象 | origin | size × scale | 实际矩形 |
+|---|---|---|---|
+| `可调整组合层` | 3229.9, 189.8 | 100×100 × 39.28/9.34 | ≈3928×934 |
+| `yyygggy` | 4967.3, 1655.3 | 100×100 × 15.03/38.17 | ≈1503×3817 |
+| `yanddddddd` | 4246.3, 2177.3 | 1000×800 × 1.30/1.60 | ≈1300×1280 |
+| `ldfk` | 3040, 1710 | 6080×3420 | = 画布 → identity |
+| （`sound line` 被 `visible:false` 隐藏 ✓） | | | |
+
+而 `composelayer` 的语义是：**把对象矩形那块场景拉伸铺满全屏** ✓（`composelayer.vert` 的 `v_ScreenCoord = mul(a_Position, MVP)` ✓）。
+
+**我此前的归因是错的** ✗（曾以为是"特效常数错" ✗）：5 层里 4 层**根本没有特效** ✗ → 真正的原因是
+**我们给 WE 着色器的 `a_Position` 是全屏四边形 + identity/yflip MVP** ✗ → `v_ScreenCoord` = 全屏 NDC ✗
+→ 采样的是整幅场景 ✗ → 整屏被错误覆盖 ✓。
+
+**落地** ✓
+- **`xw_gl_set_shader_quad()`** ✓：让 WE pass 看到 `a_Position` = **对象矩形在 NDC 的四角** ✓（MVP 不变 ✓）→
+  `composelayer` 采样正确 ✓、通用着色器的 `gl_Position` 落在矩形内 ✓、而 `composelayer` 的输出仍由 texcoord 决定=全屏 ✓
+- `xw_scene_object_ndc_rect()` ✓（可测纯函数 ✓，用**声明的 size** ✓ —— 渲染目标材质没有纹理尺寸可回落 ✓，引擎亦如此 ✓）
+- `_rt_FullFrameBuffer` 路径 ✓（窗口快照 ✓ + 反向翻转的基础拷贝 ✓ + 全屏合成 ✓）
+- **引擎资产材质/模型回落** ✓（`slurp_json` → 资产树 ✓）—— 单独落地会回归 `3003908979` ✗，**与矩形四边形一起则不会** ✓✓
+
+**实测（护栏 + 结果）**
+
+| 壁纸 | 基线 | 现在 | 判定 |
+|---|---|---|---|
+| 2178468632（矩形=画布 → identity） | 0.0271178 | **0.0271178** ✓ | **逐位不变** ✓（护栏成立 ✓） |
+| 3003908979 | 0.196064 | **0.196064** ✓ | **逐位不变** ✓（早先"仅回落"的回归 0.2204 ✗ 被修好 ✓） |
+| 2887099508 | 0.320527 | **0.319494** ✓ | **改善** ✓ 且**不再被毁** ✓（此前无矩形四边形时 → 0.28 ✗） |
+
+单测 ✓：`test_object_ndc_rect` ✓（identity 情形 ✓ + `2887099508` 真实数值 ✓）。

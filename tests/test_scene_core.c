@@ -220,6 +220,43 @@ static void test_object_rect(void) {
   TEST_CHECK_EQ_INT(h, 1080);
 }
 
+static void test_object_ndc_rect(void) {
+  XWSceneObject o;
+  float ndc[8];
+  TEST_BEGIN("passthrough layers see their own rectangle in NDC");
+  /* a canvas-sized object centred on a matching canvas is the identity, which
+   * is why the compose layers of 2178468632 do not move the frame */
+  memset(&o, 0, sizeof(o));
+  o.scale[0] = o.scale[1] = 1.0f;
+  o.size[0] = 1920.0f;
+  o.size[1] = 1080.0f;
+  o.origin[0] = 960.0f;
+  o.origin[1] = 540.0f;
+  xw_scene_object_ndc_rect(&o, 1920.0f, 1080.0f, ndc);
+  TEST_CHECK(ndc[0] > -1.001f && ndc[0] < -0.999f);
+  TEST_CHECK(ndc[1] > -1.001f && ndc[1] < -0.999f);
+  TEST_CHECK(ndc[6] > 0.999f && ndc[6] < 1.001f);
+  TEST_CHECK(ndc[7] > 0.999f && ndc[7] < 1.001f);
+  /* 2887099508's "adjustable compose layer": size 100x100 scaled to about
+   * 3928x934, sitting near the bottom-left of a 6080x3420 canvas */
+  memset(&o, 0, sizeof(o));
+  o.size[0] = 100.0f;
+  o.size[1] = 100.0f;
+  o.scale[0] = 39.28412f;
+  o.scale[1] = 9.338f;
+  o.origin[0] = 3229.89136f;
+  o.origin[1] = 189.82330f;
+  xw_scene_object_ndc_rect(&o, 6080.0f, 3420.0f, ndc);
+  TEST_CHECK(ndc[0] > -0.60f && ndc[0] < -0.57f);
+  TEST_CHECK(ndc[2] > 0.69f && ndc[2] < 0.72f);
+  TEST_CHECK(ndc[1] > -1.18f && ndc[1] < -1.14f); /* below the canvas */
+  TEST_CHECK(ndc[5] > -0.63f && ndc[5] < -0.60f);
+  /* a degenerate canvas falls back to the whole quad */
+  xw_scene_object_ndc_rect(&o, 0.0f, 0.0f, ndc);
+  TEST_CHECK(ndc[0] > -1.001f && ndc[0] < -0.999f);
+  TEST_CHECK(ndc[7] > 0.999f && ndc[7] < 1.001f);
+}
+
 int main(void) {
   TEST_SUITE("scene_core");
   test_fbo_table();
@@ -231,5 +268,6 @@ int main(void) {
   test_render_order();
   test_text_place();
   test_object_rect();
+  test_object_ndc_rect();
   TEST_SUMMARY();
 }

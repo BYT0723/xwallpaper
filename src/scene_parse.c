@@ -8,6 +8,7 @@
 #endif
 
 #include "scene_parse.h"
+#include "scene_shader.h"
 
 static void copy_str(char *dst, size_t n, const char *src) {
   if (!dst || n == 0) return;
@@ -953,8 +954,17 @@ static struct json_object *slurp_json(const char *dir, const char *rel) {
     return NULL;
   snprintf(path, sizeof(path), "%s/%s", dir, rel);
   f = fopen(path, "rb");
-  if (!f)
-    return NULL;
+  if (!f) {
+    /* engine assets such as the util models and materials live outside the
+     * wallpaper, so fall back to the assets tree the shaders already use */
+    const char *assets = xw_shader_assets_dir();
+    if (!assets || !assets[0])
+      return NULL;
+    snprintf(path, sizeof(path), "%s/%s", assets, rel);
+    f = fopen(path, "rb");
+    if (!f)
+      return NULL;
+  }
   fseek(f, 0, SEEK_END);
   sz = ftell(f);
   rewind(f);

@@ -66,6 +66,12 @@ void xw_scene_object_rect(const XWSceneObject *o, int tex_w, int tex_h,
                           float ortho_w, float ortho_h, int win_w, int win_h,
                           int *x, int *y, int *w, int *h);
 
+/* The same rectangle in NDC (the space WE shaders read a_Position in), with
+ * corners in the order a full-screen quad uses: (-1,-1), (1,-1), (-1,1),
+ * (1,1). Passthrough layers sample the scene through their own rectangle. */
+void xw_scene_object_ndc_rect(const XWSceneObject *o, float ortho_w,
+                              float ortho_h, float ndc[8]);
+
 /* Dependency-ordered render list. The engine walks the objects in scene
  * order and emits each object's dependencies before it (a DFS post-order),
  * skipping self-references, unknown ids and repeats. Fills `order` with

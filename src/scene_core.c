@@ -185,3 +185,36 @@ void xw_scene_object_rect(const XWSceneObject *o, int tex_w, int tex_h,
   if (h)
     *h = (int)floorf(qh * sy + 0.5f);
 }
+
+void xw_scene_object_ndc_rect(const XWSceneObject *o, float ortho_w,
+                              float ortho_h, float ndc[8]) {
+  float hw, hh, cx, cy;
+  if (!ndc)
+    return;
+  if (!o || ortho_w <= 0.0f || ortho_h <= 0.0f) {
+    ndc[0] = -1.0f;
+    ndc[1] = -1.0f;
+    ndc[2] = 1.0f;
+    ndc[3] = -1.0f;
+    ndc[4] = -1.0f;
+    ndc[5] = 1.0f;
+    ndc[6] = 1.0f;
+    ndc[7] = 1.0f;
+    return;
+  }
+  /* the scene's own size decides the quad here: a render-target material has
+   * no texture dimensions to fall back on, and the engine uses the object's
+   * declared size for it */
+  hw = o->size[0] * o->scale[0] * 0.5f / (ortho_w * 0.5f);
+  hh = o->size[1] * o->scale[1] * 0.5f / (ortho_h * 0.5f);
+  cx = (o->origin[0] - ortho_w * 0.5f) / (ortho_w * 0.5f);
+  cy = (o->origin[1] - ortho_h * 0.5f) / (ortho_h * 0.5f);
+  ndc[0] = cx - hw;
+  ndc[1] = cy - hh;
+  ndc[2] = cx + hw;
+  ndc[3] = cy - hh;
+  ndc[4] = cx - hw;
+  ndc[5] = cy + hh;
+  ndc[6] = cx + hw;
+  ndc[7] = cy + hh;
+}

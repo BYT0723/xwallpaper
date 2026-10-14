@@ -141,6 +141,11 @@ int xw_gl_clear(XWGl *g, float r, float gg, float b);
 /* Draw the fullscreen quad with prog/tex/time. */
 int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time);
 
+/* Like xw_gl_draw but for a source already in window order (the frame buffer
+ * snapshot), so the flip is inverted once. */
+int xw_gl_draw_window_source(XWGl *g, unsigned int prog, unsigned int tex,
+                             float time);
+
 /* Like draw, also binding xw_alpha when the program declares it. */
 int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
                      float alpha);
@@ -160,6 +165,10 @@ int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
                   const XWSceneConst *consts, int n_consts, float time);
 
 /* Pixel dims of a cached texture (texW/texH, realW/realH). */
+/* Make WE shader passes see a_Position as this rectangle (4 corners, NDC,
+ * xy pairs) instead of the whole window; NULL restores the full quad. */
+void xw_gl_set_shader_quad(XWGl *g, const float ndc[8]);
+
 int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
                        int *rh);
 
