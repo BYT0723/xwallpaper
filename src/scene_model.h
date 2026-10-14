@@ -204,6 +204,16 @@ typedef struct XWSoundCfg {
   int loop;
 } XWSoundCfg;
 
+/* scripted transform properties: the engine re-runs each property's
+ * `update(value)` every frame and keeps what it returns */
+enum {
+  XW_PROP_ORIGIN = 0,
+  XW_PROP_SCALE,
+  XW_PROP_SIZE,
+  XW_PROP_VISIBLE,
+  XW_PROP_COUNT
+};
+
 typedef struct XWSceneObject {
   char id[XW_SCENE_ID_MAX];
   XWObjType type;
@@ -226,6 +236,8 @@ typedef struct XWSceneObject {
   XWSoundCfg sound;
   XWSceneEffect *effects;
   int n_effects;
+  /* the `script` source of each scripted property, NULL for plain values */
+  char *prop_script[XW_PROP_COUNT];
 } XWSceneObject;
 
 typedef struct XWSceneCamera {

@@ -21,6 +21,11 @@ typedef struct XWTimer {
   JSValue func;
 } XWTimer;
 
+/* one runner per scripted property per object, built lazily */
+typedef struct XWObjPropRunners {
+  XWPropScript *p[XW_PROP_COUNT];
+} XWObjPropRunners;
+
 struct XWScript {
   JSRuntime *rt;
   JSContext *ctx;
@@ -41,6 +46,8 @@ struct XWScript {
   int noverrides;
   int override_cap;
   float mouse_x, mouse_y;
+  XWObjPropRunners *objr;
+  int objr_n;
 };
 
 static uint64_t mono_ms(void) {
@@ -539,6 +546,12 @@ void xw_script_destroy(XWScript *s) {
     return;
   for (int i = 0; i < s->ntimers; i++) JS_FreeValue(s->ctx, s->timers[i].func);
   free(s->timers);
+  if (s->objr) {
+    for (int i = 0; i < s->objr_n; i++)
+      for (int k = 0; k < XW_PROP_COUNT; k++)
+        xw_script_prop_free(s->objr[i].p[k]);
+    free(s->objr);
+  }
   free(s->overrides);
   JS_FreeContext(s->ctx);
   JS_FreeRuntime(s->rt);
@@ -646,6 +659,14 @@ const char *xw_script_last_error(const XWScript *s) {
 int xw_script_set_scene(XWScript *s, XWScene *scene) {
   if (!s)
     return -1;
+  if (s->scene != scene && s->objr) {
+    for (int i = 0; i < s->objr_n; i++)
+      for (int k = 0; k < XW_PROP_COUNT; k++)
+        xw_script_prop_free(s->objr[i].p[k]);
+    free(s->objr);
+    s->objr = NULL;
+    s->objr_n = 0;
+  }
   s->scene = scene;
   return 0;
 }
@@ -956,6 +977,106 @@ int xw_script_prop_update(XWPropScript *p, const float in[3], float out3[3]) {
   }
   JS_FreeValue(p->js->ctx, res);
   return rc;
+}
+
+/* Boolean-valued properties (visible) hand update() a plain boolean. */
+int xw_script_prop_update_bool(XWPropScript *p, int in, int *out) {
+  JSValue global, res;
+  int rc = -1;
+  if (!p || !p->js || !out)
+    return -1;
+  global = JS_GetGlobalObject(p->js->ctx);
+  JS_SetPropertyStr(p->js->ctx, global, "__propValue",
+                    JS_NewBool(p->js->ctx, in ? 1 : 0));
+  JS_FreeValue(p->js->ctx, global);
+  if (xw_script_eval(p->js,
+                     "if (typeof update === 'function') {\n"
+                     "  var __r = update(__propValue);\n"
+                     "  if (__r !== undefined && __r !== null) __propValue = __r;\n"
+                     "} else { throw new Error('no update'); }\n",
+                     "prop-bool.js", NULL) != 0)
+    return -1;
+  global = JS_GetGlobalObject(p->js->ctx);
+  res = JS_GetPropertyStr(p->js->ctx, global, "__propValue");
+  if (JS_IsBool(res)) {
+    *out = JS_ToBool(p->js->ctx, res) ? 1 : 0;
+    rc = 0;
+  }
+  JS_FreeValue(p->js->ctx, res);
+  JS_FreeValue(p->js->ctx, global);
+  return rc;
+}
+
+/* Run an object's scripted transform properties for this frame. Scripts that
+ * throw, or that declare no update(), leave the parsed value alone. */
+void xw_script_apply_object_props(XWScript *s, XWSceneObject *o) {
+  XWObjPropRunners *r;
+  float in3[3], out3[3];
+  int i, k;
+  if (!s || !o || !s->scene || !s->scene->objects)
+    return;
+  i = (int)(o - s->scene->objects);
+  if (i < 0 || i >= s->scene->n_objects)
+    return;
+  if (!s->objr || s->objr_n != s->scene->n_objects) {
+    XWObjPropRunners *nr;
+    if (s->objr) {
+      for (int j = 0; j < s->objr_n; j++)
+        for (int q = 0; q < XW_PROP_COUNT; q++)
+          xw_script_prop_free(s->objr[j].p[q]);
+      free(s->objr);
+    }
+    nr = calloc((size_t)s->scene->n_objects, sizeof(*nr));
+    if (!nr) {
+      s->objr = NULL;
+      s->objr_n = 0;
+      return;
+    }
+    s->objr = nr;
+    s->objr_n = s->scene->n_objects;
+  }
+  r = &s->objr[i];
+  for (k = 0; k < XW_PROP_COUNT; k++) {
+    if (!o->prop_script[k] || !o->prop_script[k][0])
+      continue;
+    if (!r->p[k]) {
+      XWError err = {0};
+      if (xw_script_prop_create(&r->p[k], o->prop_script[k], &err) != 0) {
+        /* a script we cannot even compile never runs again */
+        r->p[k] = NULL;
+        o->prop_script[k][0] = '\0';
+        continue;
+      }
+    }
+    if (k == XW_PROP_VISIBLE) {
+      int b = o->visible;
+      if (xw_script_prop_update_bool(r->p[k], o->visible, &b) == 0)
+        o->visible = b;
+      continue;
+    }
+    in3[0] = (k == XW_PROP_ORIGIN)   ? o->origin[0]
+             : (k == XW_PROP_SCALE)  ? o->scale[0]
+                                     : o->size[0];
+    in3[1] = (k == XW_PROP_ORIGIN)   ? o->origin[1]
+             : (k == XW_PROP_SCALE)  ? o->scale[1]
+                                     : o->size[1];
+    in3[2] = 0.0f;
+    out3[0] = in3[0];
+    out3[1] = in3[1];
+    out3[2] = 0.0f;
+    if (xw_script_prop_update(r->p[k], in3, out3) != 0)
+      continue;
+    if (k == XW_PROP_ORIGIN) {
+      o->origin[0] = out3[0];
+      o->origin[1] = out3[1];
+    } else if (k == XW_PROP_SCALE) {
+      o->scale[0] = out3[0];
+      o->scale[1] = out3[1];
+    } else {
+      o->size[0] = out3[0];
+      o->size[1] = out3[1];
+    }
+  }
 }
 
 void xw_script_prop_free(XWPropScript *p) {

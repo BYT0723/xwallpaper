@@ -71,7 +71,14 @@ int xw_script_prop_create(XWPropScript **out, const char *src, XWError *err);
 /* Run update() with `in`; fills out3 and returns 0, or returns -1 when the
  * script throws or returns nothing (the caller then keeps its value). */
 int xw_script_prop_update(XWPropScript *p, const float in[3], float out3[3]);
+/* Boolean-valued properties (visible) hand update() a plain boolean. */
+int xw_script_prop_update_bool(XWPropScript *p, int in, int *out);
 void xw_script_prop_free(XWPropScript *p);
+
+/* Run an object's scripted transform properties for this frame (origin,
+ * scale, size, visible). Scripts that throw or declare no update() leave the
+ * parsed value alone. */
+void xw_script_apply_object_props(XWScript *s, XWSceneObject *o);
 
 /* Read a string global (a missing/non-string name returns -1). */
 int xw_script_get_string(XWScript *s, const char *name, char *out, size_t n);

@@ -396,10 +396,16 @@ static int paint_gl(XWSceneCtx *c) {
       alphas = malloc(sizeof(float) * (size_t)n);
       if (!alphas)
         return -1;
-      for (i = 0; i < n; i++)
+      for (i = 0; i < n; i++) {
+        /* scripted transform properties run once per frame, before the
+         * object is drawn, so visibility and placement see this frame's
+         * values */
+        if (c->script)
+          xw_script_apply_object_props(c->script, &c->scene.objects[i]);
         alphas[i] = c->script ? xw_script_resolve_alpha(
                                     c->script, &c->scene.objects[i])
                               : 1.0f;
+      }
     }
     xw_gl_frame_begin(c->gl);
     if (xw_gl_bind_target(c->gl, -1) != 0)

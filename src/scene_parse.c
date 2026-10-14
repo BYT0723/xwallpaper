@@ -67,6 +67,18 @@ static struct json_object *unwrap_scripted(struct json_object *a) {
   return a;
 }
 
+/* The `script` source of a scripted property ({"script": .., "value": ..}),
+ * or NULL when the property is a plain value. */
+static char *script_of(struct json_object *a) {
+  struct json_object *sv = NULL;
+  if (!a || json_object_get_type(a) != json_type_object)
+    return NULL;
+  if (!json_object_object_get_ex(a, "script", &sv) || !sv ||
+      json_object_get_type(sv) != json_type_string)
+    return NULL;
+  return strdup(json_object_get_string(sv));
+}
+
 static int get_vec2(struct json_object *o, const char *key, float *x, float *y,
                     float dx, float dy) {
   struct json_object *a = NULL;
@@ -1056,6 +1068,16 @@ static int parse_object_at(const char *dir, struct json_object *jo,
     XW_ERROR_SET(err, 1, "object origin/scale/size must be [x, y]");
     return -1;
   }
+  {
+    static const char *const prop_names[XW_PROP_COUNT] = {"origin", "scale",
+                                                          "size", "visible"};
+    int pi;
+    for (pi = 0; pi < XW_PROP_COUNT; pi++) {
+      struct json_object *a = NULL;
+      if (json_object_object_get_ex(jo, prop_names[pi], &a) && a)
+        o->prop_script[pi] = script_of(a);
+    }
+  }
   if (json_object_object_get_ex(jo, "visible", &v) && v) {
     if (json_object_get_type(v) == json_type_object) {
       /* real walls: {"user": ..., "value": bool} toggle */
@@ -1499,6 +1521,10 @@ void xw_scene_free(XWScene *s) {
     XWSceneObject *o = &s->objects[i];
     free(o->text.script);
     o->text.script = NULL;
+    for (int k = 0; k < XW_PROP_COUNT; k++) {
+      free(o->prop_script[k]);
+      o->prop_script[k] = NULL;
+    }
     if (!o->effects) continue;
     for (int e = 0; e < o->n_effects; e++) free(o->effects[e].passes);
     free(o->effects);

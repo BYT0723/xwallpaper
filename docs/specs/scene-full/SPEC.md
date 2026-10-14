@@ -794,3 +794,27 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
    → 3003908979 变差 ✗ → 必须与 util 材质语义（solidlayer/passthrough ✓）一起做 ✓。
 
 **本次全部回退** ✓（`xw_scene_object_rect` + 单测已在上一提交落地 ✓）。**下一步顺序**：属性求值 → compose 层 → 摆放。
+
+## 属性求值接线（2026-10-14 续 2）
+
+**落地** ✓：对象脚本化属性（`origin`/`scale`/`size`/`visible`）现在**每帧求值并写回对象** ✓。
+
+- 解析端保留每个属性的 `script` 源码 ✓（`XWSceneObject::prop_script[]` ✓，`script_of()` ✓，随对象释放 ✓）
+- 脚本层持有**每对象每属性**的运行器缓存 ✓（`XWObjPropRunners` ✓，`set_scene` 换场景时丢弃 ✓）
+- `xw_script_apply_object_props()` ✓ 在渲染前逐帧调用 ✓；`visible` 传**布尔** ✓（`xw_script_prop_update_bool` ✓），
+  抛错或无 `update()` 的脚本**保留解析值** ✓
+- 单测：`tests/test_scene_script.c::test_apply_object_props` ✓（含"抛错不改值" ✓ 与"以上一帧值为输入继续" ✓）
+
+**实测（变更前 vs 变更后，`XW_FIXED_TIME` 25 帧）**
+
+| 壁纸 | 差异 |
+|---|---|
+| 2178468632 / 2887099508 | **0** ✓（后者的 27 个脚本被混淆、需 `thisScene` ✓） |
+| 2794098047 | 0.00021 ✓ |
+| 3422426571 | 0.00198 ✓ |
+
+**验证了脚本产出的正确性** ✓：`2794098047` 的"秒数"用 `new Date().getSeconds()/60` 驱动 scale ✓；
+"音频"用 `scriptProperties` 滑块把 origin.y 从陈旧的 **238 修正为 768** ✓。
+
+**收益仍受两道门限制** ✗：`origin/scale/size` 要等**摆放** ✓；`visible` 的脚本（`3808922316`/`2887099508` ✓）
+需要 **`thisScene.getLayer/getLayerIndex/sortLayer`** ✓ —— 这是下一个增量 ✓。

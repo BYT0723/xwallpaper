@@ -416,6 +416,51 @@ static void test_prop_scripts(void) {
   TEST_CHECK(p == NULL);
 }
 
+/* The render loop runs an object's scripted transform properties once per
+ * frame; the values it writes are what the object is drawn with. */
+static void test_apply_object_props(void) {
+  XWScript *s = make_engine();
+  XWScene sc;
+  XWSceneObject o;
+  TEST_BEGIN("scripted origin and visible drive the object each frame");
+  TEST_CHECK(s != NULL);
+  if (!s)
+    return;
+  memset(&sc, 0, sizeof(sc));
+  memset(&o, 0, sizeof(o));
+  o.origin[0] = 10.0f;
+  o.origin[1] = 20.0f;
+  o.scale[0] = 3.0f;
+  o.visible = 1;
+  o.prop_script[XW_PROP_ORIGIN] = strdup(
+      "export function update(value) {"
+      "  return { x: value.x + 100, y: value.y * 2, z: 0 };"
+      "}");
+  o.prop_script[XW_PROP_VISIBLE] = strdup(
+      "export function update(value) { return !value; }");
+  /* a script that throws must leave the parsed value alone */
+  o.prop_script[XW_PROP_SCALE] = strdup(
+      "export function update(v) { throw new Error('boom'); }");
+  sc.objects = &o;
+  sc.n_objects = 1;
+  xw_script_set_scene(s, &sc);
+  xw_script_apply_object_props(s, &o);
+  TEST_CHECK(o.origin[0] > 109.9f && o.origin[0] < 110.1f);
+  TEST_CHECK(o.origin[1] > 39.9f && o.origin[1] < 40.1f);
+  TEST_CHECK_EQ_INT(o.visible, 0);
+  TEST_CHECK(o.scale[0] > 2.99f && o.scale[0] < 3.01f);
+  /* it keeps running from the previous frame's value */
+  xw_script_apply_object_props(s, &o);
+  TEST_CHECK(o.origin[0] > 209.9f && o.origin[0] < 210.1f);
+  TEST_CHECK_EQ_INT(o.visible, 1);
+  xw_script_set_scene(s, NULL);
+  for (int k = 0; k < XW_PROP_COUNT; k++) {
+    free(o.prop_script[k]);
+    o.prop_script[k] = NULL;
+  }
+  xw_script_destroy(s);
+}
+
 int main(void) {
   TEST_SUITE("scene_script");
   test_eval_arithmetic();
@@ -428,5 +473,6 @@ int main(void) {
   test_mouse_and_no_scene();
   test_text_layer();
   test_prop_scripts();
+  test_apply_object_props();
   TEST_SUMMARY();
 }
