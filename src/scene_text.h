@@ -7,6 +7,10 @@
  * white RGB with coverage alpha. Content is bytes (Latin-1 codepoints;
  * multi-byte UTF-8 is out of scope for now). Size clamps to 4..256px.
  * Empty content yields a blank 2x2 buffer. Caller frees *rgba. */
+/* Decode one UTF-8 code point: returns the bytes consumed (0 at the end of
+ * the string, 1 for a malformed lead byte so the caller can skip it). */
+int xw_utf8_next(const char *s, unsigned int *cp);
+
 int xw_text_rasterize(const char *font_path, const char *content, float size_px,
                       unsigned char **rgba, int *w, int *h, XWError *err);
 
