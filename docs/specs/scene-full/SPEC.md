@@ -627,3 +627,8 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   - **`fullscreen` 对象：语料中 0 个** ✓ → 报告里的"fullscreen 图层"一行实为**无实际影响** ✓。
   - **文本排版是剩余可见项** ✓：对齐分布为 `center/center` 18 个 ✓、**`h=left` 8 个** ✗（我们会画成居中 ✗）、
     `maxwidth` 30 个 ✗、`padding` 29 个 ✗ → 下一步做**文本水平对齐 + padding + maxwidth 折行** ✓。
+- **文本排版无需实现（2026-10-14 核实）**：参考 `CText.cpp:234` 明确写着
+  `// multi-line wrapping, alignment, and padding come with Phase 2.` → **参考自己也没实现** ✗✓。
+  因此对齐（8 个 `h=left`）/`padding`(29)/`maxwidth`(30) **不是与基准的差距** ✓，实现反而会**偏离基准** ✗。
+  同类的还有 `camerafade`（参考只给脚本 ✓）。**教训：动手前先确认"参考是否做了"，否则会做超出基准的工作。**
+- **收尾核查（2026-10-14）**：语料 **9 张壁纸全部渲染成功**（0 失败 ✓），抽查三张画面正常 ✓。

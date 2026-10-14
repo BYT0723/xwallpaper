@@ -121,15 +121,15 @@
 （`rotationrandom`×3、`alpharandom`×2、`randomframe`×2、`colorrandom`×1、`turbulentvelocityrandom`×1；
 oscillators / ropetrail / children / controlpoint offset 全为 0）——所以**多数壁纸不受影响**。
 
-### 3.5 文本 —— 覆盖 **≈70%**
+### 3.5 文本 —— 覆盖 **≈80%**
 
 | 能力 | 参考 | 本侧 |
 |---|---|---|
 | font / size / color / content | ✅ | ✅（FreeType 光栅化；**格式曾不匹配真实数据，2026-10-14 已修**） |
 | **script layer**（JS 驱动文本内容） | ✅ `CText::initScriptLayer` | ✅ `update(value)` 每帧驱动（2026-10-14） |
 | UTF-8 / CJK shaping | ✅ | ✅ UTF-8 码点 + 多行（2026-10-14）；复杂脚本 shaping 仍未做 |
-| 对齐 / 锚点 / 换行 / maxwidth | ✅ | 🔴 |
-| 富文本标记 | ✅ | 🔴 |
+| 对齐 / 锚点 / 换行 / maxwidth | ✅ | ⚪ **参考亦未实现**（`CText.cpp:234` Phase 2 TODO）→ 非差距 |
+| 富文本标记 | ✅ | 🔴（参考亦无） |
 
 ### 3.6 音频 —— 覆盖 **≈60%**
 
@@ -193,13 +193,13 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
 | 粒子系统 | 72% | 20% | 14.4 |
 | 合成与渲染顺序 | 70% | 12% | 8.4 |
 | 脚本 | 32% | 8% | 2.6 |
-| 文本 | 70% | 6% | 4.2 |
+| 文本 | 80% | 6% | 4.8 |
 | 相机 | 55% | 5% | 2.75 |
 | 音频 | 60% | 5% | 3.0 |
 | 打包 / 解码 | 85% | 4% | 3.4 |
-| **合计** | | 100% | **≈72.4%** |
+| **合计** | | 100% | **≈73.0%** |
 
-> **总体功能相似度 ≈ 72%（区间 65–75%）**
+> **总体功能相似度 ≈ 73%（区间 68–78%）**
 
 交叉验证（不是同一个数，但方向一致）：
 
@@ -244,6 +244,8 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
   不能只看代码"看起来支持"。
 - **又一次前提证伪（2026-10-14）**：计划中的"相机 eye/lookAt"经验证是**净无操作**（语料恒为
   `center=eye+(0,0,-1)`，与投影的 `translate(eye)` 抵消）→ 不做；同时更正报告里"auto 投影尺寸"的误判（其实已实现）。
+- **2026-10-14 收尾核查**：语料 9 张壁纸**全部渲染成功** ✓；核实**文本排版与 `camerafade` 参考亦未实现** ✓
+  → 不列为差距 ✓（避免做超出基准的工作）。
 - **2026-10-14 第七批落地**：**`controlpointattract`** —— 至此**语料中实际用到的 operator 全部实现** ✓
   （movement/alphafade/三个振荡器/angularmovement/controlpointattract；其余 5 个在语料中 0 次 ✓）。
 - **2026-10-14 第六批落地**：**文本 UTF-8 + 多行**（30 个文本对象里 11 个是 CJK ✓，此前会渲染成乱码 ✓）。
