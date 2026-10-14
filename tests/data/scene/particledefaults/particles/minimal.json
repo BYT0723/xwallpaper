@@ -1,0 +1,21 @@
+{
+    "emitter": [
+        {
+            "distancemax": "1024 512 0",
+            "id": 6,
+            "name": "boxrandom"
+        }
+    ],
+    "material": "materials/particle/dust.json",
+    "operator": [
+        {
+            "name": "movement"
+        }
+    ],
+    "renderer": [
+        {
+            "name": "sprite"
+        }
+    ],
+    "starttime": 1
+}

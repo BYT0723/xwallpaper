@@ -969,6 +969,14 @@ static int parse_object_at(const char *dir, struct json_object *jo,
     XW_ERROR_SET(err, 1, "object alpha must be a number or {user,expression}");
     return -1;
   }
+  /* engine defaults (ObjectParser::parseParticle / parseParticleEmitter):
+   * an emitter with no rate still emits 10/s, a config with no maxcount
+   * still pools 100 particles and an omitted animationmode is "sequence".
+   * Without the first two the pool is empty and the system stays invisible. */
+  o->particle.rate = 10.0f;
+  o->particle.max_count = 100;
+  copy_str(o->particle.animation_mode, sizeof(o->particle.animation_mode),
+           "sequence");
   if (json_object_object_get_ex(jo, "emitter", &v) && v) {
     if (json_object_get_type(v) != json_type_object) {
       XW_ERROR_SET(err, 1, "emitter must be an object");

@@ -424,6 +424,30 @@ static void test_emitter_geometry(void) {
   xw_scene_free(&s);
 }
 
+static void test_particle_defaults(void) {
+  XWScene s;
+  XWError err = {0};
+  const XWParticleCfg *p;
+  TEST_BEGIN("particle config defaults match the engine (rate 10, maxcount 100)");
+  memset(&s, 0, sizeof(s));
+  TEST_CHECK_EQ_INT(xw_scene_parse("tests/data/scene/particledefaults", &s, &err), 0);
+  TEST_CHECK_EQ_INT(s.n_objects, 1);
+  if (s.n_objects != 1) {
+    xw_scene_free(&s);
+    return;
+  }
+  p = &s.objects[0].particle;
+  TEST_CHECK_EQ_INT(s.objects[0].type, XW_OBJ_PARTICLE);
+  /* ObjectParser::parseParticleEmitter defaults an omitted rate to 10 and
+   * parseParticle defaults maxcount to 100; without them the emitter has an
+   * empty pool and the whole system is invisible */
+  TEST_CHECK(p->rate > 9.99f && p->rate < 10.01f);
+  TEST_CHECK_EQ_INT(p->max_count, 100);
+  /* an omitted animationmode is "sequence" */
+  TEST_CHECK_EQ_STR(p->animation_mode, "sequence");
+  xw_scene_free(&s);
+}
+
 int main(void) {
   TEST_SUITE("scene_parse");
   test_parse_fixture();
@@ -437,5 +461,6 @@ int main(void) {
   test_scripted_vec_props();
   test_turbulent_parse();
   test_emitter_geometry();
+  test_particle_defaults();
   TEST_SUMMARY();
 }

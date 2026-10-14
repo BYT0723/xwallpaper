@@ -1,0 +1,33 @@
+{
+    "camera": {
+        "center": "0.000 0.000 -1.000",
+        "eye": "0.000 0.000 0.000",
+        "up": "0.000 1.000 0.000"
+    },
+    "general": {
+        "bloom": false,
+        "cameraparallax": false,
+        "clearcolor": "0.000 0.000 0.000",
+        "clearenabled": true,
+        "farz": 10000.0,
+        "fov": 50.0,
+        "nearz": 0.009999999776482582,
+        "orthogonalprojection": {
+            "height": 1080,
+            "width": 1920
+        }
+    },
+    "objects": [
+        {
+            "angles": "0.000 0.000 0.000",
+            "id": 1,
+            "locktransforms": false,
+            "name": "Dust motes",
+            "origin": "960.000 540.000 0.000",
+            "parallaxDepth": "1.000 1.000",
+            "particle": "particles/minimal.json",
+            "scale": "1.000 1.000 1.000",
+            "visible": true
+        }
+    ]
+}
