@@ -856,3 +856,111 @@ void xw_script_text_layer_free(XWTextLayer *l) {
   xw_script_destroy(l->js);
   free(l);
 }
+
+/* ------------------------------------------------------------------ */
+/* Scripted object properties                                          */
+/* ------------------------------------------------------------------ */
+
+struct XWPropScript {
+  XWScript *js;
+};
+
+static const char *prop_script_prelude =
+    "function Vec3(x, y, z) { this.x = x; this.y = y; this.z = z; }\n"
+    "var WEMath = {\n"
+    "  mix: function (a, b, t) { return a + (b - a) * t; },\n"
+    "  clamp: function (v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }\n"
+    "};\n";
+
+int xw_script_prop_create(XWPropScript **out, const char *src, XWError *err) {
+  XWPropScript *p;
+  char *clean;
+  size_t n;
+  if (!out || !src) {
+    XW_ERROR_SET(err, 1, "invalid args");
+    return -1;
+  }
+  *out = NULL;
+  p = calloc(1, sizeof(*p));
+  if (!p) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
+  if (xw_script_create(&p->js, err) != 0) {
+    free(p);
+    return -1;
+  }
+  if (xw_script_eval(p->js, text_layer_prelude, "layer-prelude.js", err) != 0 ||
+      xw_script_eval(p->js, prop_script_prelude, "prop-prelude.js", err) != 0) {
+    xw_script_prop_free(p);
+    return -1;
+  }
+  n = strlen(src) + 1;
+  clean = malloc(n);
+  if (!clean) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    xw_script_prop_free(p);
+    return -1;
+  }
+  strip_export(src, clean, n);
+  if (xw_script_eval(p->js, clean, "propscript.js", err) != 0) {
+    free(clean);
+    xw_script_prop_free(p);
+    return -1;
+  }
+  free(clean);
+  *out = p;
+  return 0;
+}
+
+int xw_script_prop_update(XWPropScript *p, const float in[3], float out3[3]) {
+  JSValue global, v, res;
+  double d;
+  int rc = -1;
+  if (!p || !p->js || !out3)
+    return -1;
+  global = JS_GetGlobalObject(p->js->ctx);
+  v = JS_NewObject(p->js->ctx);
+  JS_SetPropertyStr(p->js->ctx, v, "x", JS_NewFloat64(p->js->ctx, in ? in[0] : 0.0f));
+  JS_SetPropertyStr(p->js->ctx, v, "y", JS_NewFloat64(p->js->ctx, in ? in[1] : 0.0f));
+  JS_SetPropertyStr(p->js->ctx, v, "z", JS_NewFloat64(p->js->ctx, in ? in[2] : 0.0f));
+  JS_SetPropertyStr(p->js->ctx, global, "__propValue", v);
+  JS_FreeValue(p->js->ctx, global);
+  /* a script that throws (or has no update) leaves the value alone */
+  if (xw_script_eval(p->js,
+                     "if (typeof update === 'function') {\n"
+                     "  var __r = update(__propValue);\n"
+                     "  if (__r !== undefined && __r !== null) __propValue = __r;\n"
+                     "} else { throw new Error('no update'); }\n",
+                     "propscript-update.js", NULL) != 0)
+    return -1;
+  global = JS_GetGlobalObject(p->js->ctx);
+  res = JS_GetPropertyStr(p->js->ctx, global, "__propValue");
+  JS_FreeValue(p->js->ctx, global);
+  if (JS_IsObject(res)) {
+    JSValue c;
+    c = JS_GetPropertyStr(p->js->ctx, res, "x");
+    if (JS_ToFloat64(p->js->ctx, &d, c) == 0 && !isnan(d)) {
+      out3[0] = (float)d;
+      rc = 0;
+    }
+    JS_FreeValue(p->js->ctx, c);
+    c = JS_GetPropertyStr(p->js->ctx, res, "y");
+    if (JS_ToFloat64(p->js->ctx, &d, c) == 0 && !isnan(d))
+      out3[1] = (float)d;
+    JS_FreeValue(p->js->ctx, c);
+    c = JS_GetPropertyStr(p->js->ctx, res, "z");
+    if (JS_ToFloat64(p->js->ctx, &d, c) == 0 && !isnan(d))
+      out3[2] = (float)d;
+    JS_FreeValue(p->js->ctx, c);
+  }
+  JS_FreeValue(p->js->ctx, res);
+  return rc;
+}
+
+void xw_script_prop_free(XWPropScript *p) {
+  if (!p)
+    return;
+  xw_script_destroy(p->js);
+  free(p);
+}

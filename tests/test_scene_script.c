@@ -339,6 +339,83 @@ static void test_text_layer(void) {
   TEST_CHECK_EQ_STR(xw_script_text_layer_update(NULL), "");
 }
 
+static void test_prop_scripts(void) {
+  XWPropScript *p = NULL;
+  XWError err = {0};
+  float in[3] = {1.0f, 3.0f, 0.0f}, out[3] = {0, 0, 0};
+  TEST_BEGIN("property scripts: update(value) rewrites a Vec3 property");
+  TEST_CHECK_EQ_INT(xw_script_prop_create(
+                        &p, "export function update(value) { value.x = value.y * 2; return value; }\n",
+                        &err),
+                    0);
+  if (p) {
+    TEST_CHECK_EQ_INT(xw_script_prop_update(p, in, out), 0);
+    TEST_CHECK(out[0] > 5.99f && out[0] < 6.01f);
+    TEST_CHECK(out[1] > 2.99f && out[1] < 3.01f);
+    xw_script_prop_free(p);
+  }
+
+  /* the real corpus script: 2794098047's "秒数.scale" */
+  p = NULL;
+  TEST_CHECK_EQ_INT(
+      xw_script_prop_create(
+          &p,
+          "'use strict';\n"
+          "export let __workshopId = '2760603383';\n"
+          "export function update(value) {\n"
+          "  let second = new Date().getSeconds();\n"
+          "  value.x = second / 60;\n"
+          "  return value;\n"
+          "}\n",
+          &err),
+      0);
+  if (p) {
+    out[0] = out[1] = out[2] = -1.0f;
+    TEST_CHECK_EQ_INT(xw_script_prop_update(p, in, out), 0);
+    TEST_CHECK(out[0] >= 0.0f && out[0] < 1.0f); /* 0..59 seconds / 60 */
+    TEST_CHECK(out[1] > 2.99f && out[1] < 3.01f);
+    xw_script_prop_free(p);
+  }
+
+  /* scriptProperties + WEMath, the helpers the corpus scripts use */
+  p = NULL;
+  TEST_CHECK_EQ_INT(
+      xw_script_prop_create(
+          &p,
+          "export var scriptProperties = createScriptProperties()\n"
+          "  .addSlider({ name: 'gain', value: 2 })\n"
+          "  .finish();\n"
+          "export function update(value) {\n"
+          "  value.x = WEMath.mix(value.x, 10, scriptProperties.gain / 4);\n"
+          "  return value;\n"
+          "}\n",
+          &err),
+      0);
+  if (p) {
+    in[0] = 0.0f;
+    TEST_CHECK_EQ_INT(xw_script_prop_update(p, in, out), 0);
+    TEST_CHECK(out[0] > 4.99f && out[0] < 5.01f); /* mix(0,10,0.5) */
+    xw_script_prop_free(p);
+  }
+
+  /* a script that throws (e.g. thisScene is not modelled yet) is refused so
+   * the caller keeps the property's base value */
+  p = NULL;
+  TEST_CHECK_EQ_INT(xw_script_prop_create(
+                        &p, "export function update(value) { return thisScene.getLayer(1); }\n",
+                        &err),
+                    0);
+  if (p) {
+    TEST_CHECK_EQ_INT(xw_script_prop_update(p, in, out), -1);
+    xw_script_prop_free(p);
+  }
+
+  /* a broken script is rejected at create time */
+  p = NULL;
+  TEST_CHECK_EQ_INT(xw_script_prop_create(&p, "function ( {", &err), -1);
+  TEST_CHECK(p == NULL);
+}
+
 int main(void) {
   TEST_SUITE("scene_script");
   test_eval_arithmetic();
@@ -350,5 +427,6 @@ int main(void) {
   test_props_and_resolve();
   test_mouse_and_no_scene();
   test_text_layer();
+  test_prop_scripts();
   TEST_SUMMARY();
 }
