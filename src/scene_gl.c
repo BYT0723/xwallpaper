@@ -1376,11 +1376,6 @@ static int draw_rect_full(XWGl *g, unsigned int prog, unsigned int tex,
   return 0;
 }
 
-int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
-                    int dx, int dy, int dw, int dh) {
-  return draw_rect_full(g, prog, tex, time, 1.0f, 0, dx, dy, dw, dh);
-}
-
 int xw_gl_draw_rect_alpha(XWGl *g, unsigned int prog, unsigned int tex,
                           float time, float alpha, int dx, int dy, int dw,
                           int dh) {
@@ -1676,19 +1671,6 @@ int xw_gl_upload_rgba(XWGl *g, const unsigned char *px, int w, int h,
 int xw_gl_delete_texture(XWGl *g, unsigned int tex) {
   (void)g;
   (void)tex;
-  return -1;
-}
-
-int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
-                    int dx, int dy, int dw, int dh) {
-  (void)g;
-  (void)prog;
-  (void)tex;
-  (void)time;
-  (void)dx;
-  (void)dy;
-  (void)dw;
-  (void)dh;
   return -1;
 }
 
