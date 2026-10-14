@@ -679,8 +679,47 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
           o->particle.fade_out = (float)json_object_get_double(fo);
         continue;
       }
-      if (strcmp(json_object_get_string(nm), "movement") != 0)
+      if (strcmp(json_object_get_string(nm), "movement") != 0) {
+        /* oscillator operators: defaults from ObjectParser::parseOperator */
+        const char *opname = json_object_get_string(nm);
+        XWOscillate *osc = NULL;
+        if (strcmp(opname, "oscillateposition") == 0) {
+          osc = &o->particle.osc_pos;
+          osc->freq_max = 5.0f;
+          osc->scale_max = 10.0f;
+          osc->mask[0] = 1.0f;
+          osc->mask[1] = 1.0f;
+        } else if (strcmp(opname, "oscillatealpha") == 0) {
+          osc = &o->particle.osc_alpha;
+          osc->freq_max = 10.0f;
+          osc->scale_max = 1.0f;
+        } else if (strcmp(opname, "oscillatesize") == 0) {
+          osc = &o->particle.osc_size;
+          osc->freq_max = 10.0f;
+          osc->scale_min = 0.8f;
+          osc->scale_max = 1.2f;
+        }
+        if (osc) {
+          struct json_object *v = NULL;
+          osc->present = 1;
+          osc->phase_max = 6.28318530718f;
+          if (json_object_object_get_ex(it, "frequencymin", &v) && v)
+            osc->freq_min = (float)json_object_get_double(v);
+          if (json_object_object_get_ex(it, "frequencymax", &v) && v)
+            osc->freq_max = (float)json_object_get_double(v);
+          if (json_object_object_get_ex(it, "scalemin", &v) && v)
+            osc->scale_min = (float)json_object_get_double(v);
+          if (json_object_object_get_ex(it, "scalemax", &v) && v)
+            osc->scale_max = (float)json_object_get_double(v);
+          if (json_object_object_get_ex(it, "phasemin", &v) && v)
+            osc->phase_min = (float)json_object_get_double(v);
+          if (json_object_object_get_ex(it, "phasemax", &v) && v)
+            osc->phase_max = (float)json_object_get_double(v);
+          if (strcmp(opname, "oscillateposition") == 0)
+            get_vec3(it, "mask", osc->mask);
+        }
         continue;
+      }
       if (json_object_object_get_ex(it, "gravity", &g) && g &&
           json_object_get_type(g) == json_type_string &&
           parse_vec_str(json_object_get_string(g), gv, 3) == 0) {

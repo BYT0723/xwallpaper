@@ -17,6 +17,13 @@ typedef struct XWParticle {
   float frame; /* sprite-sheet frame index (set by the renderer) */
   float rot;   /* in-plane rotation (radians) */
   float rnd;   /* stable per-particle random draw (randomframe) */
+  /* per-particle oscillator state, drawn once at spawn like the engine's
+   * lazy per-particle initialisation */
+  float osc_pf[3], osc_ps[3], osc_pp[3]; /* oscillateposition: freq/scale/phase */
+  float osc_af, osc_ap;                  /* oscillatealpha: frequency, phase */
+  float osc_sf, osc_sp;                  /* oscillatesize: frequency, phase */
+  float osc_abase;                       /* alpha base the oscillator scales */
+  float osc_sbase;                       /* size base the oscillator scales */
 } XWParticle;
 
 typedef struct XWEmitter {

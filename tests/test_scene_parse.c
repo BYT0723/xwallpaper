@@ -404,6 +404,23 @@ static void test_emitter_geometry(void) {
   TEST_CHECK(sp->dirs[1] > 0.02f && sp->dirs[1] < 0.04f);
   TEST_CHECK_EQ_INT((int)sp->sign[0], 0);
   TEST_CHECK_EQ_INT((int)sp->sign[2], 1);
+  /* oscillateposition spelled with nothing but its name takes the engine's
+   * defaults: frequency 0..5, scale 0..10, phase 0..2pi, mask (1,1,0) */
+  TEST_CHECK_EQ_INT(box->osc_pos.present, 1);
+  TEST_CHECK(box->osc_pos.freq_min == 0.0f);
+  TEST_CHECK(box->osc_pos.freq_max > 4.99f && box->osc_pos.freq_max < 5.01f);
+  TEST_CHECK(box->osc_pos.scale_min == 0.0f);
+  TEST_CHECK(box->osc_pos.scale_max > 9.99f && box->osc_pos.scale_max < 10.01f);
+  TEST_CHECK(box->osc_pos.phase_max > 6.28f && box->osc_pos.phase_max < 6.29f);
+  TEST_CHECK(box->osc_pos.mask[0] > 0.99f && box->osc_pos.mask[0] < 1.01f);
+  TEST_CHECK(box->osc_pos.mask[1] > 0.99f && box->osc_pos.mask[1] < 1.01f);
+  TEST_CHECK(box->osc_pos.mask[2] == 0.0f);
+  /* oscillatealpha defaults its scale to 0..1 and its frequency to 0..10 */
+  TEST_CHECK_EQ_INT(box->osc_alpha.present, 1);
+  TEST_CHECK(box->osc_alpha.freq_max > 6.99f && box->osc_alpha.freq_max < 7.01f);
+  TEST_CHECK(box->osc_alpha.scale_min > 0.49f && box->osc_alpha.scale_min < 0.51f);
+  TEST_CHECK(box->osc_alpha.scale_max > 0.99f && box->osc_alpha.scale_max < 1.01f);
+  TEST_CHECK_EQ_INT(box->osc_size.present, 0);
   xw_scene_free(&s);
 }
 

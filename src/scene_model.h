@@ -91,9 +91,18 @@ typedef struct XWDynFloat {
   char ref[128];
 } XWDynFloat;
 
+/* oscillateposition / oscillatealpha / oscillatesize operator parameters.
+ * Defaults mirror ObjectParser::parseOperator in the engine. */
+typedef struct XWOscillate {
+  int present;
+  float freq_min, freq_max;
+  float scale_min, scale_max;
+  float phase_min, phase_max;
+  float mask[3]; /* oscillateposition only; the engine defaults to (1,1,0) */
+} XWOscillate;
+
 typedef struct XWParticleCfg {
-  float rate;
-  int max_count;
+  float rate;  int max_count;
   char sprite[XW_SCENE_PATH_MAX];
   float life;
   float speed;
@@ -156,6 +165,9 @@ typedef struct XWParticleCfg {
   float turb_forward[3], turb_right[3]; /* field basis, JSON space (Y up) */
   int has_alpha_fade;      /* alphafade operator present */
   float fade_in, fade_out; /* alphafade fadeintime / fadeouttime (0..1) */
+  /* oscillator operators (each runs at most once, like the engine's single
+   * per-particle oscillator state) */
+  XWOscillate osc_pos, osc_alpha, osc_size;
 } XWParticleCfg;
 
 typedef struct XWTextCfg {

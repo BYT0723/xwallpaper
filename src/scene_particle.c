@@ -376,6 +376,44 @@ static void spawn_one(XWEmitter *e) {
              next_unit(&e->rng) * (e->cfg.rot_max - e->cfg.rot_min);
   p->rnd = next_unit(&e->rng);
   p->frame = 0.0f;
+  /* oscillator operators draw their per-particle frequency/scale/phase once
+   * (the engine initialises the state on the operator's first run); the
+   * phase spans phaseMin..phaseMax+2pi and the base is the post-initializer
+   * value the oscillator scales */
+  if (e->cfg.osc_pos.present) {
+    for (ax = 0; ax < 3; ax++) {
+      p->osc_pf[ax] =
+          e->cfg.osc_pos.freq_min +
+          next_unit(&e->rng) * (e->cfg.osc_pos.freq_max - e->cfg.osc_pos.freq_min);
+      p->osc_ps[ax] =
+          e->cfg.osc_pos.scale_min +
+          next_unit(&e->rng) * (e->cfg.osc_pos.scale_max - e->cfg.osc_pos.scale_min);
+      p->osc_pp[ax] = e->cfg.osc_pos.phase_min +
+                      next_unit(&e->rng) *
+                          (e->cfg.osc_pos.phase_max + 6.28318530718f -
+                           e->cfg.osc_pos.phase_min);
+    }
+  }
+  if (e->cfg.osc_alpha.present) {
+    p->osc_af = e->cfg.osc_alpha.freq_min +
+                next_unit(&e->rng) *
+                    (e->cfg.osc_alpha.freq_max - e->cfg.osc_alpha.freq_min);
+    p->osc_ap = e->cfg.osc_alpha.phase_min +
+                next_unit(&e->rng) *
+                    (e->cfg.osc_alpha.phase_max + 6.28318530718f -
+                     e->cfg.osc_alpha.phase_min);
+  }
+  if (e->cfg.osc_size.present) {
+    p->osc_sf = e->cfg.osc_size.freq_min +
+                next_unit(&e->rng) *
+                    (e->cfg.osc_size.freq_max - e->cfg.osc_size.freq_min);
+    p->osc_sp = e->cfg.osc_size.phase_min +
+                next_unit(&e->rng) *
+                    (e->cfg.osc_size.phase_max + 6.28318530718f -
+                     e->cfg.osc_size.phase_min);
+  }
+  p->osc_abase = p->a;
+  p->osc_sbase = p->size;
   e->alive++;
 }
 
@@ -421,6 +459,31 @@ int xw_emitter_update(XWEmitter *e, float dt) {
       } else {
         p->a = p->a0;
       }
+      /* the engine keeps the oscillator's alpha base in sync here so
+       * oscillatealpha scales the faded value */
+      p->osc_abase = p->a;
+    }
+    /* oscillateposition: integrate -scale*w*sin(w*age + phase)*dt per axis
+     * (the engine's w collapses to the frequency) */
+    if (e->cfg.osc_pos.present) {
+      p->x += -p->osc_ps[0] * p->osc_pf[0] *
+              sinf(p->osc_pf[0] * p->age + p->osc_pp[0]) * dt *
+              e->cfg.osc_pos.mask[0] * speed;
+      p->y += -p->osc_ps[1] * p->osc_pf[1] *
+              sinf(p->osc_pf[1] * p->age + p->osc_pp[1]) * dt *
+              e->cfg.osc_pos.mask[1] * speed;
+    }
+    if (e->cfg.osc_alpha.present) {
+      float cv = (cosf(p->osc_af * p->age + p->osc_ap) + 1.0f) * 0.5f;
+      p->a = p->osc_abase *
+             (e->cfg.osc_alpha.scale_min +
+              cv * (e->cfg.osc_alpha.scale_max - e->cfg.osc_alpha.scale_min));
+    }
+    if (e->cfg.osc_size.present) {
+      float cv = (cosf(p->osc_sf * p->age + p->osc_sp) + 1.0f) * 0.5f;
+      p->size = p->osc_sbase *
+                (e->cfg.osc_size.scale_min +
+                 cv * (e->cfg.osc_size.scale_max - e->cfg.osc_size.scale_min));
     }
     if (p->age > p->life) {
       e->alive--;

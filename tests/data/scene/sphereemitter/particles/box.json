@@ -23,6 +23,14 @@
     "operator": [
         {
             "name": "movement"
+        },
+        {
+            "name": "oscillateposition"
+        },
+        {
+            "frequencymax": 7,
+            "name": "oscillatealpha",
+            "scalemin": 0.5
         }
     ],
     "renderer": [

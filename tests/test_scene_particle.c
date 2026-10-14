@@ -360,6 +360,118 @@ static void test_sphere_shell_perspective(void) {
   xw_emitter_free(&e);
 }
 
+/* A single long-lived particle so the oscillator's time dependence can be
+ * followed: rate 1 spawns it after a second, then it never dies. */
+static XWParticleCfg cfg_single(void) {
+  XWParticleCfg c;
+  memset(&c, 0, sizeof(c));
+  mult_defaults(&c);
+  c.rate = 1.0f;
+  c.max_count = 1;
+  c.life = 100.0f;
+  c.size_min = c.size_max = 4.0f;
+  c.color[0] = c.color[1] = c.color[2] = c.color[3] = 1.0f;
+  return c;
+}
+
+static void test_oscillate_position(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_single();
+  float minx = 1e9f, maxx = -1e9f;
+  int i;
+  TEST_BEGIN("oscillateposition sways the particle by -2*scale");
+  c.osc_pos.present = 1;
+  c.osc_pos.freq_min = c.osc_pos.freq_max = 1.0f;
+  c.osc_pos.scale_min = c.osc_pos.scale_max = 100.0f;
+  c.osc_pos.mask[0] = c.osc_pos.mask[1] = 1.0f;
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  for (i = 0; i < 400; i++) {
+    xw_emitter_update(&e, 1.0f / 60.0f);
+    if (e.alive > 0) {
+      if (e.parts[0].x < minx) minx = e.parts[0].x;
+      if (e.parts[0].x > maxx) maxx = e.parts[0].x;
+    }
+  }
+  /* x(t) = scale*(cos(phase) - cos(w*t + phase)): the swing is always
+   * 2*scale wide, wherever the random phase puts it */
+  TEST_CHECK(maxx - minx > 195.0f && maxx - minx < 205.0f);
+  TEST_CHECK(minx >= -205.0f && maxx <= 205.0f);
+  xw_emitter_free(&e);
+}
+
+static void test_oscillate_alpha(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_single();
+  float mina = 1e9f, maxa = -1e9f;
+  int i;
+  TEST_BEGIN("oscillatealpha scales the alpha between scalemin and scalemax");
+  c.osc_alpha.present = 1;
+  c.osc_alpha.freq_min = c.osc_alpha.freq_max = 2.0f;
+  c.osc_alpha.scale_min = 0.5f;
+  c.osc_alpha.scale_max = 1.0f;
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  for (i = 0; i < 400; i++) {
+    xw_emitter_update(&e, 1.0f / 60.0f);
+    if (e.alive > 0) {
+      if (e.parts[0].a < mina) mina = e.parts[0].a;
+      if (e.parts[0].a > maxa) maxa = e.parts[0].a;
+    }
+  }
+  TEST_CHECK(mina > 0.49f && mina < 0.51f);
+  TEST_CHECK(maxa > 0.99f && maxa < 1.01f);
+  xw_emitter_free(&e);
+}
+
+static void test_oscillate_alpha_follows_fade(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_single();
+  int i;
+  TEST_BEGIN("oscillatealpha scales the alphafade result, not the spawn alpha");
+  c.life = 4.0f;
+  c.has_alpha_fade = 1;
+  c.fade_in = 0.5f;
+  c.fade_out = 1.0f;
+  c.osc_alpha.present = 1;
+  c.osc_alpha.freq_min = c.osc_alpha.freq_max = 1.0f;
+  c.osc_alpha.scale_min = c.osc_alpha.scale_max = 1.0f;
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  /* step to the middle of the fade-in: alpha = 0.5 of the base */
+  for (i = 0; i < 120; i++) xw_emitter_update(&e, 1.0f / 60.0f);
+  TEST_CHECK(e.alive > 0);
+  if (e.alive > 0) {
+    float lf = e.parts[0].age / e.parts[0].life;
+    TEST_CHECK(lf > 0.1f && lf < 0.4f);
+    /* halfway through the fade-in the base is 0.5, and the oscillator
+     * (scale 1..1) must scale that, not the spawn alpha of 1 */
+    TEST_CHECK(e.parts[0].a > 0.45f && e.parts[0].a < 0.55f);
+  }
+  xw_emitter_free(&e);
+}
+
+static void test_oscillate_size(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_single();
+  float mins = 1e9f, maxs = -1e9f;
+  int i;
+  TEST_BEGIN("oscillatesize scales the sizerandom draw between its bounds");
+  c.osc_size.present = 1;
+  c.osc_size.freq_min = c.osc_size.freq_max = 2.0f;
+  c.osc_size.scale_min = 0.5f;
+  c.osc_size.scale_max = 1.0f;
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  for (i = 0; i < 400; i++) {
+    xw_emitter_update(&e, 1.0f / 60.0f);
+    if (e.alive > 0) {
+      if (e.parts[0].size < mins) mins = e.parts[0].size;
+      if (e.parts[0].size > maxs) maxs = e.parts[0].size;
+    }
+  }
+  /* sizerandom halves the draw: 4 -> 2, oscillated into [1, 2] */
+  TEST_CHECK(mins > 0.98f && mins < 1.02f);
+  TEST_CHECK(maxs > 1.98f && maxs < 2.02f);
+  xw_emitter_free(&e);
+}
+
 int main(void) {
   TEST_SUITE("scene_particle");
   test_spawn_and_die();
@@ -374,6 +486,10 @@ int main(void) {
   test_no_turbulent_velocity();
   test_sphere_disk();
   test_sphere_shell_perspective();
+  test_oscillate_position();
+  test_oscillate_alpha();
+  test_oscillate_alpha_follows_fade();
+  test_oscillate_size();
   test_bad_inputs();
   TEST_SUMMARY();
 }
