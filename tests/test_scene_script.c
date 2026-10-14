@@ -296,6 +296,49 @@ static void test_time_and_error_isolation(void) {
   xw_script_tick(NULL);
 }
 
+static void test_text_layer(void) {
+  XWTextLayer *l = NULL;
+  XWError err = {0};
+  /* the shape the corpus uses: scriptProperties with defaults, and an
+   * update(value) that returns the new text */
+  const char *src =
+      "'use strict';\n"
+      "export var scriptProperties = createScriptProperties()\n"
+      "  .addCheckbox({ name: 'upper', value: true })\n"
+      "  .addText({ name: 'sep', value: '-' })\n"
+      "  .finish();\n"
+      "export function update(value) {\n"
+      "  var v = value + scriptProperties.sep + 'x';\n"
+      "  return scriptProperties.upper ? v.toUpperCase() : v;\n"
+      "}\n";
+  TEST_BEGIN("text layers: update() drives the layer's text");
+  TEST_CHECK_EQ_INT(xw_script_text_layer_create(&l, src, "ab", &err), 0);
+  TEST_CHECK(l != NULL);
+  if (!l)
+    return;
+  TEST_CHECK_EQ_STR(xw_script_text_layer_update(l), "AB-X");
+  /* update() receives the layer's *current* text, so a script that appends
+   * accumulates - the engine feeds the previous result back in too */
+  TEST_CHECK_EQ_STR(xw_script_text_layer_update(l), "AB-X-X");
+  xw_script_text_layer_free(l);
+
+  /* a script without update() keeps whatever text it was given */
+  l = NULL;
+  TEST_CHECK_EQ_INT(xw_script_text_layer_create(&l, "var x = 1;\n", "keep", &err),
+                    0);
+  if (l) {
+    TEST_CHECK_EQ_STR(xw_script_text_layer_update(l), "keep");
+    xw_script_text_layer_free(l);
+  }
+
+  /* a broken script is rejected instead of crashing */
+  l = NULL;
+  TEST_CHECK_EQ_INT(xw_script_text_layer_create(&l, "function ( {", "t", &err),
+                    -1);
+  TEST_CHECK(l == NULL);
+  TEST_CHECK_EQ_STR(xw_script_text_layer_update(NULL), "");
+}
+
 int main(void) {
   TEST_SUITE("scene_script");
   test_eval_arithmetic();
@@ -306,5 +349,6 @@ int main(void) {
   test_bindings_rw();
   test_props_and_resolve();
   test_mouse_and_no_scene();
+  test_text_layer();
   TEST_SUMMARY();
 }

@@ -703,3 +703,156 @@ float xw_script_resolve_alpha(XWScript *s, const XWSceneObject *o) {
     return o->alpha.constant;
   return (float)d;
 }
+
+/* ------------------------------------------------------------------ */
+/* Text layers                                                         */
+/* ------------------------------------------------------------------ */
+/* Wallpaper Engine text objects may carry a script whose `update(value)`
+ * returns the layer's text every frame (clocks, counters). The scripts are
+ * ES modules that only ever export declarations, so the `export ` keyword is
+ * dropped before evaluation. createScriptProperties() is the builder those
+ * scripts use to declare their own properties; its defaults become plain
+ * properties on the returned object. */
+
+int xw_script_get_string(XWScript *s, const char *name, char *out, size_t n) {
+  JSValue global, v;
+  const char *str;
+  if (!s || !name || !out || n == 0)
+    return -1;
+  global = JS_GetGlobalObject(s->ctx);
+  v = JS_GetPropertyStr(s->ctx, global, name);
+  JS_FreeValue(s->ctx, global);
+  if (JS_IsException(v)) {
+    JS_FreeValue(s->ctx, v);
+    return -1;
+  }
+  str = JS_ToCString(s->ctx, v);
+  JS_FreeValue(s->ctx, v);
+  if (!str)
+    return -1;
+  snprintf(out, n, "%s", str);
+  JS_FreeCString(s->ctx, str);
+  return 0;
+}
+
+struct XWTextLayer {
+  XWScript *js;
+  char text[XW_TEXT_LAYER_MAX];
+};
+
+static const char *text_layer_prelude =
+    "var __layerProps = {};\n"
+    "function createScriptProperties() {\n"
+    "  var api = {};\n"
+    "  function set(o) {\n"
+    "    if (o && o.name) __layerProps[o.name] = o.value;\n"
+    "    return api;\n"
+    "  }\n"
+    "  api.addCheckbox = set; api.addText = set; api.addCombo = set;\n"
+    "  api.addSlider = set; api.addNumber = set; api.addColor = set;\n"
+    "  api.finish = function () { return __layerProps; };\n"
+    "  return api;\n"
+    "}\n"
+    "var shared = {};\n"
+    "var console = { log: function () {}, warn: function () {},"
+    " error: function () {} };\n";
+
+/* Drop the `export ` keyword (token-wise: a declaration modifier, never part
+ * of an identifier). */
+static void strip_export(const char *src, char *out, size_t n) {
+  size_t o = 0;
+  const char *p = src;
+  while (*p && o + 1 < n) {
+    if (strncmp(p, "export", 6) == 0 &&
+        (p[6] == ' ' || p[6] == '\t' || p[6] == '\n' || p[6] == '\r') &&
+        (p == src || !(p[-1] == '_' ||
+                       (p[-1] >= 'a' && p[-1] <= 'z') ||
+                       (p[-1] >= 'A' && p[-1] <= 'Z') ||
+                       (p[-1] >= '0' && p[-1] <= '9')))) {
+      p += 6;
+      while (*p == ' ' || *p == '\t')
+        p++;
+      continue;
+    }
+    out[o++] = *p++;
+  }
+  out[o] = '\0';
+}
+
+int xw_script_text_layer_create(XWTextLayer **out, const char *src,
+                                const char *initial, XWError *err) {
+  XWTextLayer *l;
+  char *clean;
+  size_t n;
+  if (!out || !src) {
+    XW_ERROR_SET(err, 1, "invalid args");
+    return -1;
+  }
+  *out = NULL;
+  l = calloc(1, sizeof(*l));
+  if (!l) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
+  snprintf(l->text, sizeof(l->text), "%s", initial ? initial : "");
+  if (xw_script_create(&l->js, err) != 0) {
+    free(l);
+    return -1;
+  }
+  if (xw_script_eval(l->js, text_layer_prelude, "layer-prelude.js", err) != 0) {
+    xw_script_text_layer_free(l);
+    return -1;
+  }
+  n = strlen(src) + 1;
+  clean = malloc(n);
+  if (!clean) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    xw_script_text_layer_free(l);
+    return -1;
+  }
+  strip_export(src, clean, n);
+  if (xw_script_eval(l->js, clean, "textlayer.js", err) != 0) {
+    free(clean);
+    xw_script_text_layer_free(l);
+    return -1;
+  }
+  free(clean);
+  *out = l;
+  return 0;
+}
+
+const char *xw_script_text_layer_update(XWTextLayer *l) {
+  JSValue global, cur;
+  const char *str;
+  if (!l || !l->js)
+    return "";
+  global = JS_GetGlobalObject(l->js->ctx);
+  JS_SetPropertyStr(l->js->ctx, global, "__layerText",
+                    JS_NewString(l->js->ctx, l->text));
+  JS_FreeValue(l->js->ctx, global);
+  /* a script without update() (or one that throws) keeps the last text */
+  if (xw_script_eval(l->js,
+                     "if (typeof update === 'function') {\n"
+                     "  var __o = update(__layerText);\n"
+                     "  if (typeof __o === 'string') __layerText = __o;\n"
+                     "}\n",
+                     "textlayer-update.js", NULL) != 0)
+    return l->text;
+  global = JS_GetGlobalObject(l->js->ctx);
+  cur = JS_GetPropertyStr(l->js->ctx, global, "__layerText");
+  JS_FreeValue(l->js->ctx, global);
+  str = JS_ToCString(l->js->ctx, cur);
+  JS_FreeValue(l->js->ctx, cur);
+  if (str) {
+    snprintf(l->text, sizeof(l->text), "%s", str);
+    JS_FreeCString(l->js->ctx, str);
+  }
+  return l->text;
+}
+
+void xw_script_text_layer_free(XWTextLayer *l) {
+  if (!l)
+    return;
+  xw_script_destroy(l->js);
+  free(l);
+}

@@ -49,4 +49,21 @@ int xw_script_get_user_prop(XWScript *s, const char *name, char *value,
  * the parsed constant), EXPRESSION is a constant until Task 14. */
 float xw_script_resolve_alpha(XWScript *s, const XWSceneObject *o);
 
+/* A text layer's script. Wallpaper Engine runs the script's `update(value)`
+ * every frame and uses the returned string as the layer's text; the script
+ * may declare its own properties through createScriptProperties(). */
+typedef struct XWTextLayer XWTextLayer;
+
+/* text a scripted layer may produce (the engine's layers are short strings) */
+#define XW_TEXT_LAYER_MAX 256
+
+int xw_script_text_layer_create(XWTextLayer **out, const char *src,
+                                const char *initial, XWError *err);
+/* Run update() and return the layer's current text (never NULL). */
+const char *xw_script_text_layer_update(XWTextLayer *l);
+void xw_script_text_layer_free(XWTextLayer *l);
+
+/* Read a string global (a missing/non-string name returns -1). */
+int xw_script_get_string(XWScript *s, const char *name, char *out, size_t n);
+
 #endif
