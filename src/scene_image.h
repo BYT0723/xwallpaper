@@ -12,6 +12,10 @@
 int xw_scene_image_render(XWGl *gl, const XWScene *scene, const char *dir,
                           float time, const float *alphas, XWError *err);
 
+/* Draw one image object (the caller owns the destination and the clear). */
+int xw_scene_image_draw(XWGl *gl, const XWSceneObject *o, const char *dir,
+                        float time, float alpha, XWError *err);
+
 /* Shared resolvers used by the particle renderer too: a shader ref (with
  * the engine asset fallback) and a material texture ref. */
 int xw_scene_resolve_shader(const char *dir, const char *ref, char *out,

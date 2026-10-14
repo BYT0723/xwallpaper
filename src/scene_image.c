@@ -329,6 +329,19 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
   return 0;
 }
 
+/* Draw a single image object. The engine's dependency order decides when it
+ * is called; the caller has already bound the destination and cleared. */
+int xw_scene_image_draw(XWGl *gl, const XWSceneObject *o, const char *dir,
+                        float time, float alpha, XWError *err) {
+  if (!gl || !o || !dir)
+    return -1;
+  if (!o->visible || o->type != XW_OBJ_IMAGE)
+    return 0;
+  if (!o->texture[0] && !o->mat_tex[0])
+    return 0;
+  return render_object(gl, o, dir, time, alpha, err);
+}
+
 int xw_scene_image_render(XWGl *gl, const XWScene *scene, const char *dir,
                           float time, const float *alphas, XWError *err) {
   int i;
@@ -343,13 +356,11 @@ int xw_scene_image_render(XWGl *gl, const XWScene *scene, const char *dir,
   for (i = 0; i < scene->n_objects; i++) {
     const XWSceneObject *o = &scene->objects[i];
     float a = alphas ? alphas[i] : 1.0f;
-    int r;
     if (!o->visible || o->type != XW_OBJ_IMAGE)
       continue;
     if (!o->texture[0] && !o->mat_tex[0])
       continue;
-    r = render_object(gl, o, dir, time, a, err);
-    if (r < 0)
+    if (xw_scene_image_draw(gl, o, dir, time, a, err) < 0)
       return -1;
   }
   return 0;

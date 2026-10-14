@@ -54,7 +54,42 @@ typedef struct XWSceneCtx {
   double volume;
   XWScript *script;
   char tmpdir[1024];
+  /* the engine's render order: object indices, dependencies first */
+  int *order;
+  unsigned char *order_scratch;
+  int order_n;
 } XWSceneCtx;
+
+static void free_order(XWSceneCtx *c) {
+  free(c->order);
+  free(c->order_scratch);
+  c->order = NULL;
+  c->order_scratch = NULL;
+  c->order_n = 0;
+}
+
+/* The engine's render order is static per scene: build it once after the
+ * parse and reuse it every frame. */
+static int build_order(XWSceneCtx *c, XWError *err) {
+  int n = c->scene.n_objects;
+  free_order(c);
+  if (n <= 0)
+    return 0;
+  c->order = malloc(sizeof(int) * (size_t)n);
+  c->order_scratch = malloc((size_t)n);
+  if (!c->order || !c->order_scratch) {
+    free_order(c);
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
+  c->order_n =
+      xw_scene_render_order(c->scene.objects, n, c->order, c->order_scratch);
+  if (c->order_n < 0) {
+    free_order(c);
+    return -1;
+  }
+  return 0;
+}
 
 static void free_emitters(XWSceneCtx *c) {
   int i;
@@ -182,7 +217,8 @@ static uint64_t now_ms(void) {
 }
 
 static int paint_fill(XWSceneCtx *c);
-static int render_overlays(XWSceneCtx *c, const float *alphas, XWError *rerr);
+static int render_overlays(XWSceneCtx *c, float t, const float *alphas,
+                           XWError *rerr);
 static int scene_list_props(XWBackend *b, char *out, size_t n);
 static int scene_set_prop(XWBackend *b, const char *name, const char *value,
                           XWError *err);
@@ -366,8 +402,14 @@ static int paint_gl(XWSceneCtx *c) {
                               : 1.0f;
     }
     xw_gl_frame_begin(c->gl);
-    if (xw_scene_image_render(c->gl, &c->scene, c->dir, t, alphas, &rerr) == 0)
-      rc = render_overlays(c, alphas, &rerr);
+    if (xw_gl_bind_target(c->gl, -1) != 0)
+      rc = -1;
+    else {
+      xw_gl_clear(c->gl, c->scene.camera.clearcolor[0],
+                  c->scene.camera.clearcolor[1],
+                  c->scene.camera.clearcolor[2]);
+      rc = render_overlays(c, t, alphas, &rerr);
+    }
     free(alphas);
     if (rc != 0)
       return -1;
@@ -379,41 +421,39 @@ static int paint_gl(XWSceneCtx *c) {
   return 0;
 }
 
-/* particle + text passes over the image layer (dt from frame pacing). */
-static int render_overlays(XWSceneCtx *c, const float *alphas, XWError *rerr) {
+/* One pass over the scene in the engine's dependency order: an object's
+ * dependencies are drawn before it, and images, particles and text are
+ * interleaved as the scene declares rather than grouped by type. */
+static int render_overlays(XWSceneCtx *c, float t, const float *alphas,
+                           XWError *rerr) {
   uint64_t now = now_ms();
   float dt = c->last_ms ? (float)(now - c->last_ms) / 1000.0f : 1.0f / 30.0f;
   if (getenv("XW_FIXED_TIME"))
     dt = c->fps > 0.0f ? 1.0f / c->fps : 1.0f / 30.0f;
-  int i;
+  int k;
   if (dt < 0.0f)
     dt = 0.0f;
   if (dt > 0.25f)
     dt = 0.25f;
-  if (!c->emitters || !c->texts)
+  if (!c->emitters || !c->texts || !c->order)
     return -1;
-  for (i = 0; i < c->scene.n_objects; i++) {
+  for (k = 0; k < c->order_n; k++) {
+    int i = c->order[k];
     const XWSceneObject *o = &c->scene.objects[i];
     float a = alphas ? alphas[i] : 1.0f;
-    int r;
-    if (!o->visible || o->type != XW_OBJ_PARTICLE)
+    if (!o->visible)
       continue;
-    r = xw_scene_particle_render_cam(c->gl, o, &c->emitters[i], c->dir, dt, a,
-                                     rerr, &c->scene.camera);
-    if (r < 0)
-      return -1;
-  }
-  /* text pass: per-type loops until the multi-object composite task;
-   * object-order compositing comes with scene-space FBOs. */
-  for (i = 0; i < c->scene.n_objects; i++) {
-    const XWSceneObject *o = &c->scene.objects[i];
-    float a = alphas ? alphas[i] : 1.0f;
-    int r;
-    if (!o->visible || o->type != XW_OBJ_TEXT)
-      continue;
-    r = xw_scene_text_draw(c->gl, o, c->dir, &c->texts[i], a, rerr);
-    if (r < 0)
-      return -1;
+    if (o->type == XW_OBJ_IMAGE) {
+      if (xw_scene_image_draw(c->gl, o, c->dir, t, a, rerr) < 0)
+        return -1;
+    } else if (o->type == XW_OBJ_PARTICLE) {
+      if (xw_scene_particle_render_cam(c->gl, o, &c->emitters[i], c->dir, dt,
+                                       a, rerr, &c->scene.camera) < 0)
+        return -1;
+    } else if (o->type == XW_OBJ_TEXT) {
+      if (xw_scene_text_draw(c->gl, o, c->dir, &c->texts[i], a, rerr) < 0)
+        return -1;
+    }
   }
   return 0;
 }
@@ -481,6 +521,12 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     return -1;
   }
   c->parsed = 1;
+  if (build_order(c, err) != 0) {
+    xw_scene_free(&c->scene);
+    free_tmpdir(c);
+    free(c);
+    return -1;
+  }
   if (init_emitters(c, err) != 0) {
     xw_scene_free(&c->scene);
     free_tmpdir(c);
@@ -555,6 +601,7 @@ static void scene_destroy(XWBackend *b) {
   c->gl = NULL;
   free_sounds(c);
   free_emitters(c);
+  free_order(c);
   free_script(c);
   if (c->gc)
     XFreeGC(c->win->dpy, c->gc);
@@ -587,6 +634,8 @@ static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   c->scene = next;
   c->mute = opt->mute ? 1 : 0;
   c->volume = opt->volume;
+  if (build_order(c, err) != 0)
+    return -1;
   if (init_emitters(c, err) != 0)
     return -1;
   init_sounds(c);

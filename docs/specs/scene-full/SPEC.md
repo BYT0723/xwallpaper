@@ -544,3 +544,10 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   我们的斑点 = 背景×1.25 ✓ **与材质一致** ✓。因此"参考的斑点几乎不可见"是**参考侧自身管线**的行为
   （最可能与其 `_rt_FullFrameBuffer` 的写入时机/影子 FBO 有关，见上文），**不是我们的缺陷**。
   **取舍**：忠实于 WE 的材质取值（1.25）✓ 还是模仿参考的观感 ✗ —— 目前选择**忠实** ✓。
+- **依赖序渲染（2026-10-14 已实现）**：原先按**类型**分三趟（image → particle → text）✗，现在按引擎的
+  `dependencies` **DFS 后序**单趟绘制（`xw_scene_render_order()`：先依赖后自身，跳过自依赖/未知 id/重复；
+  场景顺序为并列次序），由 `scene.c` 的 `render_overlays()` 按序分派 image/particle/text。
+  顺带把图像渲染拆出**单对象**入口 `xw_scene_image_draw()`（`xw_scene_image_render()` 保留为批处理壳，
+  集成测试仍在用）。渲染顺序在解析后**构建一次**（`build_order()`，init/reload 各一次），每帧复用。
+  **实测**：2178468632 逐位**无变化** ✓（该场景本就"图像在前、粒子在后"，与 DFS 结果一致）；
+  3808922316 / 3497575235 / 3003908979 三张真包出图正常、无回归 ✓。
