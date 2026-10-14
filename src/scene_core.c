@@ -152,10 +152,13 @@ void xw_text_place(float ox, float oy, float ortho_w, float ortho_h, int win_w,
   float sx, sy;
   if (!dx || !dy || !scale)
     return;
+  /* text anchors are canvas pixels with Y down (CText notes this differs
+   * from the image path, which flips Y): scale them straight into the
+   * window, no centring and no flip */
   sx = (ortho_w > 0.0f && win_w > 0) ? (float)win_w / ortho_w : 1.0f;
   sy = (ortho_h > 0.0f && win_h > 0) ? (float)win_h / ortho_h : 1.0f;
-  *dx = (ox * sx) + (float)win_w * 0.5f;
-  *dy = (float)win_h * 0.5f - (oy * sy);
+  *dx = ox * sx;
+  *dy = oy * sy;
   /* glyphs rasterise at the canvas' vertical scale (the same squeeze the
    * camera applies to everything else) */
   *scale = sy;

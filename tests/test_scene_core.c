@@ -145,24 +145,26 @@ static void test_render_order(void) {
 
 static void test_text_place(void) {
   float dx = 0, dy = 0, sc = 0;
-  TEST_BEGIN("text anchors map from the centred canvas into window pixels");
-  /* a 3440x1440 canvas shown in a 1920x1080 window: the canvas centre is the
-   * window centre and the anchor is the text's middle */
+  TEST_BEGIN("text anchors scale from canvas pixels into window pixels");
+  /* the engine's own comment in CText: anchors are canvas pixels with Y
+   * down, so a 3440x1440 canvas in a 1920x1080 window scales them straight */
   xw_text_place(0.0f, 0.0f, 3440.0f, 1440.0f, 1920, 1080, &dx, &dy, &sc);
-  TEST_CHECK(dx > 959.0f && dx < 961.0f);
-  TEST_CHECK(dy > 539.0f && dy < 541.0f);
+  TEST_CHECK(dx > -0.01f && dx < 0.01f);
+  TEST_CHECK(dy > -0.01f && dy < 0.01f);
   TEST_CHECK(sc > 0.74f && sc < 0.76f); /* 1080/1440 */
-  /* Y is up in the canvas and down in the window */
-  xw_text_place(0.0f, 360.0f, 3440.0f, 1440.0f, 1920, 1080, &dx, &dy, &sc);
-  TEST_CHECK(dx > 959.0f && dx < 961.0f);
-  TEST_CHECK(dy > 269.0f && dy < 271.0f);
+  /* 2887099508's clock sits at canvas (5476, 475) on a 6080x3420 canvas */
+  xw_text_place(5476.0f, 475.0f, 6080.0f, 3420.0f, 1920, 1080, &dx, &dy, &sc);
+  TEST_CHECK(dx > 1728.0f && dx < 1730.0f);
+  TEST_CHECK(dy > 149.0f && dy < 151.0f);
   /* a canvas that matches the window maps 1:1 */
-  xw_text_place(0.0f, 0.0f, 1920.0f, 1080.0f, 1920, 1080, &dx, &dy, &sc);
-  TEST_CHECK(dx > 959.0f && dx < 961.0f);
-  TEST_CHECK(dy > 539.0f && dy < 541.0f);
+  xw_text_place(200.0f, 150.0f, 1920.0f, 1080.0f, 1920, 1080, &dx, &dy, &sc);
+  TEST_CHECK(dx > 199.9f && dx < 200.1f);
+  TEST_CHECK(dy > 149.9f && dy < 150.1f);
   TEST_CHECK(sc > 0.99f && sc < 1.01f);
   /* degenerate canvases fall back to a 1:1 mapping */
   xw_text_place(10.0f, 20.0f, 0.0f, 0.0f, 1920, 1080, &dx, &dy, &sc);
+  TEST_CHECK(dx > 9.9f && dx < 10.1f);
+  TEST_CHECK(dy > 19.9f && dy < 20.1f);
   TEST_CHECK(sc > 0.99f && sc < 1.01f);
 }
 

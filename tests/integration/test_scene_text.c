@@ -113,8 +113,8 @@ int main(void) {
   XWTextItem it;
   memset(&it, 0, sizeof(it));
   memset(&err, 0, sizeof(err));
-  /* the anchor is in the scene's centred canvas space; with a canvas the
-   * size of the window it maps 1:1 and lands at the window centre offset */
+  /* the anchor is canvas pixels; with a canvas the size of the window it
+   * maps 1:1 and the text is centred on it */
   XWSceneCamera cam;
   memset(&cam, 0, sizeof(cam));
   cam.ortho_w = (float)w;
@@ -125,8 +125,8 @@ int main(void) {
   TEST_CHECK_EQ_INT(xw_gl_present(gl), 0);
   XSync(dpy, False);
 
-  int tx = (int)((float)w * 0.5f + o.origin[0]) - 100;
-  int ty = (int)((float)h * 0.5f - o.origin[1]) - 50;
+  int tx = (int)o.origin[0] - 100;
+  int ty = (int)o.origin[1] - 50;
   if (tx < 0)
     tx = 0;
   if (ty < 0)
