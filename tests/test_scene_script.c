@@ -461,6 +461,52 @@ static void test_apply_object_props(void) {
   xw_script_destroy(s);
 }
 
+/* A layer script's init() runs once and may reorder layers through
+ * thisScene.getLayer / getLayerIndex / sortLayer. */
+static void test_this_scene_layers(void) {
+  XWScript *s = make_engine();
+  XWScene sc;
+  XWSceneObject objs[3];
+  int order[3];
+  TEST_BEGIN("thisScene reorders layers from a script's init()");
+  TEST_CHECK(s != NULL);
+  if (!s)
+    return;
+  memset(&sc, 0, sizeof(sc));
+  memset(objs, 0, sizeof(objs));
+  strcpy(objs[0].id, "a");
+  strcpy(objs[1].id, "b");
+  strcpy(objs[2].id, "c");
+  objs[2].visible = 1;
+  objs[2].prop_script[XW_PROP_VISIBLE] = strdup(
+      "export function init() {"
+      "  var b = thisScene.getLayer('b');"
+      "  thisScene.sortLayer(b, 0);"
+      "}"
+      "export function update(v) { return v; }");
+  order[0] = 0;
+  order[1] = 1;
+  order[2] = 2;
+  sc.objects = objs;
+  sc.n_objects = 3;
+  sc.order = order;
+  sc.n_order = 3;
+  xw_script_set_scene(s, &sc);
+  xw_script_apply_object_props(s, &objs[2]);
+  TEST_CHECK_EQ_INT(order[0], 1); /* b moved to the front */
+  TEST_CHECK_EQ_INT(order[1], 0);
+  TEST_CHECK_EQ_INT(order[2], 2);
+  TEST_CHECK_EQ_INT(objs[2].visible, 1); /* update() kept the value */
+  /* a script that only sorts must not disturb the object's own values */
+  TEST_CHECK(objs[2].origin[0] > -0.01f && objs[2].origin[0] < 0.01f);
+  xw_script_set_scene(s, NULL);
+  for (int k = 0; k < XW_PROP_COUNT; k++) {
+    free(objs[2].prop_script[k]);
+    objs[2].prop_script[k] = NULL;
+  }
+  xw_script_destroy(s);
+}
+
 int main(void) {
   TEST_SUITE("scene_script");
   test_eval_arithmetic();
@@ -474,5 +520,6 @@ int main(void) {
   test_text_layer();
   test_prop_scripts();
   test_apply_object_props();
+  test_this_scene_layers();
   TEST_SUMMARY();
 }

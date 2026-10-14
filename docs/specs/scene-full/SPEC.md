@@ -818,3 +818,30 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
 
 **收益仍受两道门限制** ✗：`origin/scale/size` 要等**摆放** ✓；`visible` 的脚本（`3808922316`/`2887099508` ✓）
 需要 **`thisScene.getLayer/getLayerIndex/sortLayer`** ✓ —— 这是下一个增量 ✓。
+
+## thisScene 脚本 API + init()（2026-10-14 续 3）
+
+**语料实测的 API 面** ✓：`getLayer`(6) / `getLayerIndex`(5) / `sortLayer`(5) / `getInitialLayerConfig`(4) / `createLayer`(3)；
+`function init(` 出现 **40** 次 ✓（`update(` 82 次 ✓）。
+
+**参考实现** ✓：`ScriptEngine.cpp:481` 会调 **`init()`** ✓（`callHook("_init")` ✓）；
+但 `thisScene` 只实现了 `getLayer` ✗（`SceneObject.cpp:307` "TODO: ADD REST OF THE METHODS" ✗）→
+**没有** `getLayerIndex`/`sortLayer` ✗ → 我们实现它们会比参考更贴近真实 WE ✓（在参考基准上表现为"偏离" ✓，已如实测量 ✓）。
+
+**落地** ✓
+- **`init()` 被调用一次** ✓（与引擎/参考一致 ✓）：脚本抛错则忽略 ✓（同引擎 ✓）
+- `thisScene.getLayer(name|index)` ✓ / `getLayerIndex(handle)` ✓ / `sortLayer(handle, at)` ✓ / `getLayerCount()` ✓
+- `thisLayer` ✓（含 `__idx` 与 `name` ✓；未知属性读写无害 ✓，引擎的图层对象远超我们建模的范围 ✓）
+- **渲染序改由 `XWScene` 持有** ✓（`order`/`n_order` ✓）—— 修复了一个真 bug：`build_order` 会重建数组 ✗，
+  属性脚本持有的指针会失效 ✗
+- 单测 ✓：`test_this_scene_layers` ✓（脚本 `init()` 把 "b" 移到索引 0 ✓）
+
+**实测（与上一版对比）**
+
+| 壁纸 | 差异 | 说明 |
+|---|---|---|
+| 2178468632 / 3808922316 / 3610097897 / 2887099508 | **0** ✓ | 3808922316 的排序**确实发生** ✓（调试可见 `layer 34 moved from 34 to 33` ✓）但这两层顺序不影响画面 ✓ |
+| 3422426571 | 0.00197 ✓ | 对参考 **0.376881 → 0.376882** ✓ 中性 ✓ |
+| 2794098047 | 0.00690 ✓ | **修正** ✓：其 `init(value){ initialValue = value.x; }` ✓ 是 `update` 平滑算法的基准 ✓，不调 `init` 时该值缺失 ✗（参考无法渲染此包 ✗，无法对照 ✓） |
+
+**未实现**（保守 ✓，脚本抛错即忽略 ✓）：`createLayer` ✗、`getInitialLayerConfig` ✗（动态建层 ✗）、模块系统（`import WEVector` ✗）、`engine` ✗。

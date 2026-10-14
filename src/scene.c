@@ -66,6 +66,8 @@ static void free_order(XWSceneCtx *c) {
   c->order = NULL;
   c->order_scratch = NULL;
   c->order_n = 0;
+  c->scene.order = NULL;
+  c->scene.n_order = 0;
 }
 
 /* The engine's render order is static per scene: build it once after the
@@ -84,6 +86,10 @@ static int build_order(XWSceneCtx *c, XWError *err) {
   }
   c->order_n =
       xw_scene_render_order(c->scene.objects, n, c->order, c->order_scratch);
+  /* the scene owns the order so scripts (thisScene.sortLayer) always see the
+   * live array, even after a rebuild */
+  c->scene.order = c->order;
+  c->scene.n_order = c->order_n;
   if (c->order_n < 0) {
     free_order(c);
     return -1;

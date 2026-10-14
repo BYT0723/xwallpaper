@@ -68,6 +68,14 @@ void xw_script_text_layer_free(XWTextLayer *l);
 typedef struct XWPropScript XWPropScript;
 
 int xw_script_prop_create(XWPropScript **out, const char *src, XWError *err);
+
+/* Hand a property script the scene, the render order it may reorder through
+ * thisScene.sortLayer, and the index of the object it belongs to (thisLayer).
+ * Installs the thisScene/thisLayer bindings and runs init() once, matching
+ * ScriptEngine's callHook("_init"). */
+void xw_script_prop_bind(XWPropScript *p, XWScene *scene, int *order,
+                         int n_order, int owner);
+
 /* Run update() with `in`; fills out3 and returns 0, or returns -1 when the
  * script throws or returns nothing (the caller then keeps its value). */
 int xw_script_prop_update(XWPropScript *p, const float in[3], float out3[3]);

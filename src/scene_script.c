@@ -48,6 +48,8 @@ struct XWScript {
   float mouse_x, mouse_y;
   XWObjPropRunners *objr;
   int objr_n;
+  int *order;
+  int n_order;
 };
 
 static uint64_t mono_ms(void) {
@@ -884,7 +886,174 @@ void xw_script_text_layer_free(XWTextLayer *l) {
 
 struct XWPropScript {
   XWScript *js;
+  XWScene *scene; /* borrowed */
+  int *order;     /* borrowed render order the script may reorder */
+  int n_order;
+  int owner; /* index of the object the script belongs to, -1 when unknown */
 };
+
+/* thisScene.getLayer accepts a layer name or its index. The handle is a plain
+ * object carrying the layer's index, so unknown property writes are harmless
+ * (the engine's layer objects expose far more than we model). */
+static int layer_index_from(JSContext *ctx, JSValueConst v, int n_objects) {
+  JSValue idx;
+  int32_t i = -1;
+  if (JS_IsObject(v)) {
+    idx = JS_GetPropertyStr(ctx, v, "__idx");
+    if (!JS_IsUndefined(idx) && JS_ToInt32(ctx, &i, idx) != 0)
+      i = -1;
+    JS_FreeValue(ctx, idx);
+  } else if (JS_IsNumber(v)) {
+    if (JS_ToInt32(ctx, &i, v) != 0)
+      i = -1;
+  }
+  if (i < 0 || i >= n_objects)
+    return -1;
+  return (int)i;
+}
+
+static JSValue layer_handle(JSContext *ctx, XWScene *scene, int i) {
+  JSValue o = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, o, "__idx", JS_NewInt32(ctx, i));
+  if (scene && i >= 0 && i < scene->n_objects)
+    JS_SetPropertyStr(ctx, o, "name",
+                      JS_NewString(ctx, scene->objects[i].id));
+  return o;
+}
+
+static JSValue scene_get_layer(JSContext *ctx, JSValueConst this_val, int argc,
+                               JSValueConst *argv) {
+  (void)this_val;
+  XWPropScript *p = JS_GetContextOpaque(ctx);
+  XWScene *sc;
+  int i;
+  if (!p || !p->scene || argc != 1)
+    return JS_UNDEFINED;
+  sc = p->scene;
+  if (JS_IsString(argv[0])) {
+    const char *name = JS_ToCString(ctx, argv[0]);
+    if (!name)
+      return JS_UNDEFINED;
+    for (i = 0; i < sc->n_objects; i++)
+      if (strcmp(sc->objects[i].id, name) == 0) {
+        JS_FreeCString(ctx, name);
+        return layer_handle(ctx, sc, i);
+      }
+    JS_FreeCString(ctx, name);
+    return JS_UNDEFINED;
+  }
+  i = layer_index_from(ctx, argv[0], sc->n_objects);
+  if (i < 0)
+    return JS_UNDEFINED;
+  return layer_handle(ctx, sc, i);
+}
+
+static JSValue scene_get_layer_index(JSContext *ctx, JSValueConst this_val,
+                                     int argc, JSValueConst *argv) {
+  (void)this_val;
+  XWPropScript *p = JS_GetContextOpaque(ctx);
+  int i, k, *order, n;
+  if (!p || !p->scene || argc != 1)
+    return JS_NewInt32(ctx, -1);
+  order = p->scene->order;
+  n = p->scene->n_order;
+  if (!order || n <= 0)
+    return JS_NewInt32(ctx, -1);
+  i = layer_index_from(ctx, argv[0], p->scene->n_objects);
+  if (i < 0)
+    return JS_NewInt32(ctx, -1);
+  for (k = 0; k < n; k++)
+    if (order[k] == i)
+      return JS_NewInt32(ctx, k);
+  return JS_NewInt32(ctx, -1);
+}
+
+static JSValue scene_sort_layer(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv) {
+  (void)this_val;
+  XWPropScript *p = JS_GetContextOpaque(ctx);
+  int i, at, from, k, *order, n;
+  if (!p || !p->scene || argc != 2)
+    return JS_UNDEFINED;
+  order = p->scene->order;
+  n = p->scene->n_order;
+  if (!order || n <= 0)
+    return JS_UNDEFINED;
+  i = layer_index_from(ctx, argv[0], p->scene->n_objects);
+  if (JS_ToInt32(ctx, &at, argv[1]) != 0)
+    return JS_UNDEFINED;
+  if (i < 0)
+    return JS_UNDEFINED;
+  if (at < 0)
+    at = 0;
+  if (at >= n)
+    at = n - 1;
+  from = -1;
+  for (k = 0; k < n; k++)
+    if (order[k] == i)
+      from = k;
+  if (from < 0 || from == at)
+    return JS_UNDEFINED;
+  if (from < at)
+    for (k = from; k < at; k++)
+      order[k] = order[k + 1];
+  else
+    for (k = from; k > at; k--)
+      order[k] = order[k - 1];
+  order[at] = i;
+  return JS_UNDEFINED;
+}
+
+static JSValue scene_layer_count(JSContext *ctx, JSValueConst this_val,
+                                 int argc, JSValueConst *argv) {
+  XWPropScript *p = JS_GetContextOpaque(ctx);
+  (void)this_val;
+  (void)argc;
+  (void)argv;
+  return JS_NewInt32(ctx, p && p->scene ? p->scene->n_objects : 0);
+}
+
+/* installs thisScene / thisLayer and runs init() once */
+void xw_script_prop_bind(XWPropScript *p, XWScene *scene, int *order,
+                         int n_order, int owner) {
+  JSValue global, obj, handle;
+  JSContext *ctx;
+  if (!p || !p->js)
+    return;
+  ctx = p->js->ctx;
+  JS_SetContextOpaque(ctx, p);
+  p->scene = scene;
+  p->order = order;
+  p->n_order = n_order > 0 ? n_order : 0;
+  p->owner = owner;
+  (void)order;
+  (void)n_order;
+  global = JS_GetGlobalObject(ctx);
+  obj = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, obj, "getLayer",
+                    JS_NewCFunction(ctx, scene_get_layer, "getLayer", 1));
+  JS_SetPropertyStr(
+      ctx, obj, "getLayerIndex",
+      JS_NewCFunction(ctx, scene_get_layer_index, "getLayerIndex", 1));
+  JS_SetPropertyStr(ctx, obj, "sortLayer",
+                    JS_NewCFunction(ctx, scene_sort_layer, "sortLayer", 2));
+  JS_SetPropertyStr(
+      ctx, obj, "getLayerCount",
+      JS_NewCFunction(ctx, scene_layer_count, "getLayerCount", 0));
+  JS_SetPropertyStr(ctx, global, "thisScene", obj);
+  handle = layer_handle(ctx, scene, owner);
+  JS_SetPropertyStr(ctx, global, "thisLayer", handle);
+  JS_FreeValue(ctx, global);
+  /* the engine runs init() once when the layer is created; a script whose
+   * init throws is logged and skipped, which is what the engine does too */
+  /* the engine runs init() once when the layer is created; a script whose
+   * init throws is logged and skipped there too */
+  xw_script_eval(p->js,
+                 "if (typeof init === 'function') {\n"
+                 "  init(typeof thisLayer !== 'undefined' ? thisLayer : null);\n"
+                 "}\n",
+                 "prop-init.js", NULL);
+}
 
 static const char *prop_script_prelude =
     "function Vec3(x, y, z) { this.x = x; this.y = y; this.z = z; }\n"
@@ -1047,6 +1216,7 @@ void xw_script_apply_object_props(XWScript *s, XWSceneObject *o) {
         o->prop_script[k][0] = '\0';
         continue;
       }
+      xw_script_prop_bind(r->p[k], s->scene, s->order, s->n_order, i);
     }
     if (k == XW_PROP_VISIBLE) {
       int b = o->visible;

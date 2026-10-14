@@ -265,6 +265,10 @@ typedef struct XWScene {
   int n_props;
   XWSceneObject *objects;
   int n_objects;
+  /* the render order (object indices, dependencies first); scripts may
+   * reorder it through thisScene.sortLayer */
+  int *order;
+  int n_order;
 } XWScene;
 
 #endif
