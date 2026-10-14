@@ -144,7 +144,8 @@ static int parse_dynfloat(struct json_object *o, const char *key,
   }
   if (t != json_type_object) return -1;
   struct json_object *u = NULL;
-  if (json_object_object_get_ex(v, "user", &u) && u) {
+  if (json_object_object_get_ex(v, "user", &u) && u &&
+      json_object_get_type(u) == json_type_string) {
     struct json_object *w = NULL;
     d->kind = XW_DYN_USER;
     copy_str(d->ref, sizeof(d->ref), json_object_get_string(u));
@@ -160,17 +161,18 @@ static int parse_dynfloat(struct json_object *o, const char *key,
     copy_str(d->ref, sizeof(d->ref), json_object_get_string(u));
     return 0;
   }
-  /* a "scripted property" wraps its base value as
-   * {"script": .., "value": <number>}: the engine runs the script each frame
-   * (2887099508 fades layers on cursor enter/leave), we apply the base so the
-   * object still loads instead of failing the whole scene */
-  if (json_object_object_get_ex(v, "script", &u) && u) {
+  /* a "scripted" or "animated" property wraps its base value in `value`
+   * (with `script` and/or `animation` alongside); the engine drives it per
+   * frame, we apply the base so the object still loads. 2887099508 puts one
+   * on almost every object. */
+  {
     struct json_object *w = NULL;
     if (json_object_object_get_ex(v, "value", &w) && w &&
         (json_object_get_type(w) == json_type_double ||
-         json_object_get_type(w) == json_type_int))
+         json_object_get_type(w) == json_type_int)) {
       d->constant = (float)json_object_get_double(w);
-    return 0;
+      return 0;
+    }
   }
   return -1;
 }
@@ -1046,25 +1048,45 @@ static int parse_object_at(const char *dir, struct json_object *jo,
   }
   parse_particle_cfg(dir, jo, o);
   if (json_object_object_get_ex(jo, "text", &v) && v) {
-    if (json_object_get_type(v) != json_type_object) {
-      XW_ERROR_SET(err, 1, "text must be an object");
+    if (json_object_get_type(v) != json_type_object &&
+        json_object_get_type(v) != json_type_string) {
+      XW_ERROR_SET(err, 1, "text must be a string or a scripted object");
       return -1;
     }
-    struct json_object *e = NULL;
-    if (json_object_object_get_ex(v, "content", &e) && e)
-      copy_str(o->text.content, sizeof(o->text.content),
-               json_object_get_string(e));
-    if (json_object_object_get_ex(v, "font", &e) && e)
-      copy_str(o->text.font, sizeof(o->text.font), json_object_get_string(e));
-    if (json_object_object_get_ex(v, "size", &e) && e)
-      o->text.size = (float)json_object_get_double(e);
-    o->text.color[0] = 1.0f;
-    o->text.color[1] = 1.0f;
-    o->text.color[2] = 1.0f;
-    o->text.color[3] = 1.0f;
-    if (get_vec4(v, "color", o->text.color) != 0) {
-      XW_ERROR_SET(err, 1, "text color must be [r, g, b, a]");
-      return -1;
+    {
+      struct json_object *e = NULL;
+      /* the real format puts the content in `text` itself - either a plain
+       * string or {"script": .., "value": <string>} driven per frame */
+      if (json_object_get_type(v) == json_type_string) {
+        copy_str(o->text.content, sizeof(o->text.content),
+                 json_object_get_string(v));
+      } else if (json_object_object_get_ex(v, "value", &e) && e &&
+                 json_object_get_type(e) == json_type_string) {
+        copy_str(o->text.content, sizeof(o->text.content),
+                 json_object_get_string(e));
+      }
+      /* font, point size and colour are siblings of `text` */
+      if (json_object_object_get_ex(jo, "font", &e) && e &&
+          json_object_get_type(e) == json_type_string)
+        copy_str(o->text.font, sizeof(o->text.font),
+                 json_object_get_string(e));
+      if (json_object_object_get_ex(jo, "pointsize", &e) && e &&
+          (json_object_get_type(e) == json_type_double ||
+           json_object_get_type(e) == json_type_int))
+        o->text.size = (float)json_object_get_double(e);
+      o->text.color[0] = 1.0f;
+      o->text.color[1] = 1.0f;
+      o->text.color[2] = 1.0f;
+      o->text.color[3] = 1.0f;
+      /* a colour may be a {user,value} dict; it is an RGB triple there */
+      {
+        float c3[3];
+        if (get_vec3(jo, "color", c3) == 0) {
+          o->text.color[0] = c3[0];
+          o->text.color[1] = c3[1];
+          o->text.color[2] = c3[2];
+        }
+      }
     }
   }
   if (json_object_object_get_ex(jo, "sound", &v) && v) {

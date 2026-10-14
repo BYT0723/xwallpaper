@@ -29,9 +29,22 @@
     },
     {
       "id": "title",
-      "text": {"content": "Hello", "font": "fonts/roboto.ttf", "size": 48.0,
-               "color": [1.0, 1.0, 1.0, 1.0]},
+      "text": "Hello",
+      "font": "fonts/roboto.ttf",
+      "pointsize": 48.0,
+      "color": "1.0 1.0 1.0",
       "origin": [1920, 200],
+      "alpha": 1.0
+    },
+    {
+      "id": "clock",
+      "text": {
+        "script": "'use strict';\nexport function update(value) { return value; }\n",
+        "value": "Scripted"
+      },
+      "font": "fonts/clock.ttf",
+      "pointsize": 32.0,
+      "origin": [100, 100],
       "alpha": 1.0
     },
     {

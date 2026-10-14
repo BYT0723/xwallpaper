@@ -58,7 +58,7 @@ static void test_scene_shell(void) {
     TEST_FAIL("init: %s", err.msg);
     return;
   }
-  TEST_CHECK_EQ_INT(xw_scene_object_count(&backend), 4);
+  TEST_CHECK_EQ_INT(xw_scene_object_count(&backend), 5);
   TEST_CHECK_EQ_INT(backend.start(&backend), 0);
   TEST_CHECK(xw_scene_frames(&backend) >= 2);
 
@@ -137,7 +137,7 @@ static void test_scene_reload_grow(void) {
     "tests/data/scene/realrain",
     "tests/data/scene",
   };
-  const int counts[] = {2, 13, 4, 13, 2};
+  const int counts[] = {2, 13, 5, 13, 2};
   for (int k = 0; k < 5; k++) {
     XWBackendOpt opt;
     memset(&opt, 0, sizeof(opt));

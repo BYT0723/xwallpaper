@@ -16,7 +16,10 @@
       "scale": { "value": "0.50000 0.50000 0.50000" },
       "size": "100 200",
       "alpha": {
-        "script": "'use strict';\nexport function update(value) { return value * 0.5; }\n",
+        "animation": {
+          "options": [ { "time": 0.0, "value": 0.25 } ],
+          "mode": "single"
+        },
         "value": 0.25
       }
     }

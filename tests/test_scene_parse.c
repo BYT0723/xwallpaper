@@ -52,7 +52,7 @@ static void test_full_types(void) {
   int rc = xw_scene_parse("tests/data/scene/full", &s, &err);
   TEST_CHECK_EQ_INT(rc, 0);
   if (rc != 0) return;
-  TEST_CHECK_EQ_INT(s.n_objects, 4);
+  TEST_CHECK_EQ_INT(s.n_objects, 5);
   if (s.n_objects != 4) {
     xw_scene_free(&s);
     return;
@@ -83,9 +83,18 @@ static void test_full_types(void) {
   TEST_CHECK_EQ_INT(s.objects[2].type, XW_OBJ_TEXT);
   TEST_CHECK_EQ_STR(s.objects[2].text.content, "Hello");
   TEST_CHECK_EQ_STR(s.objects[2].text.font, "fonts/roboto.ttf");
-  TEST_CHECK_EQ_INT(s.objects[3].type, XW_OBJ_SOUND);
-  TEST_CHECK_EQ_STR(s.objects[3].sound.file, "audio/bgm.ogg");
-  TEST_CHECK_EQ_INT(s.objects[3].sound.loop, 1);
+  /* the real format keeps the size in `pointsize`, not in a nested object */
+  TEST_CHECK(s.objects[2].text.size > 47.9f && s.objects[2].text.size < 48.1f);
+  TEST_CHECK(s.objects[2].text.color[0] > 0.99f &&
+             s.objects[2].text.color[2] > 0.99f);
+  /* a scripted text carries its base string in `value` */
+  TEST_CHECK_EQ_INT(s.objects[3].type, XW_OBJ_TEXT);
+  TEST_CHECK_EQ_STR(s.objects[3].text.content, "Scripted");
+  TEST_CHECK_EQ_STR(s.objects[3].text.font, "fonts/clock.ttf");
+  TEST_CHECK(s.objects[3].text.size > 31.9f && s.objects[3].text.size < 32.1f);
+  TEST_CHECK_EQ_INT(s.objects[4].type, XW_OBJ_SOUND);
+  TEST_CHECK_EQ_STR(s.objects[4].sound.file, "audio/bgm.ogg");
+  TEST_CHECK_EQ_INT(s.objects[4].sound.loop, 1);
   xw_scene_free(&s);
 }
 
@@ -341,8 +350,8 @@ static void test_scripted_vec_props(void) {
     TEST_CHECK(s.objects[0].scale[0] > 0.49f && s.objects[0].scale[0] < 0.51f);
     TEST_CHECK((int)s.objects[0].size[0] == 100);
     TEST_CHECK((int)s.objects[0].size[1] == 200);
-    /* a scripted alpha unwraps to its base value instead of failing the load
-     * (2887099508 carries one on almost every object) */
+    /* an animated/scripted alpha unwraps to its base value instead of
+     * failing the load (2887099508 carries one on almost every object) */
     TEST_CHECK_EQ_INT(s.objects[0].alpha.kind, XW_DYN_CONSTANT);
     TEST_CHECK(s.objects[0].alpha.constant > 0.24f &&
                s.objects[0].alpha.constant < 0.26f);
