@@ -124,7 +124,7 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
 
 | 能力 | 参考 | 本侧 |
 |---|---|---|
-| font / size / color / content | ✅ | ✅（FreeType 光栅化） |
+| font / size / color / content | ✅ | ✅（FreeType 光栅化；**格式曾不匹配真实数据，2026-10-14 已修**） |
 | **script layer**（JS 驱动文本内容） | ✅ `CText::initScriptLayer` | 🔴 |
 | UTF-8 / CJK shaping | ✅ | 🔴（Latin-1 单行） |
 | 对齐 / 锚点 / 换行 / maxwidth | ✅ | 🔴 |
@@ -237,6 +237,13 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
   粒子配置缺省（`rate` 10 / `maxcount` 100，影响 8+3 处，此前**整层不可见**）。
 - **新增缺口记录**：球发射器的 `speedmin/speedmax`（向外初速度，语料 1 处）；
   `angularmovement`(4) / `angularvelocityrandom`(4) / `controlpointattract`(4) 仍缺（下一轮候选）。
+- **方法论修正（重要）**：3.5 文本一行原先是**按代码意图**而非**真实数据**核对的 —— 本轮用真包验证时发现，
+  真实 text 对象的格式（内容在 `text` 本身 + 同级 `font`/`pointsize`/`color`）**此前根本不被解析**，
+  2887099508 因此**整包加载失败**。已按真实格式修复。**教训：能力矩阵的每一行都必须用真包核对**，
+  不能只看代码"看起来支持"。
+- **2026-10-14 第二批落地**：`angularmovement` + `angularvelocityrandom`（角运动）；
+  真实 text 格式；animated/scripted 数值兜底（`{"animation":…,"value":…}`）。
+  2887099508 从"整包拒绝"变为正常出图。
 
 ## 6. 结论与风险
 

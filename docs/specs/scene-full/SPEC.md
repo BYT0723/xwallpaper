@@ -460,3 +460,21 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   （对上一版整帧 RMSE 0.0297）。另确认：`starttime` 参考**解析但从未使用**（我们同样忽略，属正确）。
 - **球发射器 `speedmin/speedmax`（未做）**：参考的球发射器会额外把初速度设为"从球心向外"方向 ×
   `rand(speedmin,speedmax)`（盒发射器不做）；语料中仅 3808922316 使用且 min=max=1，影响很小，记入待做。
+- **角运动 operator + angularvelocityrandom（2026-10-14 已实现）**：语料 4 个系统用
+  `angularvelocityrandom`(4) + `angularmovement`(4)。语义（照 `CParticle::createAngular*`）：
+  `angularvelocityrandom` 每轴 `min + pow(rand, exponent)*(max-min)` 再乘速度倍率；
+  `angularmovement` 先 `rotation += angularVelocity*dt*speed`，再叠加 `force`、按 `drag` 衰减，
+  最后把角度**绕回 (-π, π]**。引擎是 vec3，我们的四边形只承载面内自转 → 只取 **Z 分量**。
+  缺省照 `ObjectParser`：`±5 rad/s`、drag 0、force 0。
+  **真机 A/B 结论（重要，避免误判）**：对 2887099508 关/开自转，整帧 RMSE **0**——不是 bug：
+  该壁纸画布 **6080×3420**，受影响的 Sakura 对象在 `x=4159`（**在我们视野之外**，因为相机
+  `eye/center` lookAt 尚未实现），另一处 `light_shafts` 的 `rate` 仅 **0.2/s**（3 秒内 0~1 颗）。
+  即语料中受该特性影响的系统本身几乎不可见，价值在于**忠实度**而非观感。
+- **真实 text 对象格式（2026-10-14 已修，重要）**：2887099508 **整包加载失败**，根因是我们此前**自造**了
+  text 的数据形状。真实格式：内容就在 `text` 本身（**字符串**，或 `{"script":…, "value":…}` 的脚本串），
+  `font` / `pointsize` / `color` 是它的**同级字段**；字号在 **`pointsize`**（不是 `size`，后者是对象几何），
+  颜色是 **RGB 三元组**（可 `{user,value}`）。现按真实格式解析；fixture 同步改成真实形状。
+- **animated / scripted 数值兜底（2026-10-14 已修）**：`alpha` 除了数字与 `{user}`/`{expression}`，还有
+  `{"animation":…, "value":…}`（关键帧）与 `{"script":…, "value":…}` 两种——2887099508 里 **17 个对象**
+  用前者。现 `parse_dynfloat` 对**任何带数值 `value` 的 dict** 取基准值（`user` 非字符串时不再误当引用）。
+  修后该壁纸从"整包拒绝"变为**正常出图**。
