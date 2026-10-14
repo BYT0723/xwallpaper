@@ -618,3 +618,12 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   （引擎把表 resize 到 8 ✓），缺省照 `ObjectParser`：controlpoint 0 / origin (0,0,0) / scale 100 / threshold 1000 ✓。
   **至此语料中实际用到的 operator 已全部实现** ✓（movement / alphafade / oscillateposition / oscillatealpha /
   oscillatesize / angularmovement / controlpointattract；其余在语料中 0 次 ✓）。
+- **剩余缺口的数据排查（2026-10-14，用于选下一步）**：
+  - **`camerafade`（8 张壁纸）**：参考里**只解析给脚本用** ✓（`WallpaperParser` 存 `.fade`，
+    仅 `thisScene.camerafade` 暴露给 JS ✓），**渲染路径完全未使用** ✗ → **忽略它是正确的** ✓，无需实现 ✓。
+  - **`animationlayers`（45 个对象 / 3 张）**：**宿主 100% 是 puppet（3D 骨骼模型）** ✗，非 puppet **0 个** ✓；
+    层里的 `animation` 指向的是骨骼动画片段（"呼吸/动作/眨眼" ✓）→ 属**3D 模型大特性** ✗，
+    与报告里的 puppet 缺口同源 ✓，**不是合适的下一项** ✗。
+  - **`fullscreen` 对象：语料中 0 个** ✓ → 报告里的"fullscreen 图层"一行实为**无实际影响** ✓。
+  - **文本排版是剩余可见项** ✓：对齐分布为 `center/center` 18 个 ✓、**`h=left` 8 个** ✗（我们会画成居中 ✗）、
+    `maxwidth` 30 个 ✗、`padding` 29 个 ✗ → 下一步做**文本水平对齐 + padding + maxwidth 折行** ✓。
