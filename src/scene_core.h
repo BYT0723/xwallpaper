@@ -58,6 +58,14 @@ int xw_core_present_uvs(float *u0, float *v0, float *u1, float *v1);
 void xw_text_place(float ox, float oy, float ortho_w, float ortho_h, int win_w,
                    int win_h, float *dx, float *dy, float *scale);
 
+/* An image object's quad in window pixels. The engine sizes the quad from
+ * the texture's real dimensions (not the scene's "size" field) times the
+ * object's scale, and centres it on "origin", which is in canvas pixels
+ * with Y counted up from the bottom. Probe-verified against the engine. */
+void xw_scene_object_rect(const XWSceneObject *o, int tex_w, int tex_h,
+                          float ortho_w, float ortho_h, int win_w, int win_h,
+                          int *x, int *y, int *w, int *h);
+
 /* Dependency-ordered render list. The engine walks the objects in scene
  * order and emits each object's dependencies before it (a DFS post-order),
  * skipping self-references, unknown ids and repeats. Fills `order` with

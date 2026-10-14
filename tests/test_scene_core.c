@@ -168,6 +168,58 @@ static void test_text_place(void) {
   TEST_CHECK(sc > 0.99f && sc < 1.01f);
 }
 
+static void test_object_rect(void) {
+  XWSceneObject o;
+  int x = 0, y = 0, w = 0, h = 0;
+  TEST_BEGIN("image quads use the texture size, centred on origin with Y up");
+  /* measured against the engine with a probe wallpaper: a 3840x2160 texture
+   * scaled 0.1, origin (480, 270), 1920x1080 canvas in a 1920x1080 window.
+   * The scene's own "size" field is ignored - the texture decides. */
+  memset(&o, 0, sizeof(o));
+  o.scale[0] = o.scale[1] = 0.1f;
+  o.origin[0] = 480.0f;
+  o.origin[1] = 270.0f;
+  xw_scene_object_rect(&o, 3840, 2160, 1920.0f, 1080.0f, 1920, 1080, &x, &y,
+                       &w, &h);
+  TEST_CHECK_EQ_INT(x, 288);
+  TEST_CHECK_EQ_INT(y, 702);
+  TEST_CHECK_EQ_INT(w, 384);
+  TEST_CHECK_EQ_INT(h, 216);
+  /* probe: same texture at scale 0.25 on a 3840x2160 canvas shown in a
+   * 1920x1080 window - canvas coordinates and sizes both halve */
+  o.scale[0] = o.scale[1] = 0.25f;
+  o.origin[0] = 960.0f;
+  o.origin[1] = 540.0f;
+  xw_scene_object_rect(&o, 3840, 2160, 3840.0f, 2160.0f, 1920, 1080, &x, &y,
+                       &w, &h);
+  TEST_CHECK_EQ_INT(x, 240);
+  TEST_CHECK_EQ_INT(y, 675);
+  TEST_CHECK_EQ_INT(w, 480);
+  TEST_CHECK_EQ_INT(h, 270);
+  /* 2178468632's night blue: origin.x 948.114 is 12px left of centre, so the
+   * quad starts outside the canvas (the engine clips it there) */
+  memset(&o, 0, sizeof(o));
+  o.scale[0] = o.scale[1] = 1.0f;
+  o.origin[0] = 948.114f;
+  o.origin[1] = 540.0f;
+  xw_scene_object_rect(&o, 1920, 1080, 1920.0f, 1080.0f, 1920, 1080, &x, &y,
+                       &w, &h);
+  TEST_CHECK_EQ_INT(x, -12);
+  TEST_CHECK_EQ_INT(y, 0);
+  TEST_CHECK_EQ_INT(w, 1920);
+  TEST_CHECK_EQ_INT(h, 1080);
+  /* with no texture at all the quad falls back to the window */
+  memset(&o, 0, sizeof(o));
+  o.scale[0] = o.scale[1] = 1.0f;
+  o.origin[0] = 960.0f;
+  o.origin[1] = 540.0f;
+  xw_scene_object_rect(&o, 0, 0, 1920.0f, 1080.0f, 1920, 1080, &x, &y, &w, &h);
+  TEST_CHECK_EQ_INT(x, 0);
+  TEST_CHECK_EQ_INT(y, 0);
+  TEST_CHECK_EQ_INT(w, 1920);
+  TEST_CHECK_EQ_INT(h, 1080);
+}
+
 int main(void) {
   TEST_SUITE("scene_core");
   test_fbo_table();
@@ -178,5 +230,6 @@ int main(void) {
   test_particle_texture_ratio();
   test_render_order();
   test_text_place();
+  test_object_rect();
   TEST_SUMMARY();
 }

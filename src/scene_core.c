@@ -163,3 +163,25 @@ void xw_text_place(float ox, float oy, float ortho_w, float ortho_h, int win_w,
    * camera applies to everything else) */
   *scale = sy;
 }
+
+void xw_scene_object_rect(const XWSceneObject *o, int tex_w, int tex_h,
+                          float ortho_w, float ortho_h, int win_w, int win_h,
+                          int *x, int *y, int *w, int *h) {
+  float qw, qh, sx, sy, left, top;
+  if (!o)
+    return;
+  qw = (float)(tex_w > 0 ? tex_w : win_w) * o->scale[0];
+  qh = (float)(tex_h > 0 ? tex_h : win_h) * o->scale[1];
+  sx = (ortho_w > 0.0f && win_w > 0) ? (float)win_w / ortho_w : 1.0f;
+  sy = (ortho_h > 0.0f && win_h > 0) ? (float)win_h / ortho_h : 1.0f;
+  left = (o->origin[0] - qw * 0.5f) * sx;
+  top = (ortho_h - o->origin[1] - qh * 0.5f) * sy;
+  if (x)
+    *x = (int)floorf(left + 0.5f);
+  if (y)
+    *y = (int)floorf(top + 0.5f);
+  if (w)
+    *w = (int)floorf(qw * sx + 0.5f);
+  if (h)
+    *h = (int)floorf(qh * sy + 0.5f);
+}
