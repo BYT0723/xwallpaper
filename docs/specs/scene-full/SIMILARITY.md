@@ -120,12 +120,12 @@
 （`rotationrandom`×3、`alpharandom`×2、`randomframe`×2、`colorrandom`×1、`turbulentvelocityrandom`×1；
 oscillators / ropetrail / children / controlpoint offset 全为 0）——所以**多数壁纸不受影响**。
 
-### 3.5 文本 —— 覆盖 **≈38%**
+### 3.5 文本 —— 覆盖 **≈55%**
 
 | 能力 | 参考 | 本侧 |
 |---|---|---|
 | font / size / color / content | ✅ | ✅（FreeType 光栅化；**格式曾不匹配真实数据，2026-10-14 已修**） |
-| **script layer**（JS 驱动文本内容） | ✅ `CText::initScriptLayer` | 🔴 |
+| **script layer**（JS 驱动文本内容） | ✅ `CText::initScriptLayer` | ✅ `update(value)` 每帧驱动（2026-10-14） |
 | UTF-8 / CJK shaping | ✅ | 🔴（Latin-1 单行） |
 | 对齐 / 锚点 / 换行 / maxwidth | ✅ | 🔴 |
 | 富文本标记 | ✅ | 🔴 |
@@ -192,13 +192,13 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
 | 粒子系统 | 62% | 20% | 12.4 |
 | 合成与渲染顺序 | 70% | 12% | 8.4 |
 | 脚本 | 32% | 8% | 2.6 |
-| 文本 | 38% | 6% | 2.3 |
+| 文本 | 55% | 6% | 3.3 |
 | 相机 | 55% | 5% | 2.75 |
 | 音频 | 60% | 5% | 3.0 |
 | 打包 / 解码 | 85% | 4% | 3.4 |
-| **合计** | | 100% | **≈68.5%** |
+| **合计** | | 100% | **≈69.5%** |
 
-> **总体功能相似度 ≈ 68%（区间 60–70%）**
+> **总体功能相似度 ≈ 69%（区间 60–70%）**
 
 交叉验证（不是同一个数，但方向一致）：
 
@@ -243,6 +243,8 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
   不能只看代码"看起来支持"。
 - **又一次前提证伪（2026-10-14）**：计划中的"相机 eye/lookAt"经验证是**净无操作**（语料恒为
   `center=eye+(0,0,-1)`，与投影的 `translate(eye)` 抵消）→ 不做；同时更正报告里"auto 投影尺寸"的误判（其实已实现）。
+- **2026-10-14 第五批落地**：**文本脚本层**（`update(value)` 每帧驱动文本，真机已验证时钟/日期 ✓）；
+  同时记录**新缺口**：文本定位未走画布→窗口映射 ✗（落在左上角）。
 - **2026-10-14 第四批落地**：**依赖序渲染**（`dependencies` 的 DFS 后序，取代按类型三趟）——
   对已测壁纸逐位无变化 ✓（场景自然顺序本就一致），但移除了结构性偏差。
 - **2026-10-14 第三批落地**：拖尾 `g_RenderVar1.w` 改为引擎的**每帧**宽高比（雨丝由"短划线"恢复为"细长竖丝"）。
