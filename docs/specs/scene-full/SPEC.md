@@ -507,3 +507,17 @@ int xw_core_present(XWCore *c);  /* scene FBO → window */
   (`refract_amount 0.4` + 法线图) 是否让参考的斑点被"抹平"。
   **参考侧 FFB 时机**：其 `_rt_FullFrameBuffer` 由**合成 bloom 图**写回，且 REFRACT 另拷贝一份影子 FBO 防反馈
   （`CParticle.cpp:1673`），与我们的"每帧一次快照"不完全等价——留作后续对照项。
+- **alphafade 缺省值（2026-10-14 已修）**：引擎 `ObjectParser` 对 `alphafade` 的缺省是
+  `fadeintime 0.5` / `fadeouttime 0.5`，我们此前是 `0.0 / 1.0` ✗ → **从不淡出**。斑点配置正是
+  `{"fadeintime": 0, "name": "alphafade"}`（**只写 fadeintime**）→ 参考的斑点在**后半生淡出到 0**，
+  我们全程 alpha=1 ✗。`fadeValue` 已核对为**线性 lerp**（与我们一致 ✓）。
+  **注意**：在对比时刻（约 1.3–2s）粒子寿命 17.5s、`lf≈0.08` **尚未进入淡出** → 该修复**不改变该帧** ✓，
+  影响的是**稳态**（壁纸长时间运行时）。
+- **`orientation` 无需实现（2026-10-14 核实）**：参考**同样不解析** renderer 的 `orientation`（其
+  `g_OrientationUp/Right/Forward` 是固定默认值）→ 我们忽略它与参考一致 ✓，不是差异来源。
+  `ComputeSpriteFrame` 用**寿命分数** `floor(frac(lifetime)*numFrames)` 选帧并做**帧间混合**；
+  我们传的是量化后的 `frame/nframes`（能选中同一帧、但混合恒为 0）——记为已知小差异。
+- **对比方法学问题（2026-10-14 发现，重要）**：`--screenshot-delay` 的单位是**帧**（非秒），
+  两边帧率未知；且粒子池是**爬升**的（帧 40 时斑点各 2733，稳态被 maxcount 10000 截断 → 稳态 2 万）。
+  实测：帧 40 贡献 0.00227，**12s 时升到 0.00796**。**结论：斑点可见度的对比必须在两边相同的
+  场景时间、且处于稳态下进行**，否则计数不可比。此前"斑点 3.2×"的结论需在此前提下重测。

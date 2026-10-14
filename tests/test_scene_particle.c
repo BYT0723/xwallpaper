@@ -560,6 +560,28 @@ static void test_angular_movement_drag(void) {
   xw_emitter_free(&e);
 }
 
+static void test_alpha_fade_defaults(void) {
+  XWEmitter e;
+  XWParticleCfg c = cfg_single();
+  int i;
+  TEST_BEGIN("alphafade fades out over the second half of the lifetime");
+  c.life = 4.0f;
+  c.has_alpha_fade = 1;
+  c.fade_in = 0.0f;
+  c.fade_out = 0.5f; /* the engine's default when the wallpaper omits it */
+  TEST_CHECK_EQ_INT(xw_emitter_init(&e, &c), 0);
+  /* the particle spawns after a second, then we step to 3/4 of its life */
+  for (i = 0; i < 240; i++) xw_emitter_update(&e, 1.0f / 60.0f);
+  TEST_CHECK(e.alive > 0);
+  if (e.alive > 0) {
+    float lf = e.parts[0].age / e.parts[0].life;
+    TEST_CHECK(lf > 0.7f && lf < 0.8f);
+    /* life 0.75 sits halfway through the 0.5..1 fade-out, so half the alpha */
+    TEST_CHECK(e.parts[0].a > 0.45f && e.parts[0].a < 0.55f);
+  }
+  xw_emitter_free(&e);
+}
+
 int main(void) {
   TEST_SUITE("scene_particle");
   test_spawn_and_die();
@@ -582,6 +604,7 @@ int main(void) {
   test_angular_velocity_random_range();
   test_angular_movement_force();
   test_angular_movement_drag();
+  test_alpha_fade_defaults();
   test_bad_inputs();
   TEST_SUMMARY();
 }

@@ -697,8 +697,9 @@ static void parse_particle_cfg(const char *dir, struct json_object *jo,
       if (strcmp(json_object_get_string(nm), "alphafade") == 0) {
         struct json_object *fi = NULL, *fo = NULL;
         o->particle.has_alpha_fade = 1;
-        o->particle.fade_in = 0.0f;
-        o->particle.fade_out = 1.0f;
+        /* the engine defaults both fades to 0.5 (ObjectParser) */
+        o->particle.fade_in = 0.5f;
+        o->particle.fade_out = 0.5f;
         if (json_object_object_get_ex(it, "fadeintime", &fi) && fi)
           o->particle.fade_in = (float)json_object_get_double(fi);
         if (json_object_object_get_ex(it, "fadeouttime", &fo) && fo)

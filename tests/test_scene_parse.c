@@ -459,6 +459,12 @@ static void test_particle_defaults(void) {
   TEST_CHECK_EQ_INT(p->max_count, 100);
   /* an omitted animationmode is "sequence" */
   TEST_CHECK_EQ_STR(p->animation_mode, "sequence");
+  /* alphafade defaults both fades to 0.5 (ObjectParser); the wallpaper only
+   * spells fadeintime, and without the 0.5 default the particle never fades
+   * out - the rain speckles stay at full alpha for their whole life */
+  TEST_CHECK_EQ_INT(p->has_alpha_fade, 1);
+  TEST_CHECK(p->fade_in == 0.0f);
+  TEST_CHECK(p->fade_out > 0.49f && p->fade_out < 0.51f);
   xw_scene_free(&s);
 }
 

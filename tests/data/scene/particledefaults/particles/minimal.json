@@ -10,6 +10,10 @@
     "operator": [
         {
             "name": "movement"
+        },
+        {
+            "fadeintime": 0,
+            "name": "alphafade"
         }
     ],
     "renderer": [
