@@ -71,7 +71,7 @@
 | 跨对象 `_rt_imageLayerComposite_<id>_a/b` | ✅ 每个图像对象注册一对 | 🔴 **保守降级**（无法解析的 `_rt_*` → 保留底图） |
 | `alignment`（top/bottom/left/right） | ✅ | 🔴 |
 | `fullscreen` 图层 | ✅ | 🔴 |
-| `passthrough` / `solidlayer` | ✅ | 🔴 |
+| `passthrough` / `solidlayer` | ✅ | 🔴（语料 0 次） |
 | `animationlayers`（图像序列动画层） | ✅ | 🔴 |
 | puppet 网格（3D 模型图） | ✅ | 🔴 |
 | 逐对象 parallax 深度 | ✅ | 🔴 |
@@ -96,9 +96,9 @@
 | 能力 | 参考 | 本侧 |
 |---|---|---|
 | emitter `boxrandom` / `sphererandom` | ✅ | ✅（盒 + 圆盘/球壳） |
-| emitter `sphererandom` | ✅ | 🔴 |
+| emitter `sphererandom` | ✅ | ✅（2026-10-14） |
 | `rate` / `origin` / `directions` | ✅ | ✅ |
-| `instantaneous` / `duration` / `delay` / 周期发射 / `limitOnePerFrame` | ✅ | 🔴 |
+| `instantaneous` / `duration` / `delay` / 周期发射 / `limitOnePerFrame` | ✅ | 🔴（语料值下无实际影响：`duration 100s`、`instantaneous 1`） |
 | initializer 数量 | **9** | **7** |
 | ↳ `velocityrandom` `sizerandom` `alpharandom` `colorrandom` `rotationrandom` `lifetimerandom` `turbulentvelocityrandom` | ✅ | ✅ |
 | ↳ `angularvelocityrandom` | ✅ | ✅ |
@@ -107,12 +107,12 @@
 | ↳ `movement`（gravity/drag）`alphafade` `oscillateposition` `oscillatealpha` `oscillatesize` `angularmovement` `controlpointattract` | ✅ | ✅ **语料用到的全部已实现** |
 | ↳ `sizechange` `alphachange` `colorchange` `turbulence` `vortex` | ✅ | 🔴（语料中 0 次） |
 | renderer `sprite` / `spritetrail` | ✅ | ✅ |
-| renderer `rope` / `ropetrail` | ✅ | 🔴 |
+| renderer `rope` / `ropetrail` | ✅ | 🔴（语料 0 次） |
 | 材质 pass（17 float/顶点：`a_Position/a_TexCoordVec4/a_Color/…`） | ✅ | ✅ `genericparticle` 可编译运行 |
 | 图集逐帧采样（TEXS 时长、`sequence`/`randomframe`） | ✅ | ✅ |
 | 正交投影 / `flags&4` 透视投影 | ✅ | ✅ |
-| 控制点（含 `linkMouse`） | ✅ | 🔴 |
-| 子粒子系统 / children | ✅ | 🔴 |
+| 控制点（含 `linkMouse`） | ✅ | 🟡 偏移已用（`controlpointattract` ✓）；`linkMouse` 语料 0 次 |
+| 子粒子系统 / children | ✅ | 🔴（语料全为 null） |
 | 音频驱动发射（`audioProcessing*`） | 🟡 参考亦仅部分 | 🔴 |
 | `fadeAlpha` / `fadeSize`（rope 用） | ✅ | 🔴 |
 
@@ -152,8 +152,8 @@ oscillators / ropetrail / children / controlpoint offset 全为 0）——所以
 | 模块系统（`import` + `weColor`/`weMath`） | ✅ | 🔴 |
 | `VectorAdapter`（vec2/3/4 带方法） | ✅ | 🔴 |
 | 定时器 | `engine.setTimeout/…` | ✅ 全局 `setTimeout/setInterval` |
-| 文本层脚本 | ✅ | 🔴 |
-| 脚本属性**求值**（`{"script":…}` 每帧驱动） | ✅ | 🟡 只取基准 `value`，不求值 |
+| 文本层脚本 | ✅ | ✅（2026-10-14，`update(value)` 每帧驱动） |
+| 脚本属性**求值**（`{"script":…}` 每帧驱动） | ✅ | 🟡 运行器已实现但**未接线**（被对象摆放阻塞） |
 | 用户属性（`--list-properties` / `--set-property`） | 参考用 CLI 参数 | ✅ 本侧有等价能力 |
 
 ### 3.8 相机 —— 覆盖 **≈47%**
