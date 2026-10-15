@@ -5,6 +5,7 @@
 
 #include "backend.h"
 #include "cli.h"
+#include "keybinds.h"
 #include "xw_err.h"
 
 /* One desktop wallpaper window. Owned by the x11 module, shared with backends.
@@ -38,7 +39,11 @@ typedef struct XWWindow {
   int scale_mode;         /* XW_SCALE_* */
   double opacity;         /* 0..1 */
   int below, sticky, skip_taskbar, skip_pager, no_focus;
-  char keybinds[1024];        /* mpv input.conf path, "" = none */
+  char keybinds[1024];        /* key file path, "" = none given */
+  /* key bindings parsed from that file (or the default location); the
+   * daemon dispatches them to this window's backend while it has focus */
+  XWBind binds[XW_KEYBINDS_MAX];
+  int nbinds;                 /* 0 = none loaded */
   char audio_client_name[64]; /* audio API client name */
 
   /* callback: pointer events forwarded to root (installed by x11) */

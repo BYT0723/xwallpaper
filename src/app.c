@@ -915,10 +915,43 @@ void xw_app_tick_backends(XWApp *app) {
       app->backends[i]->tick(app->backends[i]);
 }
 
+/* Feed a key press to the focused wallpaper's bindings: the key is
+ * normalised the same way the file spells it, looked up, and turned into the
+ * backend control action it names. Returns 1 when a binding consumed it.
+ * An action this backend cannot do is silently ignored — a keypress must
+ * never surface an error. */
+static int dispatch_key(XWApp *app, XWWindow *win, XWBackend *b, XEvent *ev) {
+  char key[XW_BIND_KEY_MAX], name[32], value[64];
+  const XWBind *bind;
+  const char *sym;
+  KeySym ks = NoSymbol;
+  XComposeStatus cs;
+  if (!win || win->nbinds <= 0)
+    return 0;
+  memset(&cs, 0, sizeof(cs));
+  XLookupString(&ev->xkey, NULL, 0, &ks, &cs);
+  sym = ks != NoSymbol ? XKeysymToString(ks) : NULL;
+  if (!sym || xw_keybinds_norm_key(sym, key, sizeof(key)) != 0)
+    return 0;
+  bind = xw_keybinds_find(win->binds, win->nbinds, key);
+  if (!bind ||
+      xw_keybinds_to_action(bind, name, sizeof(name), value, sizeof(value)) != 0)
+    return 0;
+  if (b && b->control) {
+    XWError err;
+    memset(&err, 0, sizeof(err));
+    (void)b->control(b, name, value, &err);
+  }
+  (void)app;
+  return 1;
+}
+
 int xw_app_handle_event(XWApp *app, XEvent *ev) {
   for (int i = 0; i < app->nwins; i++) {
     XWWindow *win = app->wins[i];
     if (win && ev->xany.window == win->win) {
+      if (ev->type == KeyPress)
+        dispatch_key(app, win, app->backends[i], ev);
       xw_x11_handle_event(win, ev);
       if (app->backends[i] && app->backends[i]->on_event)
         app->backends[i]->on_event(app->backends[i], ev);

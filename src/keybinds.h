@@ -50,4 +50,18 @@ int xw_audio_apply(int cur, const char *value, int *out);
  * when cur is not in the list. Returns 0, or -1 on bad arguments. */
 int xw_values_cycle(const int *vals, int n, int cur, int *out);
 
+/* Read a key file from disk; returns the bind count, or -1 when it cannot be
+ * read (callers treat that as "no key bindings"). */
+int xw_keybinds_load(const char *path, XWBind *out, int max);
+
+/* Where the key file lives when --keybinds is not given:
+ * $XDG_CONFIG_HOME/xwallpaper/keys, else $HOME/.config/xwallpaper/keys. */
+int xw_keybinds_default_path(char *out, size_t n);
+
+/* Translate a bind into the backend control action it invokes: `name` is one
+ * of volume/mute/pause/seek/rotate and `value` its argument. Returns 0, or -1
+ * on bad arguments or an empty action. */
+int xw_keybinds_to_action(const XWBind *b, char *name, size_t n, char *value,
+                          size_t m);
+
 #endif /* XW_KEYBINDS_H */

@@ -232,3 +232,92 @@ int xw_values_cycle(const int *vals, int n, int cur, int *out) {
   *out = vals[0];
   return 0;
 }
+
+int xw_keybinds_load(const char *path, XWBind *out, int max) {
+  FILE *f;
+  long sz;
+  char *text;
+  int n;
+  size_t got;
+  if (!path || !path[0] || !out || max <= 0)
+    return -1;
+  f = fopen(path, "rb");
+  if (!f)
+    return -1;
+  if (fseek(f, 0, SEEK_END) != 0) {
+    fclose(f);
+    return -1;
+  }
+  sz = ftell(f);
+  rewind(f);
+  if (sz <= 0 || sz > 64 * 1024) {
+    fclose(f);
+    return -1;
+  }
+  text = malloc((size_t)sz + 1);
+  if (!text) {
+    fclose(f);
+    return -1;
+  }
+  got = fread(text, 1, (size_t)sz, f);
+  fclose(f);
+  if (got != (size_t)sz) {
+    free(text);
+    return -1;
+  }
+  text[sz] = '\0';
+  n = xw_keybinds_parse(text, out, max);
+  free(text);
+  return n;
+}
+
+int xw_keybinds_default_path(char *out, size_t n) {
+  const char *xdg, *home;
+  if (!out || n == 0)
+    return -1;
+  xdg = getenv("XDG_CONFIG_HOME");
+  if (xdg && xdg[0]) {
+    snprintf(out, n, "%s/xwallpaper/keys", xdg);
+    return 0;
+  }
+  home = getenv("HOME");
+  if (!home || !home[0])
+    return -1;
+  snprintf(out, n, "%s/.config/xwallpaper/keys", home);
+  return 0;
+}
+
+int xw_keybinds_to_action(const XWBind *b, char *name, size_t n, char *value,
+                          size_t m) {
+  if (!b || !name || !value || n == 0 || m == 0)
+    return -1;
+  name[0] = '\0';
+  value[0] = '\0';
+  switch (b->kind) {
+  case XW_ACT_VOLUME:
+    snprintf(name, n, "volume");
+    snprintf(value, m, "%+d", b->volume_delta);
+    break;
+  case XW_ACT_MUTE:
+    snprintf(name, n, "mute");
+    snprintf(value, m, "toggle");
+    break;
+  case XW_ACT_PAUSE:
+    snprintf(name, n, "pause");
+    snprintf(value, m, "toggle");
+    break;
+  case XW_ACT_SEEK:
+    snprintf(name, n, "seek");
+    snprintf(value, m, "%g", b->seek_secs);
+    break;
+  case XW_ACT_ROTATE:
+    /* the engine's rotate action takes a ring; ours cycles the same default
+     * the shipped key files name (90 180 270 0) */
+    snprintf(name, n, "rotate");
+    snprintf(value, m, "cycle");
+    break;
+  default:
+    return -1;
+  }
+  return 0;
+}

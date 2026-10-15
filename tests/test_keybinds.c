@@ -1,5 +1,7 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "harness.h"
 #include "../src/keybinds.h"
@@ -179,6 +181,82 @@ static void test_values_cycle(void) {
   TEST_CHECK_EQ_INT(xw_values_cycle(NULL, 4, 90, &out), -1);
 }
 
+static void test_to_action(void) {
+  XWBind b[XW_KEYBINDS_MAX];
+  char name[32], value[64];
+  int n;
+  TEST_BEGIN("a bind maps onto the backend control name and argument");
+  n = xw_keybinds_parse(kRealFile, b, XW_KEYBINDS_MAX);
+  TEST_CHECK_EQ_INT(n, 9);
+  if (n != 9)
+    return;
+  TEST_CHECK_EQ_INT(xw_keybinds_to_action(&b[0], name, sizeof(name), value,
+                                          sizeof(value)),
+                    0);
+  TEST_CHECK_EQ_STR(name, "seek");
+  TEST_CHECK_EQ_STR(value, "5");
+  TEST_CHECK_EQ_INT(xw_keybinds_to_action(&b[3], name, sizeof(name), value,
+                                          sizeof(value)),
+                    0);
+  TEST_CHECK_EQ_STR(value, "-30");
+  TEST_CHECK_EQ_INT(xw_keybinds_to_action(&b[4], name, sizeof(name), value,
+                                          sizeof(value)),
+                    0);
+  TEST_CHECK_EQ_STR(name, "volume");
+  TEST_CHECK_EQ_STR(value, "-2");
+  TEST_CHECK_EQ_INT(xw_keybinds_to_action(&b[5], name, sizeof(name), value,
+                                          sizeof(value)),
+                    0);
+  TEST_CHECK_EQ_STR(value, "+2");
+  TEST_CHECK_EQ_INT(xw_keybinds_to_action(&b[6], name, sizeof(name), value,
+                                          sizeof(value)),
+                    0);
+  TEST_CHECK_EQ_STR(name, "mute");
+  TEST_CHECK_EQ_STR(value, "toggle");
+  TEST_CHECK_EQ_INT(xw_keybinds_to_action(&b[7], name, sizeof(name), value,
+                                          sizeof(value)),
+                    0);
+  TEST_CHECK_EQ_STR(name, "pause");
+  TEST_CHECK_EQ_STR(value, "toggle");
+  TEST_CHECK_EQ_INT(xw_keybinds_to_action(&b[8], name, sizeof(name), value,
+                                          sizeof(value)),
+                    0);
+  TEST_CHECK_EQ_STR(name, "rotate");
+  TEST_CHECK_EQ_STR(value, "cycle");
+  TEST_CHECK_EQ_INT(xw_keybinds_to_action(NULL, name, sizeof(name), value,
+                                          sizeof(value)),
+                    -1);
+}
+
+static void test_load_and_default_path(void) {
+  static const char *path = "/tmp/xw_test_keys_load.keys";
+  XWBind b[XW_KEYBINDS_MAX];
+  char def[512];
+  FILE *f;
+  TEST_BEGIN("the key file loads from disk and has a default location");
+  f = fopen(path, "w");
+  TEST_CHECK(f != NULL);
+  if (f) {
+    fputs(kRealFile, f);
+    fclose(f);
+  }
+  TEST_CHECK_EQ_INT(xw_keybinds_load(path, b, XW_KEYBINDS_MAX), 9);
+  TEST_CHECK_EQ_INT(xw_keybinds_load("/tmp/xw-no-such-keys-file", b,
+                                     XW_KEYBINDS_MAX),
+                    -1);
+  TEST_CHECK_EQ_INT(xw_keybinds_load(NULL, b, XW_KEYBINDS_MAX), -1);
+  unlink(path);
+
+  setenv("XDG_CONFIG_HOME", "/tmp/xw-cfg", 1);
+  TEST_CHECK_EQ_INT(xw_keybinds_default_path(def, sizeof(def)), 0);
+  TEST_CHECK_EQ_STR(def, "/tmp/xw-cfg/xwallpaper/keys");
+  unsetenv("XDG_CONFIG_HOME");
+  setenv("HOME", "/tmp/xw-home", 1);
+  TEST_CHECK_EQ_INT(xw_keybinds_default_path(def, sizeof(def)), 0);
+  TEST_CHECK_EQ_STR(def, "/tmp/xw-home/.config/xwallpaper/keys");
+  TEST_CHECK_EQ_INT(xw_keybinds_default_path(NULL, 0), -1);
+}
+
 int main(void) {
   TEST_SUITE("keybinds");
   test_real_file();
@@ -189,5 +267,7 @@ int main(void) {
   test_find_and_norm();
   test_audio_apply();
   test_values_cycle();
+  test_to_action();
+  test_load_and_default_path();
   TEST_SUMMARY();
 }

@@ -73,11 +73,10 @@ static int video_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWEr
   /* identify the audio stream (PulseAudio/PipeWire/ALSA) with a friendly name */
   if (opt->audio_client_name && opt->audio_client_name[0])
     mpv_set_option_string(ctx->base.mpv, "audio-client-name", opt->audio_client_name);
-  /* load custom keybinds from an input.conf-style file (empty = none) */
-  if (opt->keybinds && opt->keybinds[0]) {
-    mpv_set_option_string(ctx->base.mpv, "input-conf", opt->keybinds);
-    mpv_set_option_string(ctx->base.mpv, "input-vo-keyboard", "yes");
-  }
+  /* key bindings are the daemon's now: it parses the file and drives this
+   * backend through control(), so mpv must not handle keys itself (which
+   * would act on the same press twice). input-default-bindings and
+   * input-vo-keyboard stay off above. */
   /* target frame rate: the fps filter drops frames to a fixed rate
    * without touching the timeline, so playback speed stays correct. */
   if (opt->fps > 0.0) {
@@ -703,10 +702,6 @@ static int video_init_wl(XWBackend *b, XWWlWindow *win,
   mpv_set_option_string(mpv, "osd-level", "0");
   if (opt->audio_client_name && opt->audio_client_name[0])
     mpv_set_option_string(mpv, "audio-client-name", opt->audio_client_name);
-  if (opt->keybinds && opt->keybinds[0]) {
-    mpv_set_option_string(mpv, "input-conf", opt->keybinds);
-    mpv_set_option_string(mpv, "input-vo-keyboard", "yes");
-  }
   if (opt->fps > 0.0) {
     char vf[32];
     snprintf(vf, sizeof(vf), "fps=%g", opt->fps);
