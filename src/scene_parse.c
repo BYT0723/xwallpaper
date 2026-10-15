@@ -1078,6 +1078,12 @@ static int parse_object_at(const char *dir, struct json_object *jo,
     XW_ERROR_SET(err, 1, "object origin/scale/size must be [x, y]");
     return -1;
   }
+  /* `angles` is a vec3 in radians; a scene-scripted {"script", "value"} keeps
+   * its base value here, matching the other scripted property paths */
+  if (get_vec3(jo, "angles", o->angles) != 0) {
+    XW_ERROR_SET(err, 1, "object angles must be [x, y, z]");
+    return -1;
+  }
   {
     static const char *const prop_names[XW_PROP_COUNT] = {"origin", "scale",
                                                           "size", "visible"};

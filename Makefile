@@ -268,7 +268,7 @@ tests/test_scene_parse: tests/test_scene_parse.c src/scene_parse.o src/scene_sha
 	$(CC) $(CFLAGS) $(SCENE_CFLAGS) -o $@ $< src/scene_parse.o src/scene_shader.o $(SCENE_LIBS) -lm
 
 tests/test_scene_core: tests/test_scene_core.c src/scene_core.o
-	$(CC) $(CFLAGS) -o $@ $< src/scene_core.o
+	$(CC) $(CFLAGS) -o $@ $< src/scene_core.o -lm
 
 tests/test_scene_particle: tests/test_scene_particle.c src/scene_particle.o
 	$(CC) $(CFLAGS) -o $@ $< src/scene_particle.o -lm

@@ -209,12 +209,29 @@ void xw_scene_object_ndc_rect(const XWSceneObject *o, float ortho_w,
   hh = o->size[1] * o->scale[1] * 0.5f / (ortho_h * 0.5f);
   cx = (o->origin[0] - ortho_w * 0.5f) / (ortho_w * 0.5f);
   cy = (o->origin[1] - ortho_h * 0.5f) / (ortho_h * 0.5f);
-  ndc[0] = cx - hw;
-  ndc[1] = cy - hh;
-  ndc[2] = cx + hw;
-  ndc[3] = cy - hh;
-  ndc[4] = cx - hw;
-  ndc[5] = cy + hh;
-  ndc[6] = cx + hw;
-  ndc[7] = cy + hh;
+  {
+    /* `angles` is radians and only z rotates a flat image; the engine turns
+     * the rectangle about its own centre and negates the angle to account
+     * for the Y-flipped coordinate system (linux-wallpaperengine
+     * CImage::updateScreenSpacePosition). */
+    const float a = -o->angles[2];
+    const float ca = cosf(a);
+    const float sa = sinf(a);
+    const float corner[4][2] = {{cx - hw, cy - hh},
+                                {cx + hw, cy - hh},
+                                {cx - hw, cy + hh},
+                                {cx + hw, cy + hh}};
+    int k;
+    for (k = 0; k < 4; k++) {
+      if (a != 0.0f) {
+        const float dx = corner[k][0] - cx;
+        const float dy = corner[k][1] - cy;
+        ndc[k * 2 + 0] = cx + dx * ca - dy * sa;
+        ndc[k * 2 + 1] = cy + dx * sa + dy * ca;
+      } else {
+        ndc[k * 2 + 0] = corner[k][0];
+        ndc[k * 2 + 1] = corner[k][1];
+      }
+    }
+  }
 }
