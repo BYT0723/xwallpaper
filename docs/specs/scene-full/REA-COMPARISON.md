@@ -15,12 +15,12 @@
 
 | 路线 | 结果 | 原始证据 |
 | --- | --- | --- |
-| 原生反编译（`open_binary` → `analyze_function` / `procedure_pseudo_code`） | ❌ | `binary_session` 报 `ghidra: not_configured`（`GHIDRA_INSTALL_DIR` 未设）、`hopper: executable_missing`（`/opt/hopper/bin/Hopper`）、`ida: not_configured` |
+| 原生反编译（`open_binary` → `analyze_function` / `procedure_pseudo_code`） | ❌ → ✅ | 初次：`binary_session` 报 `ghidra: not_configured`（`GHIDRA_INSTALL_DIR` 未设）、`hopper: executable_missing`、`ida: not_configured`。**后续装上 Ghidra 12.1.2 后已打通**，见 §9 |
 | `inspect_binary_layout`（离线 ELF 布局/符号/重定位） | ❌ | `provider_unavailable`：`Set REA_PWNTOOLS_PYTHON to an absolute caller-supplied Python executable with pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2` |
 | `inspect_artifact` 打安装目录 / 打 `scene.pkg` | ❌ | 目录：`target_unavailable … directory_requires_file`；`scene.pkg`：`unsupported binary format`（PKGV 私有容器，非 zip） |
 
-因此**本报告没有任何"反编译得到的代码级证据"**。凡是涉及参考实现内部结构的结论，来源都是
-其 GPL 源码 + 运行时观测，而不是二进制逆向。
+因此初稿**没有代码级反编译证据**：涉及参考实现内部结构的结论，来源是其 GPL 源码 + 运行时观测。
+§9 在装上 Ghidra 之后补上了二进制级取证。
 
 ### 1.2 REA 走通的一条路线：运行时过程取证
 
@@ -56,10 +56,12 @@ use normal repository tools and do not run REA readiness or provider commands."*
 | --- | --- | --- |
 | 参考源码 | `~/Workspace/Github/linux-wallpaperengine` | `b016d7d`，253 个源文件，scene 相关约 13.3k 行 |
 | 已安装包 | pacman `linux-wallpaperengine-git r627.b016d7d1-1` | 与源码同 commit |
-| 已安装二进制 | `/usr/bin/linux-wallpaperengine`（150 B wrapper）→ `/opt/linux-wallpaperengine/linux-wallpaperengine`（31 KB launcher）→ `liblinux-wallpaperengine-lib.so`（10.3 MB） | **stripped**，C++ 符号隐藏可见性；静态链 QuickJS（dynsym 有 4992 个 `JS_*`） |
+| 已安装二进制 | `/usr/bin/linux-wallpaperengine`（150 B wrapper）→ `/opt/linux-wallpaperengine/linux-wallpaperengine`（31 KB launcher）→ `liblinux-wallpaperengine-lib.so`（10.3 MB，sha256 `16567497…2c27`） | `.symtab` 已 strip，但 **`.dynsym` 保留 1,754 个 WallpaperEngine C++ 符号**（可完整 demangle）；静态链 QuickJS |
 
-二进制是 stripped + hidden visibility，即使补上 Ghidra，可恢复的特征映射也远少于直接读源码 ——
-这是本次选择"源码为准"的技术理由，不只是省事。
+> **更正（2026-10-15）**：本报告初稿断言该 `.so` "C++ 符号隐藏可见性、反编译收益远小于读源码"，
+> 据此把"以源码为准"当成技术必然。**该断言是错的**：`.dynsym` 完整保留了
+> `WallpaperEngine::*` 的类名与方法名（见 §9），足以在不解码的前提下核对编译进去的特性面。
+> "以源码为准"仍然成立，但理由只是**效率**，不是"拿不到"。
 
 ---
 
@@ -375,9 +377,12 @@ combo 仅 `VERSION`/`version`/`VERTICAL`/`REFRACT`/`ENABLEMASK`。
 - **`g_Daytime` 来源未追踪**。
 - **本侧构建开关**（`XW_HAVE_GL`/`XW_HAVE_SDL_MIXER`/`XW_HAVE_FT`/`XW_HAVE_LZ4` 等）未确认，
   代码里存在 `#ifdef` 降级分支，实际启用情况未查。
-- **REA 无法触及的部分**：参考的 C++ 实现结构一律未经反编译验证；
-  若需二进制级确认（例如确认已安装 `.so` 与源码一致），需要 `GHIDRA_INSTALL_DIR` 指向
-  真实 Ghidra 12.1.x 安装。
+- **二进制与源码的差异（未解决）**：源码 `CImage.cpp:442` 同时比较 `"MDLV0021"` 与 `"MDLV0023"`，
+  但已安装 `.so` 中**只存在 `MDLV0021` 的字面量**（`MDLV0023` 字节不存在，见 §9.5）。
+  可能是编译器对比较做了不同物化，也可能是 `.so` 与检出的源码不完全同版。**未能确定**。
+- **REA 字符串清单不等于二进制全部文本**：Ghidra 只把"已定义数据"算作字符串。
+  `MDLV0021` 在二进制里是 **`.text` 中的 8 字节立即数**（`movabs`），因此 `search_strings` 搜不到；
+  也就是说该清单里的**缺席不能证明二进制里没有**。本次所有字符串结论都据此校准过。
 
 ---
 
@@ -402,3 +407,101 @@ REA 证据 ID：
 
 - `ev_d4b00494ca9d24fc596527bc1625a8cd2bee990c90e06321a5798679fd113eff` —— `--list-properties`
 - `ev_65d3bcc8e760cdaf390596c45ad512532f9974539d29d772d05c079d90b46b18` —— `--dump-structure`
+- `ev_72c9599048bd19f901bada8b43034ddfbcc62b536da0477588270b355b886a2a` —— Ghidra `search_strings`（§9）
+
+二进制级取证（§9；Ghidra 需先装好并设置 `GHIDRA_INSTALL_DIR`）：
+
+```bash
+export GHIDRA_INSTALL_DIR=/opt/ghidra
+export REA_GHIDRA_STARTUP_TIMEOUT_MS=1800000   # 大二进制必须放宽启动期限
+SO=/opt/linux-wallpaperengine/liblinux-wallpaperengine-lib.so
+
+# 概览 + 落盘 snapshot（本次约 5.5 分钟）
+npx -y rea-agents@6.5.0 analyze "$SO" --snapshot /tmp/rea-snap --format json
+
+# 字符串取证（约 6 分钟/次）
+npx -y rea-agents@6.5.0 search "$SO" --kind strings --mode regex \
+  --pattern='(velocityrandom|alphafade|vortex|MDLV|LightingV1)' \
+  --snapshot /tmp/rea-snap --format json
+
+# .dynsym 里的 C++ 名字面（无需 Ghidra，快速交叉核对）
+nm -D --defined-only "$SO" | awk '{print $NF}' | grep '^_Z' | c++filt
+```
+
+---
+
+## 9. 二进制级取证（装上 Ghidra 之后的补充）
+
+初稿发布后补装了 Ghidra，本节的结论**直接来自已安装二进制**，不再依赖源码推断。
+
+### 9.1 环境与目标
+
+- provider：Ghidra 12.1.2（`/opt/ghidra`），native decompiler `linux_x86_64`，Java 27
+- 目标：`/opt/linux-wallpaperengine/liblinux-wallpaperengine-lib.so`
+  sha256 `16567497fd47433c9d43b35f4b7cf8b80085b15d3facfd30a620018503212c27`
+- Ghidra 分析规模：**19,157 个 procedure、15,319 条字符串、32 个 segment**
+- 注意：REA 要求 Ghidra 默认自动分析跑完才提供服务；该二进制一次需约 **5.5 分钟**，
+  超过 MCP 默认 330 s 的 startup 期限，需要 `REA_GHIDRA_STARTUP_TIMEOUT_MS`（本次设 30 min）
+- REA 证据：`ev_72c9599048bd19f901bada8b43034ddfbcc62b536da0477588270b355b886a2a`
+  （`search_strings`，Ghidra 12.1.2，`authority: shipped-artifact`）
+
+### 9.2 版本同一性：**成立**
+
+二进制内含 CEF 版本字符串 `135.0.17` 与 `chromium-135.0.7049.52`，
+与源码 `CMakeLists.txt:49` 的 `CEF_VERSION "135.0.17+gcbc1c5b+chromium-135.0.7049.52"` 完全一致。
+
+→ §5 全部"以源码为准"的对比**对得上已安装的这份二进制**，不需要推翻。
+
+### 9.3 符号表：`.dynsym` 保留了完整 C++ 名
+
+尽管 `.symtab` 被 strip，`.dynsym` 内有 **1,754 个 `WallpaperEngine::*` 符号**，可完整 demangle。
+按命名空间分布（前几名）：`Data::Model` 491、`Render::Drivers` 325、`Render::Objects` 302、
+`Application::ApplicationContext` 121、`Render::Wallpapers` 87、`Audio::Drivers` 74、
+`Scripting::Modules` 66、`Scripting::Adapters` 57、`ScriptEngine` 55、`WebBrowser::CEF` 64、
+`VideoPlayback::MPV` 39、`Render::CFBO` 43、`Render::CTexture` 35。
+
+### 9.4 粒子面：编译进去的算子/初始化器（**这是对源码结论的独立验证**）
+
+`CParticle::create*` 工厂方法共 23 个，即实际编译进二进制的全集：
+
+| 类别 | 编译进去的 |
+| --- | --- |
+| initializer（9） | AlphaRandom、AngularVelocityRandom、ColorRandom、LifetimeRandom、MapSequenceAroundControlPoint、RotationRandom、SizeRandom、TurbulentVelocityRandom、VelocityRandom |
+| operator（12） | AlphaChange、AlphaFade、AngularMovement、ColorChange、ControlPointAttract、Movement、OscillateAlpha、OscillatePosition、OscillateSize、SizeChange、Turbulence、Vortex |
+| emitter（2） | Box、Sphere |
+
+与 §3 的语料用量交叉：语料实际用到的 8 个 initializer、6 个 operator、2 个 emitter
+**全部在这份编译清单里**。§5/S3 的判定（本侧对语料用量 100% 覆盖）成立。
+
+另外，二进制里以独立字符串存在的 renderer 名只有 `ropetrail`、`spritetrail`
+（`boxrandom`/`sphererandom` 同理）——`sprite` 未作为独立字符串出现，与"默认渲染器"的实现方式一致。
+
+### 9.5 puppet：**静态网格有，动画没有**（二进制确认）
+
+`CImage` 的方法里与 puppet 相关的只有三个：
+`loadPuppetMesh`、`setupPuppetGeometryCallback`、`updatePuppetPositionBuffer`；
+另有 `updateGeometryBuffers` / `uploadGeometryBuffers` / `resolveGeometrySize`。
+
+**没有任何骨骼、骨架、形变相关符号**，也没有 `animationlayers` 的运行时消费。
+→ §5/S9 的结论（参考只做静态索引绘制、不应用动画）在二进制层面成立。
+
+`MDLV` 版本判定：二进制中只有 `MDLV0021` 的字面量；运行时对语料里 6 个 `MDLV0016`
+模型报 `Unsupported puppet model header MDLV0016 in models/Rin_puppet.mdl`。
+→ **语料 19 个模型里 6 个参考自己也加载不了**，这条不受"符号隐藏"质疑影响。
+
+### 9.6 其它子系统在二进制中的存在性
+
+| 子系统 | 二进制证据 |
+| --- | --- |
+| 场景内视频 | `VideoPlayback::MPV::GLPlayer`（`init`/`prepareGL`/`render`/`play`/`setMuted`/`incrementUsageCount`…）39 个符号 |
+| 音频频谱 | `PulseAudioPlaybackRecorder`、`PlaybackRecorder`、`getRecorder`（Pulse 回调齐全） |
+| 脚本 | `Scripting::ScriptEngine` 55 + `Modules` 66（`ColorModule`/`MathModule`）+ `Adapters` 57；`EngineObject` 暴露 `clearTimeout`/`clearInterval`/`reserveNextTimeoutId`/`tick` |
+| 文本 | `CText`：`initFreeType`/`loadEmbeddedFont`/`loadSystemFont`/`initScriptLayer`/`rebuildTextureFrom`/`computeEffectivePixelSize`/`uploadQuadVertices` |
+| 图像对象 | `CImage`：`getBrightness`/`getColor`/`getColor4`/`getCompositeColor`/`getUserAlpha`/`pinpongFramebuffer`/`configurePassTarget` |
+| Web 后端 | `WebBrowser::CEF` 64 个符号（CEF 135 内嵌） |
+
+### 9.7 §9 小结
+
+二进制级取证**没有推翻 §5/§6 的任何判定**，反而独立确认了其中最关键的三条：
+粒子的语料覆盖、puppet 的静态-only、场景内视频与音频频谱的存在。
+唯一被推翻的是**我在初稿里对本二进制可分析性的判断**（见 §2 的更正）。
