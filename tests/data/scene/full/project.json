@@ -1,0 +1,9 @@
+{
+  "general": {
+    "properties": {
+      "opacity": {"type": "slider", "value": 0.8, "text": "Opacity"},
+      "rain": {"type": "bool", "value": true, "text": "Rain"},
+      "schemecolor": {"type": "color", "value": "0.15 0.23 0.4", "text": "Scheme color"}
+    }
+  }
+}

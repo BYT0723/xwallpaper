@@ -1,0 +1,256 @@
+#ifndef XW_SCENE_GL_H
+#define XW_SCENE_GL_H
+
+#include <X11/Xlib.h>
+
+#include "scene_core.h"
+#include "scene_model.h"
+#include "we_audio.h"
+#include "xw_err.h"
+
+/* Desktop-GL runtime for scene wallpapers (daemon-only).
+ *
+ * Context: GLX direct context bound to the wallpaper X window, created on
+ * the FBConfig matching the window visual (same approach as the mpv --wid
+ * backend). All calls run on the daemon main thread (tick path).
+ *
+ * Fragment contract: sources pass through xw_shader_translate, so WE
+ * dialect (gl_FragColor/texture2D/varying/#include) is accepted. The
+ * renderer binds textures and time by uniform name, trying WE names
+ * first (g_Texture0, g_Time) then xw_ names (xw_tex0, xw_time); a missing
+ * time uniform is fine, a missing sampler renders black. The builtin
+ * vertex shader feeds v_TexCoord/vUv/v_uv; FBO ping-pong runs at window
+ * size (object-size FBOs are a later task); image passes render opaque,
+ * particle passes enable blending transiently (see xw_gl_blend_begin).
+ */
+
+typedef struct XWGl XWGl;
+
+/* Create + make current on win. Graceful -1 when GLX is unavailable
+ * (caller falls back to the clear-color fill). */
+int xw_gl_create(XWGl **out, Display *dpy, Window win, int w, int h,
+                 XWError *err);
+void xw_gl_destroy(XWGl *g);
+
+/* Upload a PNG file (imlib2), cached by path. */
+int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err);
+
+/* Upload raw RGBA pixels (top row first), uncached. */
+int xw_gl_upload_rgba(XWGl *g, const unsigned char *px, int w, int h,
+                      unsigned int *tex, XWError *err);
+
+/* Delete an uploaded texture (0 is a no-op). */
+int xw_gl_delete_texture(XWGl *g, unsigned int tex);
+
+/* Compile+link a WE-dialect fragment file with the builtin vertex shader,
+ * cached by path. */
+int xw_gl_program_we(XWGl *g, const char *frag_path,
+                     const XWSceneCombo *combos, int n_combos,
+                     unsigned int texture_slots, unsigned int *prog,
+                     XWError *err);
+
+/* Builtin base-copy program (samples xw_tex0). */
+int xw_gl_program_copy(XWGl *g, unsigned int *prog, XWError *err);
+
+/* Builtin composite program: samples xw_tex0, scales alpha by xw_alpha.
+ * Final pass to the window goes through this (with blending) so resolved
+ * per-object alpha modulates arbitrary effect chains. */
+int xw_gl_program_composite(XWGl *g, unsigned int *prog, XWError *err);
+
+/* Builtin Photoshop-style blend program: layer in xw_tex0 over the screen
+ * snapshot in xw_tex1, xw_mode selects the formula (2/6/7), xw_alpha scales
+ * the layer opacity. Writes through with blending off. */
+int xw_gl_program_blend(XWGl *g, unsigned int *prog, XWError *err);
+
+/* One particle splat in window pixels (x/y) with size px and alpha.
+ * frame is the sprite-sheet index (ignored for plain sprites). */
+typedef struct XWPoint {
+  float x, y;
+  float size, alpha;
+  float frame;
+  float rot; /* in-plane rotation, radians */
+} XWPoint;
+
+/* Builtin point-sprite program (samples xw_tex0, multiplies alpha). */
+int xw_gl_program_points(XWGl *g, unsigned int *prog, XWError *err);
+
+/* One particle trail: head in window pixels, tail offset in pixels. */
+typedef struct XWStreak {
+  float x, y;
+  float dx, dy;
+  float alpha;
+  float frame;
+} XWStreak;
+
+/* Builtin streak program (samples a vertical slice of xw_tex0). */
+int xw_gl_program_streaks(XWGl *g, unsigned int *prog, XWError *err);
+/* Draw n streaks on the bound target (uv_rect picks a sprite-sheet frame). */
+int xw_gl_draw_streaks(XWGl *g, unsigned int prog, unsigned int tex,
+                       const XWStreak *st, int n);
+
+/* Draw n point sprites on the bound target (positions window pixels).
+ * uv_rect selects a sprite-sheet frame: (x, y, w, h) normalised, use
+ * {0,0,1,1} for a plain sprite. */
+int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
+                      const XWPoint *pts, int n);
+
+/* Particle quads: the engine's 17-float vertex layout (a_Position vec3,
+ * a_TexCoordVec4 vec4, a_Color vec4, a_TexCoordVec4C1 vec4,
+ * a_TexCoordC2 vec2), six vertices per particle. textures are bound to
+ * g_Texture0..N. */
+#define XW_PARTICLE_FLOATS 17
+int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
+                              const unsigned int *texs, int ntex,
+                              const float *verts, int nverts,
+                              const XWSceneConst *consts, int n_consts,
+                              const float render_var0[4],
+                              const float render_var1[4],
+                              const float mvp[16]);
+
+/* The engine renders particles whose flags have bit 2 set through a
+ * dedicated perspective camera at z=1000; fills `out` (column major). */
+void xw_gl_particle_perspective(XWGl *g, float fov_deg, float nearz,
+                                float farz, float out[16]);
+
+/* Current sprite-sheet frame of a texture at `time`, normalised. Returns
+ * {0,0,1,1} for textures without a TEXS animation block. */
+int xw_gl_texture_uv_rect(XWGl *g, unsigned int tex, float time,
+                          float rect[4]);
+
+/* Sprite-sheet frame index for a particle of `age` seconds, advancing by
+ * `speed` (sequencemultiplier). Frames advance by their own duration.
+ * *frame is 0 for textures without animation. */
+int xw_gl_particle_frame(XWGl *g, unsigned int tex, float age, float speed,
+                         float *frame);
+
+/* Sprite-sheet frame count of a texture (0 when it has no TEXS block). */
+int xw_gl_texture_frame_count(XWGl *g, unsigned int tex);
+
+/* Transient blending around particle draws (core blend-state mapping). */
+int xw_gl_blend_begin(XWGl *g, XWBlend mode);
+int xw_gl_blend_end(XWGl *g);
+
+/* Bind render target: -1 = window backbuffer, 0/1 = internal FBO. */
+int xw_gl_bind_target(XWGl *g, int fbo);
+
+/* Effect-declared offscreen targets ("fbos" in effect.json). Create or
+ * fetch by name (w/h <= 0 use the window size, format "r8" is single
+ * channel), then bind it for rendering. */
+int xw_gl_named_target(XWGl *g, const char *name, int w, int h,
+                       const char *format, const char *uvs,
+                       unsigned int *tex);
+int xw_gl_bind_named(XWGl *g, const char *name);
+
+/* Clear the bound target to an opaque color. */
+int xw_gl_clear(XWGl *g, float r, float gg, float b);
+
+/* Clear the bound target to a given alpha; a placed object draws over a
+ * fully transparent offscreen so only its own rect is composited. */
+int xw_gl_clear_rgba(XWGl *g, float r, float gg, float b, float a);
+
+/* Draw the fullscreen quad with prog/tex/time. */
+int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time);
+
+/* Like xw_gl_draw, multiplying the sample by the object's tint (WE binds
+ * genericimage*'s g_Color4 to Image::color); NULL means untinted. */
+int xw_gl_draw_tint(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                    const float tint[4]);
+
+/* Draw an MDLV puppet mesh (model.puppet) as the object's base, in place of
+ * the flat quad. `sx`/`sy` are the mesh's own rect and `rx,ry,rw,rh` the
+ * object's window rect it is mapped into. Returns 0 when it drew, and 1 when
+ * the mesh is unusable and the caller should fall back to the quad. */
+int xw_gl_draw_mesh(XWGl *g, const char *path, float sx, float sy, int rx,
+                    int ry, int rw, int rh, unsigned int prog,
+                    unsigned int tex, float time, XWError *err);
+
+/* Like xw_gl_draw but for a source already in window order (the frame buffer
+ * snapshot), so the flip is inverted once. */
+int xw_gl_draw_window_source(XWGl *g, unsigned int prog, unsigned int tex,
+                             float time);
+
+/* Like draw, also binding xw_alpha when the program declares it. */
+int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                     float alpha);
+
+/* Fullscreen blend of src_tex (the object's layer) over dst_tex (a snapshot
+ * of the screen so far) with the xw_blend program: mode 2/6/7, alpha scales
+ * the layer opacity. Draws to the bound target with blending off. */
+int xw_gl_draw_blend(XWGl *g, unsigned int prog, unsigned int src_tex,
+                     unsigned int dst_tex, float alpha, int mode);
+
+/* Effect-pass draw: binds g_Texture0..7 (unit 0 = input, the rest = slots
+ * with input as fallback), g_Texture{i}Resolution vec4s, identity MVP
+ * matrices, g_Time, and annotated uniform defaults overridden by the
+ * scene pass constants (matched by material name). slots[0] overrides
+ * the input when its tex is nonzero. res layout: {texW,texH,realW,realH}. */
+#define XW_GL_WE_SLOTS 8
+typedef struct XWWeSlot {
+  unsigned int tex;
+  float res[4];
+} XWWeSlot;
+int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
+                  const float input_res[4], const XWWeSlot *slots,
+                  const XWSceneConst *consts, int n_consts, float time);
+
+/* Pixel dims of a cached texture (texW/texH, realW/realH). */
+/* Make WE shader passes see a_Position as this rectangle (4 corners, NDC,
+ * xy pairs) instead of the whole window; NULL restores the full quad. */
+void xw_gl_set_shader_quad(XWGl *g, const float ndc[8]);
+
+/* Feed the engine's g_AudioSpectrum{N}{Left,Right} arrays for the passes
+ * drawn from now on; a NULL/binless call leaves a silent spectrum. */
+void xw_gl_set_audio_spectrum(XWGl *g, const float bins[XW_WE_AUDIO_BINS]);
+
+/* Non-zero once a drawn pass has declared an audio spectrum uniform. */
+int xw_gl_audio_used(XWGl *g);
+
+int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
+                       int *rh);
+
+/* Current render target size (window/FBO pixels). */
+int xw_gl_target_size(XWGl *g, int *w, int *h);
+
+/* WE builtin util/ textures (black/white/noflow/perlin_256), cached. */
+/* Mark the start of a frame: the scene snapshot below is refreshed once per
+ * frame, like the engine's full-frame buffer. */
+void xw_gl_frame_begin(XWGl *g);
+
+/* Copy the scene accumulated so far (the window back buffer) into a
+ * texture - the engine's `_rt_FullFrameBuffer`. Returns 0 and fills `tex`. */
+int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex);
+
+/* Annotated texture `default` for a sampler uniform of a compiled WE
+ * program ("util/perlin_256", "gradient/...", "_rt_*"). Returns 0 and fills
+ * `out` when the shader declares one. */
+int xw_gl_program_sampler_default(XWGl *g, unsigned int prog,
+                                  const char *uniform, char *out, size_t n);
+
+int xw_gl_util_texture(XWGl *g, const char *name, unsigned int *tex,
+                       float res[4]);
+
+/* Texture id backing internal FBO idx (for ping-pong sources). */
+int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex);
+
+/* Draw prog/tex as an opaque window-pixel rect (top-left dx/dy, size dw/dh).
+ * Used for text and other UI-space quads; effect chains keep their own
+ * fullscreen path. */
+int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                    int dx, int dy, int dw, int dh);
+
+/* Like draw_rect, also binding xw_alpha when the program declares it. */
+int xw_gl_draw_rect_alpha(XWGl *g, unsigned int prog, unsigned int tex,
+                          float time, float alpha, int dx, int dy, int dw,
+                          int dh);
+
+/* Like draw_rect, multiplying the sample by the object's tint. A negative
+ * object scale mirrors the texture, so flip_u/flip_v mirror the sampled
+ * axes to match. */
+int xw_gl_draw_rect_tint(XWGl *g, unsigned int prog, unsigned int tex,
+                         float time, const float tint[4], int dx, int dy,
+                         int dw, int dh, int flip_u, int flip_v);
+
+/* Swap window buffers. */
+int xw_gl_present(XWGl *g);
+
+#endif /* XW_SCENE_GL_H */

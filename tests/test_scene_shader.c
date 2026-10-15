@@ -1,0 +1,551 @@
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include "harness.h"
+#include "../src/scene_shader.h"
+
+static int mkdir2(const char *base, const char *sub) {
+  char path[512];
+  snprintf(path, sizeof(path), "%s/%s", base, sub);
+  return mkdir(path, 0755);
+}
+
+static int mkpath(const char *path) {
+  char tmp[1024];
+  size_t i, n = strlen(path);
+  if (n == 0 || n >= sizeof(tmp))
+    return -1;
+  memcpy(tmp, path, n + 1);
+  for (i = 1; i < n; i++) {
+    if (tmp[i] == '/') {
+      tmp[i] = '\0';
+      if (mkdir(tmp, 0755) != 0 && errno != EEXIST)
+        return -1;
+      tmp[i] = '/';
+    }
+  }
+  if (mkdir(tmp, 0755) != 0 && errno != EEXIST)
+    return -1;
+  return 0;
+}
+
+static int putfile(const char *path, const char *text) {
+  FILE *f = fopen(path, "wb");
+  if (!f)
+    return -1;
+  fputs(text, f);
+  fclose(f);
+  return 0;
+}
+
+static char *slurp(const char *path) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return NULL;
+  fseek(f, 0, SEEK_END);
+  long sz = ftell(f);
+  rewind(f);
+  if (sz <= 0 || sz > 65536) {
+    fclose(f);
+    return NULL;
+  }
+  char *b = malloc((size_t)sz + 1);
+  if (!b) {
+    fclose(f);
+    return NULL;
+  }
+  if (fread(b, 1, (size_t)sz, f) != (size_t)sz) {
+    free(b);
+    fclose(f);
+    return NULL;
+  }
+  b[sz] = '\0';
+  fclose(f);
+  return b;
+}
+
+static void test_header_shape(void) {
+  TEST_BEGIN("emits GLSL 330 header, dialect and stage defines");
+  char dst[8192];
+  const char *src = "void main() { gl_FragColor = vec4(1.0); }\n";
+  TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
+  TEST_CHECK(strncmp(dst, "#version 330", 12) == 0);
+  TEST_CHECK(strstr(dst, "#define texSample2D texture") != NULL);
+  TEST_CHECK(strstr(dst, "#define mul(x, y)") != NULL);
+  TEST_CHECK(strstr(dst, "#define saturate(x)") != NULL);
+  TEST_CHECK(strstr(dst, "#define CAST4(x)") != NULL);
+  /* fragment stage mapping */
+  TEST_CHECK(strstr(dst, "#define varying in") != NULL);
+  TEST_CHECK(strstr(dst, "out vec4 out_FragColor") != NULL);
+  TEST_CHECK(strstr(dst, "#define gl_FragColor out_FragColor") != NULL);
+}
+
+static void test_vertex_stage(void) {
+  TEST_BEGIN("vertex stage maps attribute/varying to in/out");
+  char dst[8192];
+  const char *src =
+      "attribute vec3 a_Position;\n"
+      "varying vec2 vUv;\n"
+      "void main() { vUv = a_TexCoord; }\n";
+  TEST_CHECK_EQ_INT(xw_shader_translate_stage(src, dst, sizeof(dst), 1), 0);
+  TEST_CHECK(strstr(dst, "#define attribute in") != NULL);
+  TEST_CHECK(strstr(dst, "#define varying out") != NULL);
+  TEST_CHECK(strstr(dst, "out vec4 out_FragColor") == NULL);
+  TEST_CHECK(strstr(dst, "attribute vec3 a_Position") != NULL);
+}
+
+static void test_constants_documented(void) {
+  TEST_BEGIN("common.h constants match the published values");
+  char dst[16384];
+  const char *src =
+      "#include \"common.h\"\n"
+      "void main() { float a = M_PI_2 + M_PI_HALF + SQRT_2; }\n";
+  TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
+  /* M_PI_2 is 2*pi in Wallpaper Engine, M_PI_HALF is pi/2 */
+  TEST_CHECK(strstr(dst, "#define M_PI_2 6.28318530718") != NULL);
+  TEST_CHECK(strstr(dst, "#define M_PI_HALF 1.57079632679") != NULL);
+  TEST_CHECK(strstr(dst, "#define M_PI 3.14159265359") != NULL);
+  TEST_CHECK(strstr(dst, "#define SQRT_2 1.41421356237") != NULL);
+  /* function bodies come along with the header */
+  TEST_CHECK(strstr(dst, "vec2 rotateVec2(") != NULL);
+  TEST_CHECK(strstr(dst, "vec3 hsv2rgb(") != NULL);
+  TEST_CHECK(strstr(dst, "#include") == NULL);
+}
+
+static void test_include_resolution(void) {
+  TEST_BEGIN("builtin headers resolve, unknown includes degrade");
+  char dst[16384];
+  const char *src =
+      "#include \"common_blending.h\"\n"
+      "void main() { vec3 c = ApplyBlending(BLENDMODE, vec3(0), vec3(1), 0.5); }\n";
+  TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
+  TEST_CHECK(strstr(dst, "vec3 ApplyBlending(") != NULL);
+  TEST_CHECK(strstr(dst, "#include") == NULL);
+
+  const char *missing = "#include \"does_not_exist.h\"\nvoid main() {}\n";
+  TEST_CHECK_EQ_INT(xw_shader_translate(missing, dst, sizeof(dst)), 0);
+  TEST_CHECK(strstr(dst, "#include") == NULL);
+  TEST_CHECK(strstr(dst, "does_not_exist.h") != NULL);
+}
+
+static const char *resolver_cb(void *user, const char *name) {
+  (void)user;
+  if (strcmp(name, "custom.h") == 0)
+    return "float custom_helper(float x) { return x * 2.0; }\n";
+  return NULL;
+}
+
+static void test_resolver_precedence(void) {
+  TEST_BEGIN("external resolver wins and is used for unknown names");
+  char dst[16384];
+  const char *src =
+      "#include \"custom.h\"\n"
+      "#include \"common.h\"\n"
+      "void main() { float y = custom_helper(M_PI); }\n";
+  TEST_CHECK_EQ_INT(
+      xw_shader_preprocess(src, dst, sizeof(dst), 0, NULL, 0, 0, resolver_cb,
+                           NULL),
+      0);
+  TEST_CHECK(strstr(dst, "custom_helper") != NULL);
+  TEST_CHECK(strstr(dst, "vec2 rotateVec2(") != NULL);
+}
+
+static void test_combos(void) {
+  TEST_BEGIN("combo annotations and material combos become defines");
+  char dst[16384];
+  const char *src =
+      "// [COMBO] {\"material\":\"m\",\"combo\":\"BLENDMODE\",\"type\":\"imageblending\",\"default\":32}\n"
+      "// [COMBO] {\"material\":\"m\",\"combo\":\"MASK\",\"type\":\"options\",\"default\":0}\n"
+      "void main() {}\n";
+  XWSceneCombo combos[1];
+  memset(combos, 0, sizeof(combos));
+  snprintf(combos[0].key, sizeof(combos[0].key), "BLENDMODE");
+  snprintf(combos[0].value, sizeof(combos[0].value), "3");
+  TEST_CHECK_EQ_INT(
+      xw_shader_preprocess(src, dst, sizeof(dst), 0, combos, 1, 0, NULL, NULL),
+      0);
+  /* explicit material combo wins over the annotation default */
+  TEST_CHECK(strstr(dst, "#define BLENDMODE 3") != NULL);
+  TEST_CHECK(strstr(dst, "#define BLENDMODE 32") == NULL);
+  TEST_CHECK(strstr(dst, "#define MASK 0") != NULL);
+}
+
+static void test_version_line_dropped(void) {
+  TEST_BEGIN("a source #version is dropped in favour of the generated one");
+  char dst[8192];
+  const char *src = "#version 120\nvoid main() {}\n";
+  TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
+  TEST_CHECK(strstr(dst, "#version 120") == NULL);
+  TEST_CHECK(strstr(dst, "#version 330") != NULL);
+}
+
+static void test_linked_varyings(void) {
+  TEST_BEGIN("vertex varying widens to vec4 when the fragment wants vec4");
+  const char *frag =
+      "varying vec4 v_TexCoord;\n"
+      "void main() {}\n";
+  char vert[512];
+  snprintf(vert, sizeof(vert),
+           "attribute vec2 a_TexCoord;\n"
+           "varying vec2 v_TexCoord;\n"
+           "void main() { v_TexCoord = a_TexCoord; }\n");
+  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag, vert, sizeof(vert), NULL, 0), 0);
+  TEST_CHECK(strstr(vert, "varying vec4 v_TexCoord;") != NULL);
+  TEST_CHECK(strstr(vert, "varying vec2 v_TexCoord;") == NULL);
+  /* a bare assignment gets padded to vec4 so the type stays valid */
+  TEST_CHECK(strstr(vert, "v_TexCoord = vec4(a_TexCoord, 0.0, 1.0);") != NULL);
+
+  /* swizzle assignments are already valid on a vec4 and stay untouched */
+  char vert2[512];
+  snprintf(vert2, sizeof(vert2),
+           "varying vec2 v_TexCoord;\n"
+           "void main() { v_TexCoord.xy = a_TexCoord.xy; }\n");
+  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag, vert2, sizeof(vert2), NULL, 0), 0);
+  TEST_CHECK(strstr(vert2, "varying vec4 v_TexCoord;") != NULL);
+  TEST_CHECK(strstr(vert2, "v_TexCoord.xy = a_TexCoord.xy;") != NULL);
+
+  /* matching types are left alone */
+  const char *frag2 = "varying vec2 v_TexCoord;\nvoid main() {}\n";
+  char vert3[512];
+  snprintf(vert3, sizeof(vert3), "varying vec2 v_TexCoord;\nvoid main() {}\n");
+  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag2, vert3, sizeof(vert3), NULL, 0), 0);
+  TEST_CHECK(strstr(vert3, "varying vec2 v_TexCoord;") != NULL);
+
+  /* a vertex unit that already declares the name vec4 keeps its assignment
+   * untouched - padding a wide RHS would build a 6-component constructor
+   * (this is what broke the engine's genericparticle.vert) */
+  const char *frag3 = "varying vec4 v_Color;\nvoid main() {}\n";
+  char vert4[512];
+  snprintf(vert4, sizeof(vert4),
+           "attribute vec4 a_Color;\n"
+           "varying vec4 v_Color;\n"
+           "void main() { v_Color = a_Color; }\n");
+  TEST_CHECK_EQ_INT(xw_shader_fix_linked_varyings(frag3, vert4, sizeof(vert4), NULL, 0), 0);
+  TEST_CHECK(strstr(vert4, "varying vec4 v_Color;") != NULL);
+  TEST_CHECK(strstr(vert4, "v_Color = a_Color;") != NULL);
+  TEST_CHECK(strstr(vert4, "vec4(a_Color, 0.0, 1.0)") == NULL);
+
+  /* a fragment that only declares the wide type in a branch the combos turn
+   * off must not widen a pair that already matches (the engine's
+   * genericparticle declares vec2/vec4 v_TexCoord under #if SPRITESHEET) */
+  const char *frag4 =
+      "#if SPRITESHEET\n"
+      "varying vec4 v_TexCoord;\n"
+      "#else\n"
+      "varying vec2 v_TexCoord;\n"
+      "#endif\n"
+      "void main() {}\n";
+  char vert5[512];
+  snprintf(vert5, sizeof(vert5), "varying vec2 v_TexCoord;\nvoid main() {}\n");
+  TEST_CHECK_EQ_INT(
+      xw_shader_fix_linked_varyings(frag4, vert5, sizeof(vert5), NULL, 0), 0);
+  TEST_CHECK(strstr(vert5, "varying vec2 v_TexCoord;") != NULL);
+  TEST_CHECK(strstr(vert5, "varying vec4 v_TexCoord;") == NULL);
+
+  /* but when the combos select the wide branch, a narrow vertex is widened */
+  XWSceneCombo ss[1];
+  char vert6[512];
+  memset(ss, 0, sizeof(ss));
+  snprintf(ss[0].key, sizeof(ss[0].key), "SPRITESHEET");
+  snprintf(ss[0].value, sizeof(ss[0].value), "1");
+  snprintf(vert6, sizeof(vert6), "varying vec2 v_TexCoord;\nvoid main() {}\n");
+  TEST_CHECK_EQ_INT(
+      xw_shader_fix_linked_varyings(frag4, vert6, sizeof(vert6), ss, 1), 0);
+  TEST_CHECK(strstr(vert6, "varying vec4 v_TexCoord;") != NULL);
+}
+
+static void test_vertex_attrib_locations(void) {
+  TEST_BEGIN("vertex attributes get explicit locations for SPIR-V");
+  char dst[8192];
+  const char *src =
+      "attribute vec3 a_Position;\n"
+      "attribute vec2 a_TexCoord;\n"
+      "void main() { gl_Position = vec4(a_Position, 1.0); }\n";
+  TEST_CHECK_EQ_INT(xw_shader_translate_stage(src, dst, sizeof(dst), 1), 0);
+  TEST_CHECK(strstr(dst, "layout(location=0) attribute vec3 a_Position;") != NULL);
+  TEST_CHECK(strstr(dst, "layout(location=1) attribute vec2 a_TexCoord;") != NULL);
+  /* the fragment stage has no vertex attributes to pin */
+  char fdst[8192];
+  TEST_CHECK_EQ_INT(xw_shader_translate_stage(src, fdst, sizeof(fdst), 0), 0);
+  TEST_CHECK(strstr(fdst, "layout(location=0)") == NULL);
+}
+
+static void test_sampler_combo(void) {
+  TEST_BEGIN("a sampler combo is enabled only when its slot is bound");
+  const char *src =
+      "uniform sampler2D g_Texture2; // {\"label\":\"mask\",\"combo\":\"MASK\"}\n"
+      "varying vec2 v_TexCoord;\n"
+      "void main() { float m = 1.0;\n"
+      "#if MASK\n"
+      "  m = texture(g_Texture2, v_TexCoord).r;\n"
+      "#endif\n"
+      "  gl_FragColor = vec4(m); }\n";
+  char dst[8192];
+  /* slot 2 bound -> MASK becomes 1 */
+  TEST_CHECK_EQ_INT(
+      xw_shader_preprocess(src, dst, sizeof(dst), 0, NULL, 0, 1u << 2, NULL,
+                           NULL),
+      0);
+  TEST_CHECK(strstr(dst, "#define MASK 1") != NULL);
+  /* slot 2 empty -> the combo stays undefined so the guard is off */
+  TEST_CHECK_EQ_INT(
+      xw_shader_preprocess(src, dst, sizeof(dst), 0, NULL, 0, 0, NULL, NULL),
+      0);
+  TEST_CHECK(strstr(dst, "#define MASK") == NULL);
+  /* an explicit material combo wins over the implicit enable */
+  XWSceneCombo combos[1];
+  memset(combos, 0, sizeof(combos));
+  snprintf(combos[0].key, sizeof(combos[0].key), "MASK");
+  snprintf(combos[0].value, sizeof(combos[0].value), "0");
+  TEST_CHECK_EQ_INT(
+      xw_shader_preprocess(src, dst, sizeof(dst), 0, combos, 1, 1u << 2, NULL,
+                           NULL),
+      0);
+  TEST_CHECK(strstr(dst, "#define MASK 0") != NULL);
+  TEST_CHECK(strstr(dst, "#define MASK 1") == NULL);
+}
+
+static void test_assets_dir(void) {
+  TEST_BEGIN("engine asset dir overrides builtins and resolves shaders");
+  char tmpl[] = "/tmp/xw-assets-XXXXXX";
+  char path[512];
+  FILE *f;
+  TEST_CHECK(mkdtemp(tmpl) != NULL);
+  TEST_CHECK_EQ_INT(mkdir2(tmpl, "shaders"), 0);
+  snprintf(path, sizeof(path), "%s/shaders/common.h", tmpl);
+  f = fopen(path, "wb");
+  TEST_CHECK(f != NULL);
+  if (f) {
+    fputs("// ASSETS MARKER\n#define M_PI 3.0\n", f);
+    fclose(f);
+  }
+  snprintf(path, sizeof(path), "%s/shaders/genericparticle.frag", tmpl);
+  f = fopen(path, "wb");
+  TEST_CHECK(f != NULL);
+  if (f) {
+    fputs("void main() {}\n", f);
+    fclose(f);
+  }
+
+  xw_shader_set_assets_dir(tmpl);
+  {
+    char dst[8192];
+    const char *src = "#include \"common.h\"\nvoid main() {}\n";
+    TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
+    TEST_CHECK(strstr(dst, "ASSETS MARKER") != NULL);
+    /* the engine copy wins over our reimplementation */
+    TEST_CHECK(strstr(dst, "XW_WE_COMMON_H") == NULL);
+  }
+  {
+    char out[512];
+    TEST_CHECK_EQ_INT(xw_shader_assets_shader("genericparticle", out,
+                                              sizeof(out)),
+                      0);
+    TEST_CHECK(strstr(out, "genericparticle.frag") != NULL);
+    TEST_CHECK_EQ_INT(xw_shader_assets_shader("nope_missing", out,
+                                              sizeof(out)),
+                      -1);
+  }
+  xw_shader_set_assets_dir(NULL);
+  {
+    char dst[8192];
+    const char *src = "#include \"common.h\"\nvoid main() {}\n";
+    TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
+    TEST_CHECK(strstr(dst, "ASSETS MARKER") == NULL);
+    TEST_CHECK(strstr(dst, "XW_WE_COMMON_H") != NULL);
+  }
+}
+
+static void test_bad_inputs(void) {
+  TEST_BEGIN("NULL/small-dst rejected");
+  char dst[8];
+  TEST_CHECK_EQ_INT(xw_shader_translate(NULL, dst, sizeof(dst)), -1);
+  TEST_CHECK_EQ_INT(xw_shader_translate("void main(){}", NULL, 0), -1);
+  TEST_CHECK_EQ_INT(xw_shader_translate("void main(){}", dst, 2), -1);
+}
+
+static void test_builtin_lookup(void) {
+  TEST_BEGIN("builtin header lookup by name");
+  TEST_CHECK(xw_shader_builtin_header("common.h") != NULL);
+  TEST_CHECK(xw_shader_builtin_header("common_fragment.h") != NULL);
+  TEST_CHECK(xw_shader_builtin_header("common_vertex.h") != NULL);
+  TEST_CHECK(xw_shader_builtin_header("common_blending.h") != NULL);
+  TEST_CHECK(xw_shader_builtin_header("nope.h") == NULL);
+  TEST_CHECK(xw_shader_builtin_header(NULL) == NULL);
+}
+
+static void test_sample_translates(void) {
+  TEST_BEGIN("sample shader translates into GLSL 330");
+  char *src = slurp("tests/data/scene/shader_sample.txt");
+  TEST_CHECK(src != NULL);
+  if (!src) return;
+  char dst[8192];
+  TEST_CHECK_EQ_INT(xw_shader_translate(src, dst, sizeof(dst)), 0);
+  /* legacy spellings are mapped through defines, not rewritten in place */
+  TEST_CHECK(strstr(dst, "#define texture2D texture") != NULL);
+  TEST_CHECK(strstr(dst, "#define texSample2D texture") != NULL);
+  TEST_CHECK(strstr(dst, "#include") == NULL);
+  TEST_CHECK(strstr(dst, "#version 330") != NULL);
+  free(src);
+}
+
+static void test_collect_defaults(void) {
+  TEST_BEGIN("annotated uniform defaults collected with material keys");
+  const char *src =
+      "uniform float g_Speed; // {\"material\":\"speed\",\"default\":1}\n"
+      "uniform vec2 g_Friction; // {\"material\":\"friction\",\"default\":\"1 1\"}\n"
+      "uniform vec3 g_Color; // {\"material\":\"color\",\"default\":\"1 0.5 0.25\"}\n"
+      "uniform sampler2D g_Texture0; // {\"material\":\"framebuffer\"}\n"
+      "uniform float g_Plain;\n";
+  XWShaderDef defs[XW_SHADER_DEFS_MAX];
+  int n = 0, i;
+  const XWShaderDef *sp = NULL, *fr = NULL, *co = NULL;
+  TEST_CHECK_EQ_INT(xw_shader_collect_defaults(src, defs, &n, XW_SHADER_DEFS_MAX), 0);
+  TEST_CHECK_EQ_INT(n, 3);
+  for (i = 0; i < n; i++) {
+    if (strcmp(defs[i].name, "g_Speed") == 0)
+      sp = &defs[i];
+    if (strcmp(defs[i].name, "g_Friction") == 0)
+      fr = &defs[i];
+    if (strcmp(defs[i].name, "g_Color") == 0)
+      co = &defs[i];
+  }
+  TEST_CHECK(sp != NULL && fr != NULL && co != NULL);
+  if (sp) {
+    TEST_CHECK_EQ_INT(sp->kind, 1);
+    TEST_CHECK_EQ_STR(sp->material, "speed");
+    TEST_CHECK(sp->v[0] > 0.99 && sp->v[0] < 1.01);
+  }
+  if (fr) {
+    TEST_CHECK_EQ_INT(fr->kind, 2);
+    TEST_CHECK(fr->v[0] > 0.99 && fr->v[1] > 0.99);
+  }
+  if (co) {
+    TEST_CHECK_EQ_INT(co->kind, 3);
+    TEST_CHECK(co->v[0] > 0.99 && co->v[1] > 0.49 && co->v[1] < 0.51 &&
+               co->v[2] > 0.24 && co->v[2] < 0.26);
+  }
+  TEST_CHECK_EQ_INT(xw_shader_collect_defaults(NULL, defs, &n, 4), -1);
+}
+
+static void test_detect_assets(void) {
+  char root[] = "/tmp/xw-detect-XXXXXX";
+  char buf[1024], p[1024];
+  TEST_BEGIN("asset dir auto-detection honours XW_ASSETS_DIR first");
+  TEST_CHECK(mkdtemp(root) != NULL);
+
+  /* an explicit value wins even when nothing is installed */
+  TEST_CHECK_EQ_INT(
+      xw_shader_resolve_assets_dir("/explicit/we/assets", root, buf, sizeof(buf)),
+      0);
+  TEST_CHECK(strcmp(buf, "/explicit/we/assets") == 0);
+
+  /* an empty home finds nothing */
+  TEST_CHECK_EQ_INT(xw_shader_resolve_assets_dir(NULL, root, buf, sizeof(buf)),
+                    -1);
+
+  /* the default Steam library is discovered through shaders/common.h */
+  snprintf(p, sizeof(p), "%s/.local/share/Steam/steamapps/common/"
+                         "wallpaper_engine/assets/shaders",
+           root);
+  TEST_CHECK_EQ_INT(mkpath(p), 0);
+  snprintf(p, sizeof(p), "%s/.local/share/Steam/steamapps/common/"
+                         "wallpaper_engine/assets/shaders/common.h",
+           root);
+  TEST_CHECK_EQ_INT(putfile(p, "// marker\n"), 0);
+  snprintf(p, sizeof(p), "%s/.local/share/Steam/steamapps/common/"
+                         "wallpaper_engine/assets",
+           root);
+  TEST_CHECK_EQ_INT(xw_shader_resolve_assets_dir(NULL, root, buf, sizeof(buf)),
+                    0);
+  TEST_CHECK(strcmp(buf, p) == 0);
+}
+
+static void test_detect_assets_vdf(void) {
+  char root[] = "/tmp/xw-detect-XXXXXX";
+  char buf[1024], p[1024], vdf[2048];
+  TEST_BEGIN("asset dir auto-detection reads libraryfolders.vdf");
+  TEST_CHECK(mkdtemp(root) != NULL);
+
+  /* the default library exists but holds no engine */
+  snprintf(p, sizeof(p), "%s/.local/share/Steam/steamapps", root);
+  TEST_CHECK_EQ_INT(mkpath(p), 0);
+
+  /* a second library does */
+  snprintf(p, sizeof(p), "%s/elsewhere/steamapps/common/wallpaper_engine/"
+                         "assets/shaders",
+           root);
+  TEST_CHECK_EQ_INT(mkpath(p), 0);
+  snprintf(p, sizeof(p), "%s/elsewhere/steamapps/common/wallpaper_engine/"
+                         "assets/shaders/common.h",
+           root);
+  TEST_CHECK_EQ_INT(putfile(p, "// marker\n"), 0);
+
+  snprintf(vdf, sizeof(vdf),
+           "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\"%s/"
+           ".local/share/Steam\"\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\"%s/"
+           "elsewhere\"\n\t}\n}\n",
+           root, root);
+  snprintf(p, sizeof(p), "%s/.local/share/Steam/steamapps/libraryfolders.vdf",
+           root);
+  TEST_CHECK_EQ_INT(putfile(p, vdf), 0);
+
+  snprintf(p, sizeof(p),
+           "%s/elsewhere/steamapps/common/wallpaper_engine/assets", root);
+  TEST_CHECK_EQ_INT(xw_shader_resolve_assets_dir(NULL, root, buf, sizeof(buf)),
+                    0);
+  TEST_CHECK(strcmp(buf, p) == 0);
+}
+
+static void test_sampler_defaults(void) {
+  const char *src =
+      "uniform sampler2D g_Texture1; // {\"label\":\"noise\",\"default\":"
+      "\"util/perlin_256\"}\n"
+      "uniform sampler2D g_Texture2; // {\"material\":\"framebuffer\","
+      "\"hidden\":true}\n"
+      "uniform float g_Speed; // {\"default\":1}\n";
+  XWShaderDef defs[XW_SHADER_DEFS_MAX];
+  int n = 0, i;
+  const XWShaderDef *tex = NULL;
+  TEST_BEGIN("annotated sampler defaults carry their texture ref");
+  TEST_CHECK_EQ_INT(xw_shader_collect_defaults(src, defs, &n, XW_SHADER_DEFS_MAX),
+                    0);
+  for (i = 0; i < n; i++)
+    if (strcmp(defs[i].name, "g_Texture1") == 0)
+      tex = &defs[i];
+  TEST_CHECK(tex != NULL);
+  if (tex) {
+    TEST_CHECK_EQ_INT(tex->kind, 0);
+    TEST_CHECK_EQ_STR(tex->tex, "util/perlin_256");
+  }
+  /* a sampler without a default stays out of the list */
+  for (i = 0; i < n; i++)
+    TEST_CHECK(strcmp(defs[i].name, "g_Texture2") != 0);
+}
+
+int main(void) {
+  TEST_SUITE("scene_shader");
+  test_header_shape();
+  test_vertex_stage();
+  test_constants_documented();
+  test_include_resolution();
+  test_resolver_precedence();
+  test_combos();
+  test_version_line_dropped();
+  test_linked_varyings();
+  test_vertex_attrib_locations();
+  test_sampler_combo();
+  test_assets_dir();
+  test_detect_assets();
+  test_detect_assets_vdf();
+  test_bad_inputs();
+  test_builtin_lookup();
+  test_sample_translates();
+  test_collect_defaults();
+  test_sampler_defaults();
+  TEST_SUMMARY();
+}

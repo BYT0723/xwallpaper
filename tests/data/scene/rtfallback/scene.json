@@ -1,0 +1,30 @@
+{
+  "camera": {
+    "orthogonalprojection": [1280, 720],
+    "clearcolor": [0.0, 0.0, 0.0]
+  },
+  "objects": [
+    {
+      "id": "base",
+      "name": "base",
+      "texture": "textures/blue.png",
+      "origin": [640, 360],
+      "size": [1280, 720]
+    },
+    {
+      "id": "compose",
+      "name": "compose",
+      "texture": "textures/clear.png",
+      "origin": [640, 360],
+      "size": [1280, 720],
+      "effects": [
+        {
+          "file": "effects/blend/effect.json",
+          "passes": [
+            { "textures": [null, "_rt_imageLayerComposite_9_a"] }
+          ]
+        }
+      ]
+    }
+  ]
+}

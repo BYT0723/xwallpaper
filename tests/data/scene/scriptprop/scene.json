@@ -1,0 +1,27 @@
+{
+  "camera": {
+    "orthogonalprojection": [1920, 1080],
+    "clearcolor": [0.1, 0.1, 0.1]
+  },
+  "objects": [
+    {
+      "id": 333,
+      "name": "scripted",
+      "image": "models/a.json",
+      "origin": {
+        "script": "'use strict';\nexport function update(value) { value.x = 1; return value; }\n",
+        "scriptproperties": { "xzhou": { "user": "newproperty16", "value": 2700 } },
+        "value": "2700.00000 238.00000 0.00000"
+      },
+      "scale": { "value": "0.50000 0.50000 0.50000" },
+      "size": "100 200",
+      "alpha": {
+        "animation": {
+          "options": [ { "time": 0.0, "value": 0.25 } ],
+          "mode": "single"
+        },
+        "value": 0.25
+      }
+    }
+  ]
+}

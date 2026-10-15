@@ -55,6 +55,35 @@ static void test_detect_dir_and_url(void) {
   TEST_CHECK_EQ_INT(xw_cli_detect_backend("http://localhost:8000/"), XW_BACKEND_WEB);
 }
 
+static void test_detect_scene(void) {
+  TEST_BEGIN("dir with scene.json/scene.pkg detects as scene");
+  char *t = strdup("/tmp/xw-cli-scene-XXXXXX");
+  TEST_CHECK(t != NULL && mkdtemp(t) != NULL);
+  if (!t)
+    return;
+  char p[1024];
+  snprintf(p, sizeof(p), "%s/scene.json", t);
+  FILE *f = fopen(p, "w");
+  TEST_CHECK(f != NULL);
+  if (f) {
+    fputs("{}", f);
+    fclose(f);
+    TEST_CHECK_EQ_INT(xw_cli_detect_backend(t), XW_BACKEND_SCENE);
+    unlink(p);
+  }
+  snprintf(p, sizeof(p), "%s/scene.pkg", t);
+  f = fopen(p, "w");
+  TEST_CHECK(f != NULL);
+  if (f) {
+    fclose(f);
+    TEST_CHECK_EQ_INT(xw_cli_detect_backend(t), XW_BACKEND_SCENE);
+    unlink(p);
+  }
+  TEST_CHECK_EQ_INT(xw_cli_detect_backend(t), XW_BACKEND_WEB);
+  rmdir(t);
+  free(t);
+}
+
 static void test_detect_unknown(void) {
   TEST_BEGIN("unknown extension returns -1");
   TEST_CHECK_EQ_INT(xw_cli_detect_backend("file.xyz"), -1);
@@ -99,6 +128,43 @@ static void test_set_explicit_backend(void) {
   TEST_CHECK_EQ_INT(parse(argv, 4), 0);
   TEST_CHECK_EQ_INT(cfg.backend_explicit, XW_BACKEND_VIDEO);
   TEST_CHECK_EQ_STR(cfg.path, "file.bin");
+}
+
+static void test_set_explicit_scene(void) {
+  TEST_BEGIN("explicit --scene sets scene backend");
+  reset();
+  char *argv[] = {"xwallpaper", "set", "--scene", "walldir"};
+  TEST_CHECK_EQ_INT(parse(argv, 4), 0);
+  TEST_CHECK_EQ_INT(cfg.backend_explicit, XW_BACKEND_SCENE);
+  TEST_CHECK_EQ_STR(cfg.path, "walldir");
+}
+
+static void test_props_commands(void) {
+  TEST_BEGIN("--list-properties/--set-property parse with -m");
+  reset();
+  char *a1[] = {"xwallpaper", "--list-properties"};
+  TEST_CHECK_EQ_INT(parse(a1, 2), 0);
+  TEST_CHECK_EQ_INT(cfg.command, XW_CMD_LIST_PROPS);
+  TEST_CHECK_EQ_INT(cfg.target, XW_TARGET_PRIMARY);
+  reset();
+  char *a2[] = {"xwallpaper", "--list-properties", "-m", "DP-1"};
+  TEST_CHECK_EQ_INT(parse(a2, 4), 0);
+  TEST_CHECK_EQ_INT(cfg.target, XW_TARGET_OUTPUT);
+  TEST_CHECK_EQ_STR(cfg.output, "DP-1");
+  reset();
+  char *a3[] = {"xwallpaper", "--set-property", "rain=0"};
+  TEST_CHECK_EQ_INT(parse(a3, 3), 0);
+  TEST_CHECK_EQ_INT(cfg.command, XW_CMD_SET_PROP);
+  TEST_CHECK_EQ_STR(cfg.prop, "rain=0");
+  reset();
+  char *a4[] = {"xwallpaper", "--set-property"};
+  TEST_CHECK_EQ_INT(parse(a4, 2), -1);
+  reset();
+  char *a5[] = {"xwallpaper", "--set-property", "noequals", "-m", "DP-1"};
+  TEST_CHECK_EQ_INT(parse(a5, 5), -1);
+  reset();
+  char *a6[] = {"xwallpaper", "--list-properties", "--all"};
+  TEST_CHECK_EQ_INT(parse(a6, 3), -1);
 }
 
 static void test_set_geometry(void) {
@@ -397,6 +463,10 @@ static void test_set_span_image_only(void) {
   char *a3[] = {"xwallpaper", "set", "--span", "10x10+0+0",
                 "--web", "p.html"};
   TEST_CHECK_EQ_INT(parse(a3, 6), -1);
+  reset();
+  char *a4[] = {"xwallpaper", "set", "--span", "10x10+0+0",
+                "--scene", "walldir"};
+  TEST_CHECK_EQ_INT(parse(a4, 6), -1);
 }
 
 int main(void) {
@@ -405,11 +475,14 @@ int main(void) {
   test_detect_video();
   test_detect_web();
   test_detect_dir_and_url();
+  test_detect_scene();
   test_detect_unknown();
   test_set_default();
   test_set_output();
   test_set_all();
   test_set_explicit_backend();
+  test_set_explicit_scene();
+  test_props_commands();
   test_set_geometry();
   test_set_video_opts();
   test_window_flags();

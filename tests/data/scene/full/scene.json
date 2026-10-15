@@ -1,0 +1,58 @@
+{
+  "camera": {
+    "orthogonalprojection": [3840, 2160],
+    "clearcolor": [0.1, 0.1, 0.1],
+    "bloom": true,
+    "parallax": true
+  },
+  "script": "main.js",
+  "objects": [
+    {
+      "id": "bg",
+      "type": "image",
+      "model": "models/bg.json",
+      "material": "materials/bg.json",
+      "origin": [1920, 1080],
+      "scale": [1.0, 1.0],
+      "size": [3840, 2160],
+      "alpha": {"user": "opacity"},
+      "effects": []
+    },
+    {
+      "id": "sparks",
+      "emitter": {"rate": 60.0, "max_count": 500, "sprite": "particles/spark.png",
+                  "life": 2.0, "speed": 120.0, "spread": 0.3,
+                  "size_min": 2.0, "size_max": 5.0,
+                  "color": [1.0, 0.8, 0.2, 1.0], "gravity": 50.0},
+      "origin": [1920, 1800],
+      "alpha": 0.9
+    },
+    {
+      "id": "title",
+      "text": "Hello",
+      "font": "fonts/roboto.ttf",
+      "pointsize": 48.0,
+      "color": "1.0 1.0 1.0",
+      "origin": [1920, 200],
+      "alpha": 1.0
+    },
+    {
+      "id": "clock",
+      "text": {
+        "script": "'use strict';\nexport function update(value) { return value; }\n",
+        "value": "Scripted"
+      },
+      "font": "fonts/clock.ttf",
+      "pointsize": 32.0,
+      "origin": [100, 100],
+      "alpha": 1.0
+    },
+    {
+      "id": "bgm",
+      "sound": "audio/bgm.ogg",
+      "volume": 0.7,
+      "loop": true,
+      "origin": [0, 0]
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "camera": {
+    "orthogonalprojection": [
+      1280,
+      720
+    ],
+    "clearcolor": [
+      0.1,
+      0.1,
+      0.1
+    ]
+  },
+  "objects": [
+    {
+      "name": "targeted",
+      "image": "models/m.json",
+      "effects": [
+        {
+          "file": "effects/e/effect.json",
+          "passes": [
+            {},
+            {}
+          ]
+        }
+      ]
+    }
+  ]
+}

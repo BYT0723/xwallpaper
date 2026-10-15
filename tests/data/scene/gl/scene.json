@@ -1,0 +1,26 @@
+{
+  "camera": {
+    "orthogonalprojection": [1280, 720],
+    "clearcolor": [0.02, 0.02, 0.10],
+    "bloom": false,
+    "parallax": false
+  },
+  "objects": [
+    {
+      "id": "bg",
+      "type": "image",
+      "texture": "textures/bg.png",
+      "origin": [640, 360],
+      "scale": [1.0, 1.0],
+      "size": [1280, 720],
+      "effects": [
+        {
+          "name": "pulse",
+          "passes": [
+            {"shader": "shaders/pulse.frag"}
+          ]
+        }
+      ]
+    }
+  ]
+}

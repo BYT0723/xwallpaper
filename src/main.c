@@ -35,6 +35,8 @@ int main(int argc, char **argv) {
   case XW_CMD_CLEAR:   n = xw_proto_encode_clear(&cfg, msg, sizeof(msg)); break;
   case XW_CMD_LIST:
   case XW_CMD_STATE:   n = xw_proto_encode_list(msg, sizeof(msg)); break;
+  case XW_CMD_LIST_PROPS: n = xw_proto_encode_list_props(&cfg, msg, sizeof(msg)); break;
+  case XW_CMD_SET_PROP:   n = xw_proto_encode_set_prop(&cfg, msg, sizeof(msg)); break;
   case XW_CMD_RESTORE: n = xw_proto_encode_restore(msg, sizeof(msg)); break;
   case XW_CMD_EXIT:    n = xw_proto_encode_exit(msg, sizeof(msg)); break;
   default:
@@ -75,7 +77,15 @@ int main(int argc, char **argv) {
   }
 
   /* print the reply for list/state commands */
-  if (cfg.command == XW_CMD_LIST || cfg.command == XW_CMD_STATE) {
+  if (cfg.command == XW_CMD_LIST_PROPS) {
+    /* reply starts "props\0N\n" then N lines: <name>\t<type>\t<value>\n */
+    const char *p = reply;
+    const char *nl = memchr(p, '\n', XW_REPLY_MAX);
+    if (nl && strncmp(p, "props", 5) == 0)
+      fwrite(nl + 1, 1, strlen(nl + 1), stdout);
+    else
+      printf("%s", reply);
+  } else if (cfg.command == XW_CMD_LIST || cfg.command == XW_CMD_STATE) {
     /* reply starts "list\0N\n" then N window lines: <name>\0<type>\0<path>\0<rot>\n */
     /* --list prints the first field (name) only; --state prints all four TAB-separated */
     int fields = (cfg.command == XW_CMD_LIST) ? 1 : 4;

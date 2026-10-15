@@ -1,0 +1,561 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#ifdef XW_HAVE_LZ4
+#include <lz4.h>
+#endif
+
+#include "harness.h"
+#include "../src/scene_tex.h"
+
+static unsigned char *slurp(const char *path, size_t *len) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return NULL;
+  fseek(f, 0, SEEK_END);
+  long sz = ftell(f);
+  rewind(f);
+  if (sz <= 0) {
+    fclose(f);
+    return NULL;
+  }
+  unsigned char *b = malloc((size_t)sz);
+  if (!b) {
+    fclose(f);
+    return NULL;
+  }
+  if (fread(b, 1, (size_t)sz, f) != (size_t)sz) {
+    free(b);
+    fclose(f);
+    return NULL;
+  }
+  fclose(f);
+  *len = (size_t)sz;
+  return b;
+}
+
+static void test_find_mini_tex(void) {
+  TEST_BEGIN("mini.tex locates embedded PNG with size");
+  size_t len = 0;
+  unsigned char *b = slurp("tests/data/scene/mini.tex", &len);
+  TEST_CHECK(b != NULL);
+  if (!b) return;
+  size_t off = 0, ilen = 0;
+  unsigned int w = 0, h = 0;
+  TEST_CHECK_EQ_INT(xw_tex_find_image(b, len, &off, &ilen, &w, &h), 0);
+  TEST_CHECK(off + ilen <= len);
+  if (off + ilen <= len && ilen >= 8) {
+    static const unsigned char magic[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    TEST_CHECK(memcmp(b + off, magic, 8) == 0);
+  }
+  TEST_CHECK(w >= 1 && h >= 1);
+  free(b);
+}
+
+/* minimal TEXV builder: TEXV0005/TEXI0001/TEXB0002, one mipmap */
+static unsigned char *build_texv(uint32_t format, uint32_t w, uint32_t h,
+                                 const unsigned char *payload, size_t plen,
+                                 int compress, size_t *out_len) {
+  unsigned char *blob, *dst;
+  size_t hdr = 9 + 9 + 28 + 9 + 4 + 4 + 20, total = hdr + plen;
+  blob = malloc(total);
+  if (!blob)
+    return NULL;
+  dst = blob;
+  memcpy(dst, "TEXV0005\0", 9);
+  dst += 9;
+  memcpy(dst, "TEXI0001\0", 9);
+  dst += 9;
+  {
+    uint32_t f[7] = {format, 0, w, h, w, h, 0};
+    for (int i = 0; i < 7; i++) {
+      dst[0] = (unsigned char)(f[i] & 0xff);
+      dst[1] = (unsigned char)((f[i] >> 8) & 0xff);
+      dst[2] = (unsigned char)((f[i] >> 16) & 0xff);
+      dst[3] = (unsigned char)((f[i] >> 24) & 0xff);
+      dst += 4;
+    }
+  }
+  memcpy(dst, "TEXB0002\0", 9);
+  dst += 9;
+  {
+    /* images, mipmaps, mw, mh, comp, usize, csize */
+    uint32_t m[7] = {1, 1, w, h, (uint32_t)compress, (uint32_t)plen,
+                     (uint32_t)plen};
+    /* usize for compressed tested separately via LZ4 below */
+    for (int i = 0; i < 7; i++) {
+      dst[0] = (unsigned char)(m[i] & 0xff);
+      dst[1] = (unsigned char)((m[i] >> 8) & 0xff);
+      dst[2] = (unsigned char)((m[i] >> 16) & 0xff);
+      dst[3] = (unsigned char)((m[i] >> 24) & 0xff);
+      dst += 4;
+    }
+  }
+  memcpy(dst, payload, plen);
+  *out_len = total;
+  return blob;
+}
+
+static void test_decode_raw(void) {
+  TEST_BEGIN("decodes synthetic RGBA8/R8/DXT1 mipmaps");
+  XWError err = {0};
+  unsigned char px[64];
+  for (int i = 0; i < 64; i++) px[i] = (unsigned char)i;
+  size_t len = 0;
+  unsigned char *blob = build_texv(0, 4, 4, px, sizeof(px), 0, &len);
+  TEST_CHECK(blob != NULL);
+  if (!blob)
+    return;
+  XWTexImage img;
+  memset(&img, 0, sizeof(img));
+  TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+  TEST_CHECK_EQ_INT((int)img.fmt, (int)XW_TEXFMT_RGBA8);
+  TEST_CHECK_EQ_INT((int)img.w, 4);
+  TEST_CHECK_EQ_INT(img.len, 64);
+  TEST_CHECK(memcmp(img.px, px, 64) == 0);
+  xw_tex_image_free(&img);
+  free(blob);
+
+  /* R8 single channel */
+  unsigned char g[16];
+  for (int i = 0; i < 16; i++) g[i] = (unsigned char)(i * 16);
+  blob = build_texv(9, 4, 4, g, sizeof(g), 0, &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+    TEST_CHECK_EQ_INT((int)img.fmt, (int)XW_TEXFMT_R8);
+    TEST_CHECK(memcmp(img.px, g, 16) == 0);
+    xw_tex_image_free(&img);
+    free(blob);
+  }
+
+  /* DXT1 4x4 = one 8-byte block */
+  unsigned char dxt[8] = {0, 0, 255, 255, 0, 0, 0, 0};
+  blob = build_texv(7, 4, 4, dxt, sizeof(dxt), 0, &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+    TEST_CHECK_EQ_INT((int)img.fmt, (int)XW_TEXFMT_DXT1);
+    TEST_CHECK_EQ_INT(img.len, 8);
+    xw_tex_image_free(&img);
+    free(blob);
+  }
+
+#ifdef XW_HAVE_LZ4
+  /* LZ4 round-trip: compressed payload decodes to the raw pattern */
+  {
+    unsigned char raw[64], cb[128];
+    int cs;
+    for (int i = 0; i < 64; i++) raw[i] = (unsigned char)(i * 3 + 1);
+    cs = LZ4_compress_default((const char *)raw, (char *)cb, 64, sizeof(cb));
+    TEST_CHECK(cs > 0);
+    if (cs > 0) {
+      blob = build_texv(0, 4, 4, cb, (size_t)cs, 1, &len);
+      TEST_CHECK(blob != NULL);
+      if (blob) {
+        /* patch usize to the raw size (builder writes csize twice);
+         * header: 9+9+28+9 images mipmaps mw mh comp [usize] csize */
+        blob[75] = 64;
+        blob[76] = 0;
+        blob[77] = 0;
+        blob[78] = 0;
+        memset(&img, 0, sizeof(img));
+        memset(&err, 0, sizeof(err));
+        TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+        TEST_CHECK(memcmp(img.px, raw, 64) == 0);
+        xw_tex_image_free(&img);
+        free(blob);
+      }
+    }
+  }
+#endif
+}
+
+/* TEXB0004 builder: like build_texv plus the isVideo flag word */
+static unsigned char *build_texv4f(uint32_t fif, uint32_t is_video,
+                                    uint32_t flags, uint32_t w, uint32_t h,
+                                    uint32_t mw, uint32_t mh, uint32_t comp,
+                                    int32_t usize, const unsigned char *payload,
+                                    size_t plen, size_t *out_len) {
+  unsigned char *blob, *dst;
+  uint32_t m[8] = {1, fif, is_video, 1, mw, mh, comp, (uint32_t)usize};
+  size_t hdr = 9 + 9 + 28 + 9 + 8 * 4 + 4, total = hdr + plen;
+  int i;
+  blob = malloc(total);
+  if (!blob)
+    return NULL;
+  dst = blob;
+  memcpy(dst, "TEXV0005\0", 9);
+  dst += 9;
+  memcpy(dst, "TEXI0001\0", 9);
+  dst += 9;
+  {
+    uint32_t f[7] = {0, flags, w, h, w, h, 0};
+    for (i = 0; i < 7; i++) {
+      dst[0] = (unsigned char)(f[i] & 0xff);
+      dst[1] = (unsigned char)((f[i] >> 8) & 0xff);
+      dst[2] = (unsigned char)((f[i] >> 16) & 0xff);
+      dst[3] = (unsigned char)((f[i] >> 24) & 0xff);
+      dst += 4;
+    }
+  }
+  memcpy(dst, "TEXB0004\0", 9);
+  dst += 9;
+  /* images, fif, isVideo, mipmaps, mw, mh, comp, usize */
+  for (i = 0; i < 8; i++) {
+    dst[0] = (unsigned char)(m[i] & 0xff);
+    dst[1] = (unsigned char)((m[i] >> 8) & 0xff);
+    dst[2] = (unsigned char)((m[i] >> 16) & 0xff);
+    dst[3] = (unsigned char)((m[i] >> 24) & 0xff);
+    dst += 4;
+  }
+  /* csize */
+  dst[0] = (unsigned char)(plen & 0xff);
+  dst[1] = (unsigned char)((plen >> 8) & 0xff);
+  dst[2] = (unsigned char)((plen >> 16) & 0xff);
+  dst[3] = (unsigned char)((plen >> 24) & 0xff);
+  dst += 4;
+  memcpy(dst, payload, plen);
+  *out_len = total;
+  return blob;
+}
+
+static unsigned char *build_texv4(uint32_t fif, uint32_t is_video, uint32_t w,
+                                  uint32_t h, uint32_t mw, uint32_t mh,
+                                  uint32_t comp, int32_t usize,
+                                  const unsigned char *payload, size_t plen,
+                                  size_t *out_len) {
+  return build_texv4f(fif, is_video, 0u, w, h, mw, mh, comp, usize, payload,
+                      plen, out_len);
+}
+
+static void test_decode_texb0004(void) {
+  TEST_BEGIN("TEXB0004 stills decode, TextureFlags_Video accepted");
+  XWError err = {0};
+  XWTexImage img;
+  unsigned char px[64];
+  size_t len = 0;
+  unsigned char *blob;
+  for (int i = 0; i < 64; i++) px[i] = (unsigned char)(i + 7);
+  /* raw still: UNKNOWN fif, not video */
+  blob = build_texv4(0xFFFFFFFFu, 0, 4, 4, 4, 4, 0, 64, px, sizeof(px), &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    memset(&img, 0, sizeof(img));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+    TEST_CHECK_EQ_INT((int)img.fmt, (int)XW_TEXFMT_RGBA8);
+    TEST_CHECK(memcmp(img.px, px, 64) == 0);
+    xw_tex_image_free(&img);
+    free(blob);
+  }
+  /* embedded PNG with usize=0 (as shipped by real walls) */
+  {
+    static const unsigned char png[] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A,
+                                        0x1A, 0x0A, 0x00};
+    blob = build_texv4(13, 0, 4, 4, 4, 4, 0, 0, png, sizeof(png), &len);
+    TEST_CHECK(blob != NULL);
+    if (blob) {
+      memset(&img, 0, sizeof(img));
+      memset(&err, 0, sizeof(err));
+      TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+      TEST_CHECK_EQ_INT((int)img.fmt, (int)XW_TEXFMT_PNG);
+      TEST_CHECK_EQ_INT(img.len, sizeof(png));
+      xw_tex_image_free(&img);
+      free(blob);
+    }
+  }
+  /* a real video texture is accepted and handed up undecoded; the shipped
+   * file for 3610097897 carries fif=UNKNOWN, isVideo=0 and
+   * TextureFlags_Video (32) with a whole MP4 as the mip payload */
+  blob = build_texv4f(0xFFFFFFFFu, 0, 32u, 1440, 2560, 1440, 2560, 0, 0, px,
+                      sizeof(px), &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+    TEST_CHECK_EQ_INT(img.is_video, 1);
+    TEST_CHECK_EQ_INT((int)img.len, (int)sizeof(px));
+    TEST_CHECK(memcmp(img.px, px, sizeof(px)) == 0);
+    xw_tex_image_free(&img);
+    free(blob);
+  }
+}
+
+static void test_decode_video_texture(void) {
+  TEST_BEGIN("video textures hand the embedded MP4 up undecoded");
+  XWError err = {0};
+  XWTexImage img;
+  unsigned char mp4[48];
+  size_t len = 0;
+  unsigned char *blob;
+  int i;
+  for (i = 0; i < 48; i++) mp4[i] = (unsigned char)(0x40 + i);
+  /* fif FIF_MP4 (35), the same value as FIF_WEBP */
+  blob = build_texv4f(35u, 0, 0u, 640, 480, 640, 480, 0, 0, mp4, sizeof(mp4),
+                      &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+    TEST_CHECK_EQ_INT(img.is_video, 1);
+    TEST_CHECK_EQ_INT((int)img.len, (int)sizeof(mp4));
+    TEST_CHECK(memcmp(img.px, mp4, sizeof(mp4)) == 0);
+    TEST_CHECK_EQ_INT((int)img.w, 640);
+    TEST_CHECK_EQ_INT((int)img.h, 480);
+    xw_tex_image_free(&img);
+    free(blob);
+  }
+  /* isVideo=1 with an UNKNOWN fif, the other shape the engine accepts */
+  blob = build_texv4f(0xFFFFFFFFu, 1, 0u, 640, 480, 640, 480, 0, 0, mp4,
+                      sizeof(mp4), &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+    TEST_CHECK_EQ_INT(img.is_video, 1);
+    TEST_CHECK(memcmp(img.px, mp4, sizeof(mp4)) == 0);
+    xw_tex_image_free(&img);
+    free(blob);
+  }
+  /* a still with the same payload is not a video */
+  blob = build_texv4f(0xFFFFFFFFu, 0, 0u, 4, 4, 4, 4, 0, 64, mp4, 64, &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+    TEST_CHECK_EQ_INT(img.is_video, 0);
+    xw_tex_image_free(&img);
+    free(blob);
+  }
+}
+
+/* Append a TEXS0003 sprite-sheet animation block (2 frames of 4x4 in an
+ * 8x4 sheet) after a plain TEXV payload. */
+static unsigned char *build_texv_anim(size_t *out_len) {
+  unsigned char px[128]; /* 8x4 RGBA8 */
+  size_t base_len = 0;
+  unsigned char *blob;
+  memset(px, 0x40, sizeof(px));
+  blob = build_texv(0, 8, 4, px, sizeof(px), 0, &base_len);
+  unsigned char *out;
+  unsigned char *d;
+  size_t total;
+  int i;
+  if (!blob)
+    return NULL;
+  /* 9 magic + count + gifW + gifH + 2 frames x 32 bytes */
+  total = base_len + 9 + 4 + 8 + 64;
+  out = realloc(blob, total);
+  if (!out) {
+    free(blob);
+    return NULL;
+  }
+  d = out + base_len;
+  memcpy(d, "TEXS0003\0", 9);
+  d += 9;
+  {
+    uint32_t v[3] = {2, 4, 4}; /* frames, gifW, gifH */
+    for (i = 0; i < 3; i++) {
+      d[0] = (unsigned char)(v[i] & 0xff);
+      d[1] = (unsigned char)((v[i] >> 8) & 0xff);
+      d[2] = (unsigned char)((v[i] >> 16) & 0xff);
+      d[3] = (unsigned char)((v[i] >> 24) & 0xff);
+      d += 4;
+    }
+  }
+  for (i = 0; i < 2; i++) {
+    float f[8];
+    uint32_t num = 0;
+    memcpy(d, &num, 4);
+    f[0] = 0.5f;                    /* frametime */
+    f[1] = (float)(i * 4);          /* x */
+    f[2] = 0.0f;                    /* y */
+    f[3] = 4.0f;                    /* w1 */
+    f[4] = 0.0f;                    /* w2 */
+    f[5] = 0.0f;                    /* h2 */
+    f[6] = 4.0f;                    /* h1 */
+    memcpy(d + 4, &f[0], 4);
+    memcpy(d + 8, &f[1], 4);
+    memcpy(d + 12, &f[2], 4);
+    memcpy(d + 16, &f[3], 4);
+    memcpy(d + 20, &f[4], 4);
+    memcpy(d + 24, &f[5], 4);
+    memcpy(d + 28, &f[6], 4);
+    d += 32;
+  }
+  *out_len = total;
+  return out;
+}
+
+static void test_decode_texs(void) {
+  TEST_BEGIN("TEXS sprite-sheet frames are parsed");
+  XWError err = {0};
+  XWTexImage img;
+  size_t len = 0;
+  unsigned char *blob = build_texv_anim(&len);
+  TEST_CHECK(blob != NULL);
+  if (!blob)
+    return;
+  memset(&img, 0, sizeof(img));
+  TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+  TEST_CHECK_EQ_INT(img.n_frames, 2);
+  TEST_CHECK(img.frame_time > 0.99f && img.frame_time < 1.01f);
+  if (img.n_frames == 2) {
+    TEST_CHECK_EQ_INT((int)img.frames[0].x, 0);
+    TEST_CHECK_EQ_INT((int)img.frames[1].x, 4);
+    TEST_CHECK_EQ_INT((int)img.frames[0].w, 4);
+    TEST_CHECK_EQ_INT((int)img.frames[0].h, 4);
+  }
+  xw_tex_image_free(&img);
+  free(blob);
+}
+
+static void test_decode_edges(void) {
+  TEST_BEGIN("rejects bad magic, truncation, formats, sizes");
+  XWError err = {0};
+  XWTexImage img;
+  unsigned char px[64];
+  memset(px, 0x80, sizeof(px));
+  memset(&img, 0, sizeof(img));
+  TEST_CHECK_EQ_INT(xw_tex_decode(NULL, 0, &img, &err), -1);
+  TEST_CHECK_EQ_INT(xw_tex_decode(px, sizeof(px), &img, &err), -1);
+
+  size_t len = 0;
+  unsigned char *blob = build_texv(2, 4, 4, px, sizeof(px), 0, &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    /* RGB565 unsupported */
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), -1);
+    /* corrupt magic */
+    blob[4] = 'X';
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), -1);
+    /* truncated payload */
+    blob[4] = 'P';
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len - 1, &img, &err), -1);
+    free(blob);
+  }
+}
+
+static void test_bad_inputs(void) {
+  TEST_BEGIN("non-tex/truncated/NULL rejected, no crash");
+  size_t len = 0;
+  unsigned char *pkg = slurp("tests/data/scene/mini.pkg", &len);
+  TEST_CHECK(pkg != NULL);
+  if (pkg) {
+    size_t off = 0, ilen = 0;
+    unsigned int w = 0, h = 0;
+    TEST_CHECK_EQ_INT(xw_tex_find_image(pkg, len, &off, &ilen, &w, &h), -1);
+    free(pkg);
+  }
+  TEST_CHECK_EQ_INT(xw_tex_find_image(NULL, 0, NULL, NULL, NULL, NULL), -1);
+  unsigned char tiny[4] = {'T', 'E', 'X', 'V'};
+  TEST_CHECK_EQ_INT(xw_tex_find_image(tiny, sizeof(tiny), NULL, NULL, NULL, NULL), -1);
+}
+
+static void mkdir_p(const char *path) {
+  char tmp[1024], *p;
+  snprintf(tmp, sizeof(tmp), "%s", path);
+  for (p = tmp + 1; *p; p++) {
+    if (*p == '/') {
+      *p = '\0';
+      mkdir(tmp, 0755);
+      *p = '/';
+    }
+  }
+  mkdir(tmp, 0755);
+}
+
+static void test_resolve_workshop_ref(void) {
+  TEST_BEGIN("slash refs resolve against materials/ first");
+  char dir[] = "/tmp/xw-tex-resolve-XXXXXX";
+  char *tmpd;
+  char out[1024], p[1024];
+  FILE *f;
+  tmpd = mkdtemp(dir);
+  TEST_CHECK(tmpd != NULL);
+  if (tmpd == NULL)
+    return;
+  {
+    /* the real-wall layout: materials/workshop/<id>/foo.tex */
+    snprintf(p, sizeof(p), "%s/materials/workshop/2188505192", dir);
+    mkdir_p(p);
+    snprintf(p, sizeof(p), "%s/materials/workshop/2188505192/foo.tex", dir);
+    f = fopen(p, "w");
+    if (f) {
+      fputs("x", f);
+      fclose(f);
+    }
+    /* a scene-root ref keeps working when materials/ has no match */
+    snprintf(p, sizeof(p), "%s/loose", dir);
+    mkdir_p(p);
+    snprintf(p, sizeof(p), "%s/loose/bar.png", dir);
+    f = fopen(p, "w");
+    if (f) {
+      fputs("x", f);
+      fclose(f);
+    }
+
+    memset(out, 0, sizeof(out));
+    TEST_CHECK_EQ_INT(xw_tex_resolve(dir,
+                                     "materials/workshop/2188505192/foo.json",
+                                     "workshop/2188505192/foo", out,
+                                     sizeof(out)),
+                      0);
+    snprintf(p, sizeof(p), "%s/materials/workshop/2188505192/foo.tex", dir);
+    TEST_CHECK(strcmp(out, p) == 0);
+
+    memset(out, 0, sizeof(out));
+    TEST_CHECK_EQ_INT(xw_tex_resolve(dir, NULL, "loose/bar", out, sizeof(out)),
+                      0);
+    snprintf(p, sizeof(p), "%s/loose/bar.png", dir);
+    TEST_CHECK(strcmp(out, p) == 0);
+
+    memset(out, 0, sizeof(out));
+    TEST_CHECK_EQ_INT(xw_tex_resolve(dir, NULL, "missing/nope", out,
+                                     sizeof(out)),
+                      -1);
+
+    snprintf(p, sizeof(p), "%s/materials/workshop/2188505192/foo.tex", dir);
+    unlink(p);
+    snprintf(p, sizeof(p), "%s/loose/bar.png", dir);
+    unlink(p);
+    snprintf(p, sizeof(p), "%s/loose", dir);
+    rmdir(p);
+    snprintf(p, sizeof(p), "%s/materials/workshop/2188505192", dir);
+    rmdir(p);
+    snprintf(p, sizeof(p), "%s/materials/workshop", dir);
+    rmdir(p);
+    snprintf(p, sizeof(p), "%s/materials", dir);
+    rmdir(p);
+    rmdir(dir);
+  }
+}
+
+int main(void) {
+  TEST_SUITE("scene_tex");
+  test_find_mini_tex();
+  test_bad_inputs();
+  test_decode_raw();
+  test_decode_texb0004();
+  test_decode_video_texture();
+  test_decode_texs();
+  test_decode_edges();
+  test_resolve_workshop_ref();
+  TEST_SUMMARY();
+}

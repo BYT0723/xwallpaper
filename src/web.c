@@ -76,6 +76,9 @@ void xw_web_we_push(const float bins[128]) {
   g_free(js);
 }
 
+/* 1 while the web backend holds a reference to the shared Pulse monitor */
+static int web_pulse_ref;
+
 void xw_web_we_tick(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -85,12 +88,18 @@ void xw_web_we_tick(void) {
     return;
   last = now;
   if (!xw_web_we_want()) {
-    if (xw_we_pulse_running())
+    /* Release only the reference this backend holds. The monitor is a
+     * process-wide refcount shared with the scene backend, so stopping
+     * unconditionally would tear down a capture the scene still needs -
+     * xw_we_pulse_running() says nothing about who started it. */
+    if (web_pulse_ref) {
       xw_we_pulse_stop();
+      web_pulse_ref = 0;
+    }
     return;
   }
-  if (!xw_we_pulse_running())
-    xw_we_pulse_start(); /* may fail without Pulse; get() still yields zeros */
+  if (!web_pulse_ref && xw_we_pulse_start() == 0)
+    web_pulse_ref = 1; /* failure just leaves a silent spectrum */
   float bins[128];
   if (xw_we_pulse_get(bins) == 0)
     xw_web_we_push(bins);

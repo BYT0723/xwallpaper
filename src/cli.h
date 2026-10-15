@@ -16,6 +16,8 @@ enum {
   XW_CMD_EXIT,    /* stop the daemon (exit) */
   XW_CMD_DAEMON,  /* run the daemon in the foreground (--daemon) */
   XW_CMD_RESTORE, /* restore last wallpapers kept by clear --keep (restore) */
+  XW_CMD_LIST_PROPS, /* list user properties of a scene wallpaper */
+  XW_CMD_SET_PROP,   /* override a user property on a live scene wallpaper */
 };
 
 /* Which windows a command targets */
@@ -43,6 +45,7 @@ typedef struct XWConfig {
   /* backend opts */
   int backend_explicit; /* -1 = auto, else XW_BACKEND_* */
   char path[1024];
+  char prop[512];     /* --set-property name=value */
   int scale_mode;     /* XW_SCALE_* for image */
   int mute;           /* video */
   double volume;      /* video, 0..100, default 100 */

@@ -1,0 +1,29 @@
+#ifndef XW_SCENE_IMAGE_H
+#define XW_SCENE_IMAGE_H
+
+#include "scene_gl.h"
+#include "scene_model.h"
+
+/* Render every IMAGE object with a resolvable texture: base copy plus the
+ * effect pass chain in FBO ping-pong, composited to the window through the
+ * builtin alpha program (alphas[i] per object, NULL = all opaque).
+ * Unresolvable objects are skipped (1); background shows through.
+ * Returns 0 ok, -1 frame error. */
+int xw_scene_image_render(XWGl *gl, const XWScene *scene, const char *dir,
+                          float time, const float *alphas, XWError *err);
+
+/* Draw one image object (the caller owns the destination and the clear). */
+int xw_scene_image_draw(XWGl *gl, const XWSceneObject *o, const char *dir,
+                        const XWSceneCamera *cam, float time, float alpha,
+                        XWError *err);
+
+/* Shared resolvers used by the particle renderer too: a shader ref (with
+ * the engine asset fallback) and a material texture ref. */
+int xw_scene_resolve_shader(const char *dir, const char *ref, char *out,
+                            size_t n);
+int xw_scene_sampler_default_tex(XWGl *gl, const char *dir, unsigned int prog,
+                                 int slot, unsigned int *tex, float res[4]);
+void xw_scene_resolve_texture(XWGl *gl, const char *dir, const char *ref,
+                              unsigned int *tex, float res[4]);
+
+#endif

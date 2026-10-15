@@ -1,0 +1,22 @@
+{
+	"passes" : 
+	[
+		{
+			"blending" : "translucent",
+			"combos" : 
+			{
+				"REFRACT" : 1
+			},
+			"constantshadervalues" : 
+			{
+				"ui_editor_properties_overbright" : 2.5,
+				"ui_editor_properties_refract_amount" : 1
+			},
+			"cullmode" : "nocull",
+			"depthtest" : "disabled",
+			"depthwrite" : "disabled",
+			"shader" : "genericparticle",
+			"textures" : [ "particle/drizzle", "particle/normal sprite" ]
+		}
+	]
+}

@@ -1,0 +1,29 @@
+{
+  "camera": {
+    "orthogonalprojection": [1280, 720],
+    "clearcolor": [0.0, 0.0, 1.0]
+  },
+  "objects": [
+    {
+      "id": "compose1",
+      "name": "compose1",
+      "image": "models/comp.json",
+      "origin": [640, 360],
+      "size": [1280, 720]
+    },
+    {
+      "id": "base",
+      "name": "base",
+      "texture": "textures/white.png",
+      "origin": [640, 360],
+      "size": [1280, 720]
+    },
+    {
+      "id": "compose2",
+      "name": "compose2",
+      "image": "models/comp.json",
+      "origin": [640, 360],
+      "size": [1280, 720]
+    }
+  ]
+}

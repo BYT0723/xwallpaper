@@ -12,7 +12,7 @@
  *   name\ttype\tpath\trotation\tgeom\tkeep
  *   \tmute\tvolume\tfps\tscale\topacity\tbelow\tsticky\tskip_taskbar\tskip_pager\tno_focus\tkeybinds\taudio
  *   - name:     窗口身份 (xrandr output 名, 或 -g 的 --name 如 grp_xxx / Screen)
- *   - type:     image | video | web
+ *   - type:     image | video | web | scene
  *   - path:     壁纸文件路径
  *   - rotation: 视频旋转角度 0/90/180/270
  *   - geom:     WxH+X+Y, 或 '-' 表示 name 是 xrandr output (恢复时重解析几何)

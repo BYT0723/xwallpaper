@@ -89,6 +89,7 @@ static int type_from_name(const char *n) {
   if (strcmp(n, "image") == 0) return XW_BACKEND_IMAGE;
   if (strcmp(n, "video") == 0) return XW_BACKEND_VIDEO;
   if (strcmp(n, "web") == 0)   return XW_BACKEND_WEB;
+  if (strcmp(n, "scene") == 0) return XW_BACKEND_SCENE;
   return -1;
 }
 
@@ -347,6 +348,11 @@ int xw_daemon_main(void) {
       /* WE audio wallpapers need a 20Hz fan-out tick; never block past it. */
       if (timeout < 0 || timeout > 50)
         timeout = 50;
+    } else if (xw_app_scene_tick_required(cur)) {
+      /* scene wallpapers animate on tick (default 30fps); the backend
+       * throttles itself, so clamping here only guarantees wakeups. */
+      if (timeout < 0 || timeout > 33)
+        timeout = 33;
     } else if (xw_app_dpms_watch_required(cur) || now_ms - startup_ms < 120000) {
       /* 需要退化为 500ms 节拍: (a) 有持续出帧的渲染后端 (video) — 必须轮询
        * DPMS, 熄屏时暂停它防止点亮显示器; (b) 启动自愈窗口 (前 2 分钟) — 原
@@ -371,6 +377,10 @@ int xw_daemon_main(void) {
     /* WE audio fan-out to web wallpapers (50ms internally throttled;
      * starts/stops the Pulse capture by want-refcount) */
     xw_web_we_tick();
+
+    /* scene frame tick (fps-throttled inside each backend; paused
+     * backends no-op so DPMS-off costs nothing extra) */
+    xw_app_tick_backends(cur);
 
     if (now_ms - startup_ms < 120000) {
       if (now_ms - last_selfheal_ms >= 500) {
@@ -428,7 +438,14 @@ int xw_daemon_main(void) {
         if (r <= 0) {
           reply_n = reply_error(reply, sizeof(reply), "bad request");
         } else {
-          if (strncmp(msg, "set", 3) == 0) {
+          /* exact verb match on the first field (NUL- or LF-terminated):
+           * prefix matching misroutes longer verbs (set-prop into set,
+           * list-props into list). */
+          size_t vlen = 0;
+          while (vlen < (size_t)r && msg[vlen] != '\0' && msg[vlen] != '\n')
+            vlen++;
+#define VERB_IS(s) (vlen == sizeof(s) - 1 && memcmp(msg, s, sizeof(s) - 1) == 0)
+          if (VERB_IS("set")) {
             XWConfig cfg;
             char ebuf[256];
             if (decode_set(msg, (size_t)r, &cfg, ebuf, sizeof(ebuf)) != 0) {
@@ -454,7 +471,7 @@ int xw_daemon_main(void) {
                         (double)(t1.tv_nsec - t0.tv_nsec) / 1e9);
               }
             }
-          } else if (strncmp(msg, "clear", 5) == 0) {
+          } else if (VERB_IS("clear")) {
             XWConfig cfg;
             decode_clear(msg, (size_t)r, &cfg);
             XWError aerr;
@@ -470,10 +487,10 @@ int xw_daemon_main(void) {
             xw_app_clear(cur, &cfg, &aerr);
             xw_app_save_state(cur);
             reply_n = snprintf(reply, sizeof(reply), "ok\n");
-          } else if (strncmp(msg, "restore", 7) == 0) {
+          } else if (VERB_IS("restore")) {
             xw_app_restore_kept(cur);
             reply_n = snprintf(reply, sizeof(reply), "ok\n");
-          } else if (strncmp(msg, "list", 4) == 0) {
+          } else if (VERB_IS("list")) {
             int nw = xw_app_window_count(cur);
             /* build the whole reply into one buffer, then send once */
             char *out = malloc(XW_REPLY_MAX);
@@ -494,6 +511,7 @@ int xw_daemon_main(void) {
                 case XW_BACKEND_IMAGE: strcpy(type, "image"); break;
                 case XW_BACKEND_VIDEO: strcpy(type, "video"); break;
                 case XW_BACKEND_WEB:   strcpy(type, "web"); break;
+                case XW_BACKEND_SCENE: strcpy(type, "scene"); break;
                 default: strcpy(type, "unknown"); break;
                 }
                 /* identity: output name, --name for -g windows */
@@ -523,12 +541,100 @@ int xw_daemon_main(void) {
               close(c);
               continue;
             }
-          } else if (strncmp(msg, "exit", 4) == 0) {
+          } else if (VERB_IS("list-props")) {
+            XWConfig cfg;
+            Decoded d;
+            memset(&cfg, 0, sizeof(cfg));
+            split_fields(msg, (size_t)r, &d);
+            if (d.nfields < 2) {
+              reply_n = reply_error(reply, sizeof(reply), "malformed list-props");
+            } else {
+              char *lines = malloc(XW_REPLY_MAX);
+              if (!lines) {
+                reply_n = reply_error(reply, sizeof(reply), "out of memory");
+              } else {
+                XWError aerr;
+                int cnt;
+                memset(&aerr, 0, sizeof(aerr));
+                if (strcmp(d.fields[1], "primary") == 0) {
+                  cfg.target = XW_TARGET_PRIMARY;
+                } else {
+                  cfg.target = XW_TARGET_OUTPUT;
+                  snprintf(cfg.output, sizeof(cfg.output), "%s", d.fields[1]);
+                }
+                cnt = xw_app_list_props(cur, &cfg, lines, XW_REPLY_MAX, &aerr);
+                if (cnt < 0) {
+                  reply_n = reply_error(reply, sizeof(reply), aerr.msg);
+                  free(lines);
+                } else {
+                  char *out = malloc(XW_REPLY_MAX);
+                  if (!out) {
+                    reply_n =
+                        reply_error(reply, sizeof(reply), "out of memory");
+                    free(lines);
+                  } else {
+                    size_t off = 0, blen = 0;
+                    /* byte length = through the cnt-th newline */
+                    for (int k = 0; k < cnt; k++) {
+                      char *nl = memchr(lines + blen, '\n',
+                                        XW_REPLY_MAX - blen);
+                      if (!nl)
+                        break;
+                      blen = (size_t)(nl + 1 - lines);
+                    }
+                    memcpy(out, "props", 5);
+                    off += 5;
+                    out[off++] = '\0';
+                    off += (size_t)snprintf(out + off, XW_REPLY_MAX - off,
+                                            "%d\n", cnt);
+                    if (off + blen < XW_REPLY_MAX) {
+                      memcpy(out + off, lines, blen);
+                      off += blen;
+                    }
+                    free(lines);
+                    write(c, out, off);
+                    free(out);
+                    close(c);
+                    continue;
+                  }
+                }
+              }
+            }
+          } else if (VERB_IS("set-prop")) {
+            XWConfig cfg;
+            Decoded d;
+            memset(&cfg, 0, sizeof(cfg));
+            split_fields(msg, (size_t)r, &d);
+            if (d.nfields < 3) {
+              reply_n = reply_error(reply, sizeof(reply), "malformed set-prop");
+            } else {
+              char *eq = strchr(d.fields[2], '=');
+              if (!eq || eq == d.fields[2] || !eq[1]) {
+                reply_n = reply_error(reply, sizeof(reply),
+                                      "set-prop needs name=value");
+              } else {
+                XWError aerr;
+                *eq = '\0';
+                memset(&aerr, 0, sizeof(aerr));
+                if (strcmp(d.fields[1], "primary") == 0) {
+                  cfg.target = XW_TARGET_PRIMARY;
+                } else {
+                  cfg.target = XW_TARGET_OUTPUT;
+                  snprintf(cfg.output, sizeof(cfg.output), "%s", d.fields[1]);
+                }
+                if (xw_app_set_prop(cur, &cfg, d.fields[2], eq + 1, &aerr) == 0)
+                  reply_n = snprintf(reply, sizeof(reply), "ok\n");
+                else
+                  reply_n = reply_error(reply, sizeof(reply), aerr.msg);
+              }
+            }
+          } else if (VERB_IS("exit")) {
             reply_n = snprintf(reply, sizeof(reply), "ok\n");
             do_exit = 1;
           } else {
             reply_n = reply_error(reply, sizeof(reply), "unknown command");
           }
+#undef VERB_IS
         }
         if (reply_n > 0)
           write(c, reply, (size_t)reply_n);

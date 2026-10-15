@@ -1,0 +1,19 @@
+{
+  "camera": {
+    "orthogonalprojection": [1280, 720],
+    "clearcolor": [0.0, 0.0, 0.0],
+    "bloom": false,
+    "parallax": false
+  },
+  "objects": [
+    {
+      "id": "tinted",
+      "type": "image",
+      "texture": "textures/gray.png",
+      "origin": [640, 360],
+      "scale": [1.0, 1.0],
+      "size": [1280, 720],
+      "color": "0.50000 0.25000 1.00000"
+    }
+  ]
+}

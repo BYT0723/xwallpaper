@@ -1,0 +1,23 @@
+{
+  "camera": {
+    "orthogonalprojection": [1280, 720],
+    "clearcolor": [0.1, 0.1, 0.1]
+  },
+  "objects": [
+    {
+      "name": "shown",
+      "image": "models/a.json",
+      "visible": {"user": "toggle", "value": true}
+    },
+    {
+      "name": "hidden",
+      "image": "models/a.json",
+      "visible": {"user": "toggle", "value": false}
+    },
+    {
+      "name": "plain",
+      "image": "models/a.json",
+      "visible": false
+    }
+  ]
+}

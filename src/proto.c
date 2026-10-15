@@ -50,6 +50,7 @@ static const char *type_name(int kind) {
   case XW_BACKEND_IMAGE: return "image";
   case XW_BACKEND_VIDEO: return "video";
   case XW_BACKEND_WEB:   return "web";
+  case XW_BACKEND_SCENE: return "scene";
   default: return "unknown";
   }
 }
@@ -165,6 +166,32 @@ int xw_proto_encode_clear(const XWConfig *cfg, char *msg, size_t n) {
 
 int xw_proto_encode_list(char *msg, size_t n) {
   return snprintf(msg, n, "list\n") < (int)n ? (int)strlen("list\n") : -1;
+}
+
+int xw_proto_encode_list_props(const XWConfig *cfg, char *msg, size_t n) {
+  const char *t = (cfg->target == XW_TARGET_OUTPUT && cfg->output[0])
+                      ? cfg->output
+                      : "primary";
+  size_t off = 0;
+  if (append_field(msg, n, &off, "list-props") < 0)
+    return -1;
+  if (append_field(msg, n, &off, t) < 0)
+    return -1;
+  return finish(msg, n, &off);
+}
+
+int xw_proto_encode_set_prop(const XWConfig *cfg, char *msg, size_t n) {
+  const char *t = (cfg->target == XW_TARGET_OUTPUT && cfg->output[0])
+                      ? cfg->output
+                      : "primary";
+  size_t off = 0;
+  if (append_field(msg, n, &off, "set-prop") < 0)
+    return -1;
+  if (append_field(msg, n, &off, t) < 0)
+    return -1;
+  if (append_field(msg, n, &off, cfg->prop) < 0)
+    return -1;
+  return finish(msg, n, &off);
 }
 
 int xw_proto_encode_restore(char *msg, size_t n) {
