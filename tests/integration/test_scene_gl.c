@@ -215,6 +215,41 @@ int main(void) {
     backend.destroy(&backend);
   }
 
+  /* An effect pass that declares an engine-managed render target we do not
+   * build (_rt_imageLayerComposite_*, per image object) must keep the base
+   * image. Falling back to the sampler's annotated `default` grabbed
+   * util/white and painted whole frames white on real scenes. The base here
+   * is blue and the layer is transparent, so a white fallback is obvious. */
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_SCENE;
+  opt.path = "tests/data/scene/rtfallback";
+  opt.fps = 1000.0;
+  backend = *xw_scene_backend_new();
+  memset(&err, 0, sizeof(err));
+  if (backend.init(&backend, win, &opt, &err) != 0) {
+    TEST_FAIL("rtfallback init: %s", err.msg);
+  } else if (!xw_scene_has_gl(&backend)) {
+    printf("  SKIP: no GLX for the render-target fallback check\n");
+    backend.destroy(&backend);
+  } else {
+    TEST_BEGIN("an unbuilt render target keeps the base image");
+    TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+    usleep(2000);
+    backend.tick(&backend);
+    XSync(dpy, False);
+    img = XGetImage(dpy, win->win, cx, cy, 1, 1, AllPlanes, ZPixmap);
+    TEST_CHECK(img != NULL);
+    if (img) {
+      unsigned long px = XGetPixel(img, 0, 0);
+      XDestroyImage(img);
+      int r = (px >> 16) & 0xff;
+      int g = (px >> 8) & 0xff;
+      int b = px & 0xff;
+      TEST_CHECK(r < 100 && g < 100 && b > 150); /* blue, not white */
+    }
+    backend.destroy(&backend);
+  }
+
   xw_x11_destroy_window(win);
   TEST_SUMMARY();
 }

@@ -276,6 +276,30 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
       input_res[2] = (float)ww;
       input_res[3] = (float)hh;
       for (t = 0; t < XW_GL_WE_SLOTS; t++) {
+        /* A pass that declares an engine-managed render target we do not
+         * produce (_rt_imageLayerComposite_* and friends, which the engine
+         * builds per image object) must not fall back to the sampler's
+         * annotated `default`: that default is a util texture, usually white,
+         * and blending the layer against it painted whole frames white.
+         * Keep the base image instead. _rt_FullFrameBuffer is the one render
+         * target we do produce, and a bind naming the target counts as
+         * producible too. */
+        if (t < pass->n_textures && pass->textures[t][0] &&
+            (strncmp(pass->textures[t], "_rt_", 4) == 0 ||
+             strncmp(pass->textures[t], "_alias_", 7) == 0) &&
+            strcmp(pass->textures[t], "_rt_FullFrameBuffer") != 0) {
+          int provided = 0, bi;
+          for (bi = 0; bi < pass->n_binds; bi++)
+            if (strcmp(pass->binds[bi].name, pass->textures[t]) == 0) {
+              provided = 1;
+              break;
+            }
+          if (!provided) {
+            memset(err, 0, sizeof(*err));
+            broken = 1;
+            break;
+          }
+        }
         if (t < pass->n_textures)
           fill_slot(gl, dir, pass->textures[t], &slots[t]);
         else
@@ -290,15 +314,6 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
             slots[t].tex = dt;
             memcpy(slots[t].res, dr, sizeof(dr));
           }
-        }
-        /* a pass that declares an engine-managed render target we do not
-         * produce (_rt_imageLayerComposite_* and friends, used to compose
-         * cloud/effect layers) would sample whatever is left bound. Keep
-         * the base image instead of painting that garbage. */
-        if (!slots[t].tex && t < pass->n_textures &&
-            strncmp(pass->textures[t], "_rt_", 4) == 0) {
-          memset(err, 0, sizeof(*err));
-          broken = 1;
         }
       }
       if (broken)

@@ -1,0 +1,9 @@
+{
+  "passes": [
+    {
+      "shader": "shaders/white.frag",
+      "blending": "normal",
+      "textures": [null, "_rt_imageLayerComposite_9_a"]
+    }
+  ]
+}
