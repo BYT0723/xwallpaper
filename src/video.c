@@ -6,6 +6,7 @@
 #include <mpv/client.h>
 
 #include "backend.h"
+#include "keybinds.h"
 #include "x11.h"
 
 typedef struct {
@@ -212,6 +213,93 @@ static int video_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   return 0;
 }
 
+/* Runtime control for the key bindings and the volume/mute subcommands.
+ * mpv owns the values, so every relative step reads the live property first
+ * instead of trusting a cached copy. */
+static int video_control(XWBackend *b, const char *name, const char *value,
+                         XWError *err) {
+  VideoBase *m = (b && b->priv) ? (VideoBase *)b->priv : NULL;
+  int cur = 0, want;
+  if (!m || !m->mpv || !name) {
+    XW_ERROR_SET(err, 1, "video: not running");
+    return -1;
+  }
+  if (strcmp(name, "volume") == 0) {
+    double now = 0.0, next;
+    if (mpv_get_property(m->mpv, "volume", MPV_FORMAT_DOUBLE, &now) < 0)
+      return -1;
+    if (xw_audio_apply((int)(now + 0.5), value, &cur) != 0) {
+      XW_ERROR_SET(err, 1, "volume needs a number like +2, -2 or 50");
+      return -1;
+    }
+    next = (double)cur;
+    if (mpv_set_property(m->mpv, "volume", MPV_FORMAT_DOUBLE, &next) < 0)
+      return -1;
+    /* raising the volume is meaningless while muted, so unmute with it */
+    if (m->mute) {
+      mpv_set_property_string(m->mpv, "mute", "no");
+      m->mute = 0;
+    }
+    m->volume = next;
+    return 0;
+  }
+  if (strcmp(name, "mute") == 0 || strcmp(name, "pause") == 0) {
+    if (mpv_get_property(m->mpv, name, MPV_FORMAT_FLAG, &cur) < 0)
+      return -1;
+    if (!value || !value[0] || strcmp(value, "toggle") == 0)
+      want = !cur;
+    else if (strcmp(value, "on") == 0)
+      want = 1;
+    else if (strcmp(value, "off") == 0)
+      want = 0;
+    else {
+      XW_ERROR_SET(err, 1, "%s takes on, off or toggle", name);
+      return -1;
+    }
+    if (mpv_set_property(m->mpv, name, MPV_FORMAT_FLAG, &want) < 0)
+      return -1;
+    if (strcmp(name, "mute") == 0)
+      m->mute = want;
+    return 0;
+  }
+  if (strcmp(name, "seek") == 0) {
+    char secs[32];
+    const char *args[4];
+    if (!value || !value[0]) {
+      XW_ERROR_SET(err, 1, "seek needs seconds");
+      return -1;
+    }
+    snprintf(secs, sizeof(secs), "%s", value);
+    args[0] = "seek";
+    args[1] = secs;
+    args[2] = "relative";
+    args[3] = NULL;
+    if (mpv_command(m->mpv, args) < 0) {
+      XW_ERROR_SET(err, 1, "seek failed");
+      return -1;
+    }
+    return 0;
+  }
+  if (strcmp(name, "rotate") == 0) {
+    static const int ring[4] = {90, 180, 270, 0};
+    int64_t now = 0, next;
+    if (mpv_get_property(m->mpv, "video-rotate", MPV_FORMAT_INT64, &now) < 0)
+      return -1;
+    if (!value || !value[0] || strcmp(value, "cycle") == 0) {
+      if (xw_values_cycle(ring, 4, (int)now, &cur) != 0)
+        return -1;
+      next = cur;
+    } else {
+      next = strtol(value, NULL, 10);
+    }
+    if (mpv_set_property(m->mpv, "video-rotate", MPV_FORMAT_INT64, &next) < 0)
+      return -1;
+    return 0;
+  }
+  XW_ERROR_SET(err, 1, "video does not support '%s'", name);
+  return -1;
+}
+
 #ifdef XW_HAVE_WAYLAND
 static int video_init_wl(XWBackend *b, XWWlWindow *win,
                          const XWBackendOpt *opt, XWError *err);
@@ -228,6 +316,7 @@ XWBackend *xw_video_backend_new(void) {
     .destroy = video_destroy,
     .on_event = NULL,
     .set_paused = video_set_paused,
+    .control = video_control,
     .reload = video_reload,
     .retry = video_retry,
 #ifdef XW_HAVE_WAYLAND

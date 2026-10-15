@@ -127,6 +127,8 @@ void xw_cli_usage(FILE *f) {
     "  xwallpaper --state\n"
     "  xwallpaper --list-properties [-m <output>]\n"
     "  xwallpaper --set-property <name=value> [-m <output>]\n"
+    "  xwallpaper volume [-m <output>|--all] <+N|-N|N>\n"
+    "  xwallpaper mute [-m <output>|--all] [on|off|toggle]\n"
     "  xwallpaper exit\n"
     "  xwallpaper --daemon   (debug: run the daemon in the foreground)\n"
     "\n"
@@ -158,6 +160,26 @@ void xw_cli_usage(FILE *f) {
     "  xwallpaper clear -m dual\n"
     "  xwallpaper clear --keep -m eDP   # hide, keep last for `restore`\n"
     "  xwallpaper restore               # bring kept last wallpapers back\n");
+}
+
+/* volume accepts a relative step ("+2"/"-2") or an absolute level 0..100 */
+static int parse_ctl_volume(const char *s, char *out, size_t n) {
+  const char *p = s;
+  long v;
+  if (!s || !s[0] || !out || n == 0)
+    return -1;
+  if (*p == '+' || *p == '-')
+    p++;
+  if (!*p)
+    return -1;
+  for (; *p; p++)
+    if (*p < '0' || *p > '9')
+      return -1;
+  v = strtol(s, NULL, 10);
+  if (s[0] != '+' && s[0] != '-' && (v < 0 || v > 100))
+    return -1;
+  snprintf(out, n, "%s", s);
+  return 0;
 }
 
 int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
@@ -219,6 +241,48 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
       XW_ERROR_SET(err, 1, "--set-property requires name=value");
       return -1;
     }
+    return 0;
+  }
+
+  if (strcmp(cmd, "volume") == 0 || strcmp(cmd, "mute") == 0) {
+    int is_volume = (strcmp(cmd, "volume") == 0);
+    cfg->command = XW_CMD_CONTROL;
+    cfg->target = XW_TARGET_PRIMARY;
+    snprintf(cfg->ctl_name, sizeof(cfg->ctl_name), "%s", cmd);
+    for (; i < argc; i++) {
+      const char *a = argv[i];
+      if (strcmp(a, "-m") == 0) {
+        if (++i >= argc) {
+          XW_ERROR_SET(err, 1, "-m requires an output name");
+          return -1;
+        }
+        snprintf(cfg->output, sizeof(cfg->output), "%s", argv[i]);
+        cfg->target = XW_TARGET_OUTPUT;
+      } else if (strcmp(a, "--all") == 0) {
+        cfg->target = XW_TARGET_ALL;
+      } else if (is_volume && cfg->ctl_value[0] == '\0') {
+        if (parse_ctl_volume(a, cfg->ctl_value, sizeof(cfg->ctl_value)) != 0) {
+          XW_ERROR_SET(err, 1, "volume needs a number like +2, -2 or 50");
+          return -1;
+        }
+      } else if (!is_volume && cfg->ctl_value[0] == '\0' &&
+                 (strcmp(a, "on") == 0 || strcmp(a, "off") == 0 ||
+                  strcmp(a, "toggle") == 0)) {
+        snprintf(cfg->ctl_value, sizeof(cfg->ctl_value), "%s", a);
+      } else {
+        XW_ERROR_SET(err, 1,
+                     "unexpected argument '%s' (%s takes [-m <output>|--all]%s)",
+                     a, cmd, is_volume ? " <value>" : " [on|off|toggle]");
+        return -1;
+      }
+    }
+    if (is_volume && cfg->ctl_value[0] == '\0') {
+      XW_ERROR_SET(err, 1, "volume needs a number like +2, -2 or 50");
+      return -1;
+    }
+    /* bare `mute` is the keybind case: toggle whatever it currently is */
+    if (!is_volume && cfg->ctl_value[0] == '\0')
+      snprintf(cfg->ctl_value, sizeof(cfg->ctl_value), "toggle");
     return 0;
   }
 

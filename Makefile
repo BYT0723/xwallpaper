@@ -31,6 +31,7 @@ src/scene_script.o: CFLAGS += -Ivendor/quickjs
 DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/x11.c src/app.c src/image.c src/video.c src/web.c \
               src/web_dir.c src/wl.c src/we_audio.c src/we_pulse.c \
+              src/keybinds.c \
               src/scene_pkg.c src/scene_tex.c src/scene_shader.c \
               src/scene_parse.c src/scene_core.c src/scene_gl.c \
               src/scene_mesh.c \

@@ -985,6 +985,55 @@ int xw_app_set_prop(XWApp *app, const XWConfig *cfg, const char *name,
   return b->set_prop(b, name, value, err);
 }
 
+int xw_app_control(XWApp *app, const XWConfig *cfg, const char *name,
+                   const char *value, XWError *err) {
+  int idx;
+  XWBackend *b;
+  if (!app || !cfg || !name || !name[0]) {
+    XW_ERROR_SET(err, 1, "invalid args");
+    return -1;
+  }
+  if (cfg->target == XW_TARGET_ALL) {
+    XWError first;
+    int i, hit = 0, ok = 0;
+    memset(&first, 0, sizeof(first));
+    for (i = 0; i < app->nwins; i++) {
+      XWError e;
+      memset(&e, 0, sizeof(e));
+      b = app->backends[i];
+      if (!b)
+        continue;
+      hit++;
+      if (b->control && b->control(b, name, value, &e) == 0) {
+        ok++;
+      } else if (!first.msg[0]) {
+        first = e;
+      }
+    }
+    if (ok > 0)
+      return 0;
+    if (!hit)
+      XW_ERROR_SET(err, 1, "no wallpapers to control");
+    else if (first.msg[0])
+      XW_ERROR_SET(err, 1, "%s", first.msg);
+    else
+      XW_ERROR_SET(err, 1, "no wallpaper supports '%s'", name);
+    return -1;
+  }
+  idx = props_backend(app, cfg, err);
+  if (idx < 0) {
+    if (err && !err->code)
+      XW_ERROR_SET(err, 1, "no wallpaper on that output");
+    return -1;
+  }
+  b = app->backends[idx];
+  if (!b || !b->control) {
+    XW_ERROR_SET(err, 1, "that wallpaper does not support '%s'", name);
+    return -1;
+  }
+  return b->control(b, name, value, err);
+}
+
 #define DPMS_POLL_INTERVAL_MS 500
 
 static uint64_t now_monotonic_ms(void) {

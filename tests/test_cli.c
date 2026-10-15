@@ -469,6 +469,75 @@ static void test_set_span_image_only(void) {
   TEST_CHECK_EQ_INT(parse(a4, 6), -1);
 }
 
+static void test_control_commands(void) {
+  TEST_BEGIN("volume and mute parse into a control command");
+  reset();
+  char *a1[] = {"xwallpaper", "volume", "+2"};
+  TEST_CHECK_EQ_INT(parse(a1, 3), 0);
+  TEST_CHECK_EQ_INT(cfg.command, XW_CMD_CONTROL);
+  TEST_CHECK_EQ_STR(cfg.ctl_name, "volume");
+  TEST_CHECK_EQ_STR(cfg.ctl_value, "+2");
+
+  reset();
+  char *a2[] = {"xwallpaper", "volume", "-2"};
+  TEST_CHECK_EQ_INT(parse(a2, 3), 0);
+  TEST_CHECK_EQ_STR(cfg.ctl_value, "-2");
+
+  reset();
+  char *a3[] = {"xwallpaper", "volume", "50"};
+  TEST_CHECK_EQ_INT(parse(a3, 3), 0);
+  TEST_CHECK_EQ_STR(cfg.ctl_value, "50");
+
+  /* mute with no argument means toggle, which is what a keybind wants */
+  reset();
+  char *a4[] = {"xwallpaper", "mute"};
+  TEST_CHECK_EQ_INT(parse(a4, 2), 0);
+  TEST_CHECK_EQ_INT(cfg.command, XW_CMD_CONTROL);
+  TEST_CHECK_EQ_STR(cfg.ctl_name, "mute");
+  TEST_CHECK_EQ_STR(cfg.ctl_value, "toggle");
+
+  reset();
+  char *a5[] = {"xwallpaper", "mute", "on"};
+  TEST_CHECK_EQ_INT(parse(a5, 3), 0);
+  TEST_CHECK_EQ_STR(cfg.ctl_value, "on");
+
+  /* target selection matches the other subcommands: flags after the verb */
+  reset();
+  char *a6[] = {"xwallpaper", "volume", "-m", "DP-1", "+2"};
+  TEST_CHECK_EQ_INT(parse(a6, 5), 0);
+  TEST_CHECK_EQ_INT(cfg.target, XW_TARGET_OUTPUT);
+  TEST_CHECK_EQ_STR(cfg.output, "DP-1");
+  TEST_CHECK_EQ_STR(cfg.ctl_value, "+2");
+
+  reset();
+  char *a7[] = {"xwallpaper", "mute", "--all"};
+  TEST_CHECK_EQ_INT(parse(a7, 3), 0);
+  TEST_CHECK_EQ_INT(cfg.target, XW_TARGET_ALL);
+}
+
+static void test_control_bad_args(void) {
+  TEST_BEGIN("volume/mute reject bad arguments");
+  reset();
+  char *bad1[] = {"xwallpaper", "volume"};
+  TEST_CHECK_EQ_INT(parse(bad1, 2), -1);
+
+  reset();
+  char *bad2[] = {"xwallpaper", "volume", "abc"};
+  TEST_CHECK_EQ_INT(parse(bad2, 3), -1);
+
+  reset();
+  char *bad3[] = {"xwallpaper", "volume", "200"};
+  TEST_CHECK_EQ_INT(parse(bad3, 3), -1);
+
+  reset();
+  char *bad4[] = {"xwallpaper", "volume", "50", "extra"};
+  TEST_CHECK_EQ_INT(parse(bad4, 4), -1);
+
+  reset();
+  char *bad5[] = {"xwallpaper", "mute", "bogus"};
+  TEST_CHECK_EQ_INT(parse(bad5, 3), -1);
+}
+
 int main(void) {
   TEST_SUITE("cli");
   test_detect_backend();
@@ -498,6 +567,8 @@ int main(void) {
   test_unknown_command();
   test_scale_mode_flag();
   test_rotate_flag();
+  test_control_commands();
+  test_control_bad_args();
   test_keybinds_flag();
   test_audio_client_name_flag();
   test_fps_flag();

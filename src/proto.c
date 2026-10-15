@@ -194,8 +194,27 @@ int xw_proto_encode_set_prop(const XWConfig *cfg, char *msg, size_t n) {
   return finish(msg, n, &off);
 }
 
-int xw_proto_encode_restore(char *msg, size_t n) {
-  return snprintf(msg, n, "restore\n") < (int)n ? (int)strlen("restore\n") : -1;
+int xw_proto_encode_control(const XWConfig *cfg, char *msg, size_t n) {
+  const char *t;
+  char kv[96];
+  size_t off = 0;
+  if (cfg->target == XW_TARGET_ALL)
+    t = "all";
+  else if (cfg->target == XW_TARGET_OUTPUT && cfg->output[0])
+    t = cfg->output;
+  else
+    t = "primary";
+  snprintf(kv, sizeof(kv), "%s=%s", cfg->ctl_name, cfg->ctl_value);
+  if (append_field(msg, n, &off, "control") < 0)
+    return -1;
+  if (append_field(msg, n, &off, t) < 0)
+    return -1;
+  if (append_field(msg, n, &off, kv) < 0)
+    return -1;
+  return finish(msg, n, &off);
+}
+
+int xw_proto_encode_restore(char *msg, size_t n) {  return snprintf(msg, n, "restore\n") < (int)n ? (int)strlen("restore\n") : -1;
 }
 
 int xw_proto_encode_exit(char *msg, size_t n) {
