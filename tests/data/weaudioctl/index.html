@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>xwctl</title></head>
+<body>
+<audio id="a"></audio>
+<script>
+  window.ac = null;
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) {
+      var ctx = new AC();
+      var osc = ctx.createOscillator();
+      osc.connect(ctx.destination);
+      window.ac = ctx;
+    }
+  } catch (e) {}
+</script>
+</body>
+</html>

@@ -378,6 +378,117 @@ static void test_we_properties_delivered(void) {
   xw_x11_destroy_window(win);
 }
 
+/* Runtime audio control: WebKitGTK has no volume API, so the injected shim
+ * must drive media elements and Web Audio graphs from inside the page. The
+ * fixture has both an <audio> element and an AudioContext wired straight to
+ * its destination, which is what a wallpaper using Web Audio does. */
+static void test_audio_control(void) {
+  XWError err, ctl;
+  Display *dpy;
+  XWConfig cfg;
+  XWWindow *win;
+  XWBackendOpt opt;
+  XWBackend backend;
+  GtkWidget *view;
+  char *s;
+  int i;
+
+  TEST_BEGIN("volume/mute reach media elements and Web Audio graphs");
+  memset(&err, 0, sizeof(err));
+  memset(&ctl, 0, sizeof(ctl));
+  dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wectl");
+  cfg.geom_w = 400;
+  cfg.geom_h = 300;
+  win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/weaudioctl";
+  opt.volume = 100.0;
+  backend = *xw_web_backend_new();
+  if (backend.init(&backend, win, &opt, &err) != 0 || !backend.control) {
+    TEST_FAIL("web init: %s", err.msg);
+    if (win)
+      xw_x11_destroy_window(win);
+    return;
+  }
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 8);
+
+  view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (!view) {
+    backend.destroy(&backend);
+    xw_x11_destroy_window(win);
+    return;
+  }
+
+  /* nothing is pushed before the user turns the volume */
+  s = run_js_sync(view, "String(window.__xwCtl.vol)");
+  TEST_CHECK(s != NULL && strcmp(s, "null") == 0);
+  g_free(s);
+
+  TEST_CHECK_EQ_INT(backend.control(&backend, "volume", "50", &ctl), 0);
+  pump_gtk(dpy, 3);
+  s = run_js_sync(view, "String(document.getElementById('a').volume)");
+  TEST_CHECK(s != NULL && strcmp(s, "0.5") == 0);
+  g_free(s);
+  s = run_js_sync(view, "String(window.__xwCtl.gains.length)");
+  TEST_CHECK(s != NULL && strcmp(s, "1") == 0);
+  g_free(s);
+  s = run_js_sync(view, "String(window.__xwCtl.gains[0].gain.value)");
+  TEST_CHECK(s != NULL && strcmp(s, "0.5") == 0);
+  g_free(s);
+
+  /* mute silences both paths, unmute restores the level */
+  TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "toggle", &ctl), 0);
+  pump_gtk(dpy, 3);
+  s = run_js_sync(view,
+                  "String(document.getElementById('a').volume)+','+"
+                  "String(window.__xwCtl.gains[0].gain.value)");
+  TEST_CHECK(s != NULL && strcmp(s, "0,0") == 0);
+  g_free(s);
+  TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "off", &ctl), 0);
+  pump_gtk(dpy, 3);
+  s = run_js_sync(view, "String(document.getElementById('a').volume)");
+  TEST_CHECK(s != NULL && strcmp(s, "0.5") == 0);
+  g_free(s);
+
+  /* a relative step works from the last level */
+  TEST_CHECK_EQ_INT(backend.control(&backend, "volume", "+10", &ctl), 0);
+  pump_gtk(dpy, 3);
+  s = run_js_sync(view, "String(document.getElementById('a').volume)");
+  TEST_CHECK(s != NULL && strcmp(s, "0.6") == 0);
+  g_free(s);
+
+  /* what a web page cannot do fails honestly */
+  TEST_CHECK_EQ_INT(backend.control(&backend, "rotate", "cycle", &ctl), -1);
+  TEST_CHECK_EQ_INT(backend.control(&backend, "volume", "abc", &ctl), -1);
+  TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "bogus", &ctl), -1);
+
+  /* the level survives a navigation: reload and read it back */
+  webkit_web_view_reload(WEBKIT_WEB_VIEW(view));
+  for (i = 0; i < 20; i++)
+    pump_gtk(dpy, 2);
+  s = run_js_sync(view, "String(document.getElementById('a').volume)");
+  TEST_CHECK(s != NULL && strcmp(s, "0.6") == 0);
+  g_free(s);
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_paints();
@@ -385,5 +496,6 @@ int main(void) {
   test_wallpaper_noninteractive();
   test_storage_persistent();
   test_we_properties_delivered();
+  test_audio_control();
   TEST_SUMMARY();
 }

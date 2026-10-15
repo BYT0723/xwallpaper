@@ -12,6 +12,7 @@
 #include <webkit2/webkit2.h>
 
 #include "backend.h"
+#include "keybinds.h"
 #include "we_audio.h"
 #include "we_pulse.h"
 #include "web.h"
@@ -27,6 +28,11 @@ typedef struct {
   char root_dir[1024]; /* dir mode: absolute wallpaper root ("" when unused) */
   char entry[256];     /* dir mode: entry file, always index.html */
   int want_audio;      /* page called wallpaperRegisterAudioListener */
+  /* runtime audio control, kept here so it survives page navigations */
+  double ctl_volume;   /* 0..100, the master level the user asked for */
+  int ctl_muted;
+  int ctl_paused;
+  int ctl_started;     /* 0 = leave the page's own mixing alone */
 } WebCtx;
 
 /* Process-wide registry of live web wallpapers (main thread only:
@@ -157,6 +163,143 @@ static const char *kAudioJS =
     "};"
     "})();";
 
+/* Runtime audio control. WebKitGTK has no volume API, so the page is driven
+ * from inside: every media element is held at the master level, including
+ * ones created later, and Web Audio graphs are rerouted through a master
+ * GainNode (pages using AudioContext ignore element volume entirely). The
+ * level starts unset so a page's own mixing is untouched until the user
+ * actually turns the volume. The daemon re-injects this on every navigation
+ * and re-applies the level once the load finishes. */
+static const char *kAudioCtlJS =
+    "(function(){"
+    "if(window.__xwCtl)return;"
+    "var st=window.__xwCtl={vol:null,muted:false,gains:[]};"
+    "function level(){return st.muted?0:st.vol;}"
+    "function applyEl(e){var v=level();if(v===null)return;"
+    "try{e.volume=v;}catch(x){}}"
+    "function allEls(){var n=document.querySelectorAll('audio,video');"
+    "for(var i=0;i<n.length;i++)applyEl(n[i]);}"
+    "function sync(){var v=level();if(v===null&&!st.muted)return;"
+    "allEls();"
+    "for(var i=0;i<st.gains.length;i++)"
+    "try{st.gains[i].gain.value=v;}catch(x){}}"
+    "window.__xwCtlApply=function(vol,muted){"
+    "st.vol=vol;st.muted=!!muted;sync();};"
+    "window.__xwCtlMedia=function(what,arg){"
+    "var n=document.querySelectorAll('audio,video');"
+    "for(var i=0;i<n.length;i++){var e=n[i];"
+    "try{"
+    "if(what==='pause')e.pause();"
+    "else if(what==='play'){var p=e.play();"
+    "if(p&&p.catch)p.catch(function(){});}"
+    "else if(what==='seek')e.currentTime=Math.max(0,e.currentTime+arg);"
+    "}catch(x){}}};"
+    "try{new MutationObserver(function(m){"
+    "for(var i=0;i<m.length;i++){var a=m[i].addedNodes;"
+    "for(var j=0;j<a.length;j++){var n=a[j];"
+    "if(n.tagName==='AUDIO'||n.tagName==='VIDEO')applyEl(n);"
+    "if(n.querySelectorAll){var d=n.querySelectorAll('audio,video');"
+    "for(var k=0;k<d.length;k++)applyEl(d[k]);}}}"
+    "}).observe(document.documentElement||document,"
+    "{childList:true,subtree:true});}catch(x){}"
+    "try{var op=HTMLMediaElement.prototype.play;"
+    "HTMLMediaElement.prototype.play=function(){"
+    "applyEl(this);return op.apply(this,arguments);};}catch(x){}"
+    "try{if(typeof AudioNode!=='undefined'&&window.AudioDestinationNode){"
+    "var connect=AudioNode.prototype.connect;"
+    "AudioNode.prototype.connect=function(dest){"
+    "try{"
+    "if(!this.__xwM&&dest instanceof AudioDestinationNode){"
+    "var c=this.context,g=c.createGain();"
+    "g.__xwM=true;g.gain.value=(level()===null?1:level());"
+    "st.gains.push(g);"
+    "connect.call(g,dest);"
+    "return connect.call(this,g);}"
+    "}catch(x){}"
+    "return connect.apply(this,arguments);};}}catch(x){}"
+    "})();";
+
+static void web_eval(WebCtx *ctx, const char *js) {
+  if (!ctx || !ctx->view || !js)
+    return;
+  webkit_web_view_evaluate_javascript(WEBKIT_WEB_VIEW(ctx->view), js, -1, NULL,
+                                      NULL, NULL, NULL, NULL);
+}
+
+/* Push the daemon's stored level into the page (after a control change, and
+ * again after every navigation). */
+static void web_push_audio_ctl(WebCtx *ctx) {
+  char js[192];
+  if (!ctx || !ctx->view || !ctx->ctl_started)
+    return;
+  snprintf(js, sizeof(js),
+           "window.__xwCtlApply&&window.__xwCtlApply(%g,%d);",
+           ctx->ctl_volume / 100.0, ctx->ctl_muted ? 1 : 0);
+  web_eval(ctx, js);
+  if (ctx->ctl_paused)
+    web_eval(ctx, "window.__xwCtlMedia&&window.__xwCtlMedia('pause');");
+}
+
+static int web_control(XWBackend *b, const char *name, const char *value,
+                       XWError *err) {
+  WebCtx *ctx = (b && b->priv) ? (WebCtx *)b->priv : NULL;
+  char js[192];
+  if (!ctx || !ctx->view || !name) {
+    XW_ERROR_SET(err, 1, "web: not running");
+    return -1;
+  }
+  if (strcmp(name, "volume") == 0) {
+    int v = 0;
+    if (xw_audio_apply((int)(ctx->ctl_volume + 0.5), value, &v) != 0) {
+      XW_ERROR_SET(err, 1, "volume needs a number like +2, -2 or 50");
+      return -1;
+    }
+    ctx->ctl_volume = v;
+    ctx->ctl_muted = 0;
+    ctx->ctl_started = 1;
+    web_push_audio_ctl(ctx);
+    return 0;
+  }
+  if (strcmp(name, "mute") == 0 || strcmp(name, "pause") == 0) {
+    int *flag = strcmp(name, "mute") == 0 ? &ctx->ctl_muted : &ctx->ctl_paused;
+    int want = !*flag;
+    if (value && value[0]) {
+      if (strcmp(value, "on") == 0)
+        want = 1;
+      else if (strcmp(value, "off") == 0)
+        want = 0;
+      else if (strcmp(value, "toggle") != 0) {
+        XW_ERROR_SET(err, 1, "%s takes on, off or toggle", name);
+        return -1;
+      }
+    }
+    *flag = want;
+    if (strcmp(name, "mute") == 0) {
+      ctx->ctl_started = 1;
+      web_push_audio_ctl(ctx);
+    } else {
+      snprintf(js, sizeof(js),
+               "window.__xwCtlMedia&&window.__xwCtlMedia('%s');",
+               want ? "pause" : "play");
+      web_eval(ctx, js);
+    }
+    return 0;
+  }
+  if (strcmp(name, "seek") == 0) {
+    if (!value || !value[0]) {
+      XW_ERROR_SET(err, 1, "seek needs seconds");
+      return -1;
+    }
+    snprintf(js, sizeof(js),
+             "window.__xwCtlMedia&&window.__xwCtlMedia('seek',%g);",
+             atof(value));
+    web_eval(ctx, js);
+    return 0;
+  }
+  XW_ERROR_SET(err, 1, "web does not support '%s'", name);
+  return -1;
+}
+
 static void web_audio_message_cb(WebKitUserContentManager *ucm,
                                  WebKitJavascriptResult *res, gpointer ud) {
   (void)ucm;
@@ -193,8 +336,14 @@ static void web_apply_wallpaper_policy(WebKitWebView *view, WebCtx *ctx) {
     webkit_user_content_manager_add_script(ucm, audio);
     webkit_user_script_unref(audio);
   }
-  webkit_user_content_manager_register_script_message_handler(ucm, "xwAudio");
-  g_signal_connect(ucm, "script-message-received::xwAudio",
+  WebKitUserScript *ctl = webkit_user_script_new(
+      kAudioCtlJS, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES,
+      WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL, NULL);
+  if (ctl) {
+    webkit_user_content_manager_add_script(ucm, ctl);
+    webkit_user_script_unref(ctl);
+  }
+  webkit_user_content_manager_register_script_message_handler(ucm, "xwAudio");  g_signal_connect(ucm, "script-message-received::xwAudio",
                    G_CALLBACK(web_audio_message_cb), ctx);
 }
 
@@ -254,6 +403,8 @@ static void web_load_changed_cb(WebKitWebView *view,
   WebCtx *ctx = (WebCtx *)ud;
   if (load_event != WEBKIT_LOAD_FINISHED)
     return;
+  /* the shim is re-injected per document, so re-apply the stored level */
+  web_push_audio_ctl(ctx);
   if (!ctx->root_dir[0])
     return; /* only local dirs have a sibling project.json */
   web_deliver_we_properties(view);
@@ -366,6 +517,11 @@ static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWErro
     return -1;
   }
   ctx->win = win;
+  /* the master level starts at the set-time volume so a relative step has a
+   * sensible origin, but nothing is pushed to the page until the user
+   * actually changes it (ctl_started) */
+  ctx->ctl_volume = opt->volume > 0.0 ? opt->volume : 100.0;
+  ctx->ctl_muted = opt->mute ? 1 : 0;
   ctx->path = strdup(opt->path);
   if (!ctx->path) {
     XW_ERROR_SET(err, 1, "out of memory");
@@ -504,6 +660,7 @@ XWBackend *xw_web_backend_new(void) {
     .stop = web_stop,
     .destroy = web_destroy,
     .on_event = NULL,
+    .control = web_control,
     .reload = web_reload,
 #if defined(XW_HAVE_WAYLAND) && defined(XW_HAVE_GTK_LAYER_SHELL)
     /* start/stop/destroy/reload are pure WebKit/GTK ops on the isolated
@@ -548,6 +705,8 @@ static int web_init_wl(XWBackend *b, XWWlWindow *win,
     XW_ERROR_SET(err, 1, "out of memory");
     return -1;
   }
+  ctx->ctl_volume = opt->volume > 0.0 ? opt->volume : 100.0;
+  ctx->ctl_muted = opt->mute ? 1 : 0;
   ctx->path = strdup(opt->path);
   if (!ctx->path) {
     XW_ERROR_SET(err, 1, "out of memory");
