@@ -250,6 +250,40 @@ int main(void) {
     backend.destroy(&backend);
   }
 
+  /* Runtime control on a scene wallpaper: volume/mute drive its sound
+   * objects and pause stops the animation too; actions a scene has no
+   * meaning for fail honestly instead of pretending. */
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_SCENE;
+  opt.path = "tests/data/scene/gl";
+  opt.fps = 1000.0;
+  backend = *xw_scene_backend_new();
+  memset(&err, 0, sizeof(err));
+  if (backend.init(&backend, win, &opt, &err) != 0) {
+    TEST_FAIL("scene control init: %s", err.msg);
+  } else if (!xw_scene_has_gl(&backend)) {
+    printf("  SKIP: no GLX for the scene control check\n");
+    backend.destroy(&backend);
+  } else if (!backend.control) {
+    TEST_FAIL("scene backend has no control callback");
+    backend.destroy(&backend);
+  } else {
+    TEST_BEGIN("scene control drives sound volume, mute and pause");
+    TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+    usleep(2000);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "volume", "+2", &err), 0);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "volume", "30", &err), 0);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "toggle", &err), 0);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "off", &err), 0);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "pause", "toggle", &err), 0);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "pause", "off", &err), 0);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "volume", "abc", &err), -1);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "bogus", &err), -1);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "seek", "5", &err), -1);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "rotate", "cycle", &err), -1);
+    backend.destroy(&backend);
+  }
+
   xw_x11_destroy_window(win);
   TEST_SUMMARY();
 }
