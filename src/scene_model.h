@@ -232,6 +232,9 @@ typedef struct XWSceneObject {
   /* `angles` is stored in radians and only its z component rotates a flat
    * image object (linux-wallpaperengine: CImage::localTransform) */
   float angles[3];
+  /* object tint: WE's Image::color, a vec4 whose alpha defaults to 1. The
+   * engine multiplies the sampled texture by g_Color4 (genericimage*.frag) */
+  float color[4];
   int visible;
   XWDynFloat alpha;
   XWParticleCfg particle;

@@ -541,6 +541,37 @@ static void test_angles_parse(void) {
   xw_scene_free(&s);
 }
 
+static void test_object_color(void) {
+  XWScene s;
+  XWError err = {0};
+  TEST_BEGIN("object color parses as vec4 and defaults to opaque white");
+  memset(&s, 0, sizeof(s));
+  TEST_CHECK_EQ_INT(xw_scene_parse("tests/data/scene/objcolor", &s, &err), 0);
+  if (s.n_objects != 4) {
+    TEST_CHECK_EQ_INT(s.n_objects, 4);
+    xw_scene_free(&s);
+    return;
+  }
+  /* colour tints the object's own texture, so an object without one must
+   * still render untinted */
+  TEST_CHECK(s.objects[0].color[0] == 1.0f && s.objects[0].color[1] == 1.0f &&
+             s.objects[0].color[2] == 1.0f && s.objects[0].color[3] == 1.0f);
+  /* 2887099508's visible solid layers carry a 3-component colour; the
+   * engine's Color keeps alpha at 1 when it is omitted */
+  TEST_CHECK(s.objects[1].color[0] > 0.266f && s.objects[1].color[0] < 0.267f);
+  TEST_CHECK(s.objects[1].color[1] > 0.627f && s.objects[1].color[1] < 0.628f);
+  TEST_CHECK(s.objects[1].color[2] > 0.898f && s.objects[1].color[2] < 0.899f);
+  TEST_CHECK(s.objects[1].color[3] == 1.0f);
+  /* a 4-component colour keeps its alpha */
+  TEST_CHECK(s.objects[2].color[0] > 0.499f && s.objects[2].color[0] < 0.501f);
+  TEST_CHECK(s.objects[2].color[3] > 0.499f && s.objects[2].color[3] < 0.501f);
+  /* {user, value} keeps its base value, like the other properties */
+  TEST_CHECK(s.objects[3].color[0] > 0.099f && s.objects[3].color[0] < 0.101f);
+  TEST_CHECK(s.objects[3].color[2] > 0.299f && s.objects[3].color[2] < 0.301f);
+  TEST_CHECK(s.objects[3].color[3] == 1.0f);
+  xw_scene_free(&s);
+}
+
 int main(void) {
   TEST_SUITE("scene_parse");
   test_parse_fixture();
@@ -557,5 +588,6 @@ int main(void) {
   test_particle_defaults();
   test_particle_angular_parse();
   test_angles_parse();
+  test_object_color();
   TEST_SUMMARY();
 }

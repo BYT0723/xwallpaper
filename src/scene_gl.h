@@ -142,6 +142,11 @@ int xw_gl_clear(XWGl *g, float r, float gg, float b);
 /* Draw the fullscreen quad with prog/tex/time. */
 int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time);
 
+/* Like xw_gl_draw, multiplying the sample by the object's tint (WE binds
+ * genericimage*'s g_Color4 to Image::color); NULL means untinted. */
+int xw_gl_draw_tint(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                    const float tint[4]);
+
 /* Like xw_gl_draw but for a source already in window order (the frame buffer
  * snapshot), so the flip is inverted once. */
 int xw_gl_draw_window_source(XWGl *g, unsigned int prog, unsigned int tex,

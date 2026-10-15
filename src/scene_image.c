@@ -183,7 +183,7 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
   if (ffb) {
     if (xw_gl_draw_window_source(gl, prog, tex, time) != 0)
       return -1;
-  } else if (xw_gl_draw(gl, prog, tex, time) != 0) {
+  } else if (xw_gl_draw_tint(gl, prog, tex, time, o->color) != 0) {
     return -1;
   }
   if (xw_gl_fbo_texture(gl, 0, &src) != 0)
