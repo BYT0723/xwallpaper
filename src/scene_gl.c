@@ -51,8 +51,9 @@ struct XWGl {
   GLuint part_vao;
   GLuint part_vbo;
   GLuint ffb_tex; /* screen-sized copy of the scene so far */
-  unsigned ffb_frame; /* frame the copy belongs to (the engine refreshes it
-                       * once per frame, not once per object) */
+  unsigned ffb_frame; /* frame counter; the full-frame snapshot is refreshed
+                       * on every use, because it is a copy rather than the
+                       * engine's live target */
   unsigned ffb_stamp;
   GLuint fbos[2];
   GLuint fbo_tex[2];
@@ -2342,10 +2343,12 @@ int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex) {
     if (!g->ffb_tex)
       return -1;
   }
-  if (g->ffb_stamp == g->ffb_frame) {
-    *tex = g->ffb_tex;
-    return 0;
-  }
+  /* The engine's _rt_FullFrameBuffer is the live scene target, so every
+   * sample sees the frame as it stands. Ours is a copy, so it has to be
+   * refreshed on every use: caching it per frame made the second compose
+   * layer in a frame sample the contents from before the objects drawn
+   * between the two, and paint that back over them (2889253135 lost its
+   * character exactly this way). */
   g->ffb_stamp = g->ffb_frame;
   glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
   glReadBuffer(GL_BACK);

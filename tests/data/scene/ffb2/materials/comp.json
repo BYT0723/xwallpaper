@@ -1,0 +1,9 @@
+{
+  "passes": [
+    {
+      "shader": "genericimage4",
+      "blending": "translucent",
+      "textures": ["_rt_FullFrameBuffer"]
+    }
+  ]
+}

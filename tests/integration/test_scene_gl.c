@@ -137,6 +137,41 @@ int main(void) {
     backend.destroy(&backend);
   }
 
+  /* Two compose layers with a drawn object between them: the second samples
+   * the frame as it stands, so the object must survive. Caching the snapshot
+   * per frame made the second layer paint the frame from before that object,
+   * which erased 2889253135's character. The clear colour is blue and the base
+   * white, so a stale snapshot shows up as blue at the centre. */
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_SCENE;
+  opt.path = "tests/data/scene/ffb2";
+  opt.fps = 1000.0;
+  backend = *xw_scene_backend_new();
+  memset(&err, 0, sizeof(err));
+  if (backend.init(&backend, win, &opt, &err) != 0) {
+    TEST_FAIL("ffb2 init: %s", err.msg);
+  } else if (!xw_scene_has_gl(&backend)) {
+    printf("  SKIP: no GLX for the compose-layer check\n");
+    backend.destroy(&backend);
+  } else {
+    TEST_BEGIN("a second compose layer keeps what was drawn between them");
+    TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+    usleep(2000);
+    backend.tick(&backend);
+    XSync(dpy, False);
+    img = XGetImage(dpy, win->win, cx, cy, 1, 1, AllPlanes, ZPixmap);
+    TEST_CHECK(img != NULL);
+    if (img) {
+      unsigned long px = XGetPixel(img, 0, 0);
+      XDestroyImage(img);
+      int r = (px >> 16) & 0xff;
+      int g = (px >> 8) & 0xff;
+      int b = px & 0xff;
+      TEST_CHECK(r > 180 && g > 180 && b > 180); /* the white base, not blue */
+    }
+    backend.destroy(&backend);
+  }
+
   xw_x11_destroy_window(win);
   TEST_SUMMARY();
 }
