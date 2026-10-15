@@ -1487,7 +1487,8 @@ int xw_gl_draw_tint(XWGl *g, unsigned int prog, unsigned int tex, float time,
  * an ortho over [0,size] (CImage::updatePuppetPositionBuffer); mapping that
  * straight to NDC gives the same result for our offscreen base draw. */
 static int mesh_build(XWGl *g, const char *key, const char *path, float sx,
-                      float sy, int *slot, XWError *err) {
+                      float sy, int rx, int ry, int rw, int rh, int *slot,
+                      XWError *err) {
   XWMesh m;
   unsigned char *file;
   size_t len = 0;
@@ -1518,10 +1519,15 @@ static int mesh_build(XWGl *g, const char *key, const char *path, float sx,
     return -1;
   }
   for (i = 0; i < m.n_vertices; i++) {
+    /* local rect coordinates, top-down, the way the engine lays a puppet out
+     * (CImage::updatePuppetPositionBuffer), mapped into the object's window
+     * rect and then to NDC the same way draw_rect_full maps a rect */
     const float lx = sx * 0.5f + m.pos[i * 3 + 0];
     const float ly = sy * 0.5f - m.pos[i * 3 + 1];
-    v[i * 4 + 0] = lx / sx * 2.0f - 1.0f;
-    v[i * 4 + 1] = ly / sy * 2.0f - 1.0f;
+    const float wx = (float)rx + lx / sx * (float)rw;
+    const float wy = (float)ry + ly / sy * (float)rh;
+    v[i * 4 + 0] = wx / (float)g->w * 2.0f - 1.0f;
+    v[i * 4 + 1] = 1.0f - wy / (float)g->h * 2.0f;
     v[i * 4 + 2] = m.uv[i * 2 + 0];
     v[i * 4 + 3] = m.uv[i * 2 + 1];
   }
@@ -1554,21 +1560,24 @@ static int mesh_build(XWGl *g, const char *key, const char *path, float sx,
   return 0;
 }
 
-int xw_gl_draw_mesh(XWGl *g, const char *path, float sx, float sy,
-                    unsigned int prog, unsigned int tex, float time,
-                    XWError *err) {
+int xw_gl_draw_mesh(XWGl *g, const char *path, float sx, float sy, int rx,
+                    int ry, int rw, int rh, unsigned int prog,
+                    unsigned int tex, float time, XWError *err) {
   char key[1152];
   int i, slot = -1;
   GLint loc;
-  if (!g || !path || !path[0] || sx <= 0.0f || sy <= 0.0f)
+  if (!g || !path || !path[0] || sx <= 0.0f || sy <= 0.0f || rw <= 0 ||
+      rh <= 0 || g->w <= 0 || g->h <= 0)
     return 1;
-  snprintf(key, sizeof(key), "%s|%.1fx%.1f", path, sx, sy);
+  snprintf(key, sizeof(key), "%s|%.1fx%.1f|%d,%d,%dx%d", path, sx, sy, rx, ry,
+           rw, rh);
   for (i = 0; i < g->nmesh; i++)
     if (strcmp(g->meshes[i].key, key) == 0) {
       slot = i;
       break;
     }
-  if (slot < 0 && mesh_build(g, key, path, sx, sy, &slot, err) != 0)
+  if (slot < 0 && mesh_build(g, key, path, sx, sy, rx, ry, rw, rh, &slot,
+                             err) != 0)
     return 1; /* unusable mesh: the caller falls back to the flat quad */
   glXMakeCurrent(g->dpy, g->win, g->ctx);
   glUseProgram(prog);
@@ -1695,7 +1704,7 @@ int xw_gl_delete_texture(XWGl *g, unsigned int tex) {
 
 static int draw_rect_full(XWGl *g, unsigned int prog, unsigned int tex,
                           float time, float alpha, int use_alpha, int dx,
-                          int dy, int dw, int dh) {
+                          int dy, int dw, int dh, const float *tint) {
   float x0, x1, y0, y1, verts[16];
   GLint sloc, tloc, aloc;
   if (!g || !prog || dw <= 0 || dh <= 0 || g->w <= 0 || g->h <= 0)
@@ -1739,6 +1748,13 @@ static int draw_rect_full(XWGl *g, unsigned int prog, unsigned int tex,
   aloc = glGetUniformLocation(prog, "xw_flip");
   if (aloc >= 0)
     glUniform1f(aloc, g->flip ? -1.0f : 1.0f);
+  aloc = glGetUniformLocation(prog, "xw_tint");
+  if (aloc >= 0) {
+    if (tint)
+      glUniform4f(aloc, tint[0], tint[1], tint[2], tint[3]);
+    else
+      glUniform4f(aloc, 1.0f, 1.0f, 1.0f, 1.0f);
+  }
   glBindVertexArray(g->rect_vao);
   glBindBuffer(GL_ARRAY_BUFFER, g->rect_vbo);
   glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_DYNAMIC_DRAW);
@@ -1750,13 +1766,19 @@ static int draw_rect_full(XWGl *g, unsigned int prog, unsigned int tex,
 
 int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
                     int dx, int dy, int dw, int dh) {
-  return draw_rect_full(g, prog, tex, time, 1.0f, 0, dx, dy, dw, dh);
+  return draw_rect_full(g, prog, tex, time, 1.0f, 0, dx, dy, dw, dh, NULL);
 }
 
 int xw_gl_draw_rect_alpha(XWGl *g, unsigned int prog, unsigned int tex,
                           float time, float alpha, int dx, int dy, int dw,
                           int dh) {
-  return draw_rect_full(g, prog, tex, time, alpha, 1, dx, dy, dw, dh);
+  return draw_rect_full(g, prog, tex, time, alpha, 1, dx, dy, dw, dh, NULL);
+}
+
+int xw_gl_draw_rect_tint(XWGl *g, unsigned int prog, unsigned int tex,
+                         float time, const float tint[4], int dx, int dy,
+                         int dw, int dh) {
+  return draw_rect_full(g, prog, tex, time, 1.0f, 0, dx, dy, dw, dh, tint);
 }
 
 int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex) {
@@ -1771,6 +1793,15 @@ int xw_gl_clear(XWGl *g, float r, float gg, float b) {
     return -1;
   glXMakeCurrent(g->dpy, g->win, g->ctx);
   glClearColor(r, gg, b, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
+  return 0;
+}
+
+int xw_gl_clear_rgba(XWGl *g, float r, float gg, float b, float a) {
+  if (!g)
+    return -1;
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glClearColor(r, gg, b, a);
   glClear(GL_COLOR_BUFFER_BIT);
   return 0;
 }
@@ -2094,6 +2125,21 @@ int xw_gl_draw_rect_alpha(XWGl *g, unsigned int prog, unsigned int tex,
   return -1;
 }
 
+int xw_gl_draw_rect_tint(XWGl *g, unsigned int prog, unsigned int tex,
+                         float time, const float tint[4], int dx, int dy,
+                         int dw, int dh) {
+  (void)g;
+  (void)prog;
+  (void)tex;
+  (void)time;
+  (void)tint;
+  (void)dx;
+  (void)dy;
+  (void)dw;
+  (void)dh;
+  return -1;
+}
+
 int xw_gl_bind_target(XWGl *g, int fbo) {
   (void)g;
   (void)fbo;
@@ -2127,13 +2173,17 @@ int xw_gl_draw_tint(XWGl *g, unsigned int prog, unsigned int tex, float time,
   return -1;
 }
 
-int xw_gl_draw_mesh(XWGl *g, const char *path, float sx, float sy,
-                    unsigned int prog, unsigned int tex, float time,
-                    XWError *err) {
+int xw_gl_draw_mesh(XWGl *g, const char *path, float sx, float sy, int rx,
+                    int ry, int rw, int rh, unsigned int prog,
+                    unsigned int tex, float time, XWError *err) {
   (void)g;
   (void)path;
   (void)sx;
   (void)sy;
+  (void)rx;
+  (void)ry;
+  (void)rw;
+  (void)rh;
   (void)prog;
   (void)tex;
   (void)time;
@@ -2153,6 +2203,15 @@ int xw_gl_clear(XWGl *g, float r, float gg, float b) {
   (void)r;
   (void)gg;
   (void)b;
+  return -1;
+}
+
+int xw_gl_clear_rgba(XWGl *g, float r, float gg, float b, float a) {
+  (void)g;
+  (void)r;
+  (void)gg;
+  (void)b;
+  (void)a;
   return -1;
 }
 

@@ -183,26 +183,32 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
   if (ffb) {
     if (xw_gl_draw_window_source(gl, prog, tex, time) != 0)
       return -1;
-  } else if (o->puppet[0]) {
-    /* model.puppet: the mesh stands in for the flat quad. The engine sizes a
-     * puppet's rect from its texture rather than the declared size
-     * (CImage::getSize), so follow that when the texture is known. */
-    char mpath[1152];
-    int tw2 = 0, th2 = 0, rw2 = 0, rh2 = 0, mrc;
-    float sx = o->size[0] * o->scale[0], sy = o->size[1] * o->scale[1];
-    if (xw_gl_texture_size(gl, tex, &tw2, &th2, &rw2, &rh2) == 0 && rw2 > 0 &&
-        rh2 > 0) {
-      sx = (float)rw2 * o->scale[0];
-      sy = (float)rh2 * o->scale[1];
-    }
-    snprintf(mpath, sizeof(mpath), "%.512s/%.400s", dir, o->puppet);
-    mrc = xw_gl_draw_mesh(gl, mpath, sx, sy, prog, tex, time, err);
-    if (mrc < 0)
+  } else {
+    /* Placement: the engine sizes the quad from the texture's real size times
+     * scale and centres it on origin, and the object covers only that rect.
+     * Clearing to transparent first is what keeps the previous object from
+     * showing around it (and from being composited a second time). */
+    int tw2 = 0, th2 = 0, rw2 = 0, rh2 = 0, ww = 0, wh = 0;
+    int rx = 0, ry = 0, rw = 0, rh = 0, mrc = 1;
+    xw_gl_texture_size(gl, tex, &tw2, &th2, &rw2, &rh2);
+    xw_gl_target_size(gl, &ww, &wh);
+    xw_scene_object_rect(o, rw2, rh2, cam ? cam->ortho_w : 0.0f,
+                         cam ? cam->ortho_h : 0.0f, ww, wh, &rx, &ry, &rw, &rh);
+    if (xw_gl_clear_rgba(gl, 0.0f, 0.0f, 0.0f, 0.0f) != 0)
       return -1;
-    if (mrc != 0 && xw_gl_draw_tint(gl, prog, tex, time, o->color) != 0)
+    if (o->puppet[0]) {
+      char mpath[1152];
+      const float sx = (float)(rw2 > 0 ? rw2 : (int)o->size[0]);
+      const float sy = (float)(rh2 > 0 ? rh2 : (int)o->size[1]);
+      snprintf(mpath, sizeof(mpath), "%.512s/%.400s", dir, o->puppet);
+      mrc = xw_gl_draw_mesh(gl, mpath, sx, sy, rx, ry, rw, rh, prog, tex,
+                            time, err);
+      if (mrc < 0)
+        return -1;
+    }
+    if (mrc != 0 && xw_gl_draw_rect_tint(gl, prog, tex, time, o->color, rx, ry,
+                                         rw, rh) != 0)
       return -1; /* unusable mesh: keep the quad rather than nothing */
-  } else if (xw_gl_draw_tint(gl, prog, tex, time, o->color) != 0) {
-    return -1;
   }
   if (xw_gl_fbo_texture(gl, 0, &src) != 0)
     return -1;

@@ -139,6 +139,10 @@ int xw_gl_bind_named(XWGl *g, const char *name);
 /* Clear the bound target to an opaque color. */
 int xw_gl_clear(XWGl *g, float r, float gg, float b);
 
+/* Clear the bound target to a given alpha; a placed object draws over a
+ * fully transparent offscreen so only its own rect is composited. */
+int xw_gl_clear_rgba(XWGl *g, float r, float gg, float b, float a);
+
 /* Draw the fullscreen quad with prog/tex/time. */
 int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time);
 
@@ -148,12 +152,12 @@ int xw_gl_draw_tint(XWGl *g, unsigned int prog, unsigned int tex, float time,
                     const float tint[4]);
 
 /* Draw an MDLV puppet mesh (model.puppet) as the object's base, in place of
- * the flat quad, with the mesh centred in an sx by sy rect the way the engine
- * does. Returns 0 when it drew, and 1 when the mesh is unusable and the
- * caller should fall back to the quad. */
-int xw_gl_draw_mesh(XWGl *g, const char *path, float sx, float sy,
-                    unsigned int prog, unsigned int tex, float time,
-                    XWError *err);
+ * the flat quad. `sx`/`sy` are the mesh's own rect and `rx,ry,rw,rh` the
+ * object's window rect it is mapped into. Returns 0 when it drew, and 1 when
+ * the mesh is unusable and the caller should fall back to the quad. */
+int xw_gl_draw_mesh(XWGl *g, const char *path, float sx, float sy, int rx,
+                    int ry, int rw, int rh, unsigned int prog,
+                    unsigned int tex, float time, XWError *err);
 
 /* Like xw_gl_draw but for a source already in window order (the frame buffer
  * snapshot), so the flip is inverted once. */
@@ -227,6 +231,11 @@ int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
 int xw_gl_draw_rect_alpha(XWGl *g, unsigned int prog, unsigned int tex,
                           float time, float alpha, int dx, int dy, int dw,
                           int dh);
+
+/* Like draw_rect, multiplying the sample by the object's tint. */
+int xw_gl_draw_rect_tint(XWGl *g, unsigned int prog, unsigned int tex,
+                         float time, const float tint[4], int dx, int dy,
+                         int dw, int dh);
 
 /* Swap window buffers. */
 int xw_gl_present(XWGl *g);

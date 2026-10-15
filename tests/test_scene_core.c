@@ -208,6 +208,22 @@ static void test_object_rect(void) {
   TEST_CHECK_EQ_INT(y, 0);
   TEST_CHECK_EQ_INT(w, 1920);
   TEST_CHECK_EQ_INT(h, 1080);
+  /* A compose layer carries no texture of its own and declares its size; the
+   * engine returns image.size there (CImage::getSize). Sizing those from the
+   * window instead is what left 3808922316 as narrow strips: its
+   * projectlayer and composelayers are 3840x2160 and are the layers that
+   * cover the canvas. */
+  memset(&o, 0, sizeof(o));
+  o.scale[0] = o.scale[1] = 1.0f;
+  o.origin[0] = 1920.0f;
+  o.origin[1] = 1080.0f;
+  o.size[0] = 3840.0f;
+  o.size[1] = 2160.0f;
+  xw_scene_object_rect(&o, 0, 0, 3840.0f, 2160.0f, 1920, 1080, &x, &y, &w, &h);
+  TEST_CHECK_EQ_INT(x, 0);
+  TEST_CHECK_EQ_INT(y, 0);
+  TEST_CHECK_EQ_INT(w, 1920);
+  TEST_CHECK_EQ_INT(h, 1080);
   /* with no texture at all the quad falls back to the window */
   memset(&o, 0, sizeof(o));
   o.scale[0] = o.scale[1] = 1.0f;
