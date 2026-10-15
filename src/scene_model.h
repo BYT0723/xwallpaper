@@ -225,6 +225,8 @@ typedef struct XWSceneObject {
   char material[XW_SCENE_PATH_MAX];
   char texture[XW_SCENE_PATH_MAX]; /* image base texture, "" = none */
   char mat_tex[XW_SCENE_PATH_MAX]; /* material texture ref (real walls) */
+  /* model.puppet: an MDLV mesh drawn instead of a flat quad */
+  char puppet[XW_SCENE_PATH_MAX];
   XWBlend blend;                   /* material blending (real walls) */
   float origin[2];
   float scale[2];

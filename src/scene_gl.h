@@ -147,6 +147,14 @@ int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time);
 int xw_gl_draw_tint(XWGl *g, unsigned int prog, unsigned int tex, float time,
                     const float tint[4]);
 
+/* Draw an MDLV puppet mesh (model.puppet) as the object's base, in place of
+ * the flat quad, with the mesh centred in an sx by sy rect the way the engine
+ * does. Returns 0 when it drew, and 1 when the mesh is unusable and the
+ * caller should fall back to the quad. */
+int xw_gl_draw_mesh(XWGl *g, const char *path, float sx, float sy,
+                    unsigned int prog, unsigned int tex, float time,
+                    XWError *err);
+
 /* Like xw_gl_draw but for a source already in window order (the frame buffer
  * snapshot), so the flip is inverted once. */
 int xw_gl_draw_window_source(XWGl *g, unsigned int prog, unsigned int tex,

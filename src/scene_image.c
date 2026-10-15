@@ -183,6 +183,24 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
   if (ffb) {
     if (xw_gl_draw_window_source(gl, prog, tex, time) != 0)
       return -1;
+  } else if (o->puppet[0]) {
+    /* model.puppet: the mesh stands in for the flat quad. The engine sizes a
+     * puppet's rect from its texture rather than the declared size
+     * (CImage::getSize), so follow that when the texture is known. */
+    char mpath[1152];
+    int tw2 = 0, th2 = 0, rw2 = 0, rh2 = 0, mrc;
+    float sx = o->size[0] * o->scale[0], sy = o->size[1] * o->scale[1];
+    if (xw_gl_texture_size(gl, tex, &tw2, &th2, &rw2, &rh2) == 0 && rw2 > 0 &&
+        rh2 > 0) {
+      sx = (float)rw2 * o->scale[0];
+      sy = (float)rh2 * o->scale[1];
+    }
+    snprintf(mpath, sizeof(mpath), "%.512s/%.400s", dir, o->puppet);
+    mrc = xw_gl_draw_mesh(gl, mpath, sx, sy, prog, tex, time, err);
+    if (mrc < 0)
+      return -1;
+    if (mrc != 0 && xw_gl_draw_tint(gl, prog, tex, time, o->color) != 0)
+      return -1; /* unusable mesh: keep the quad rather than nothing */
   } else if (xw_gl_draw_tint(gl, prog, tex, time, o->color) != 0) {
     return -1;
   }

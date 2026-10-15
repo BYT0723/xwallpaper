@@ -33,6 +33,7 @@ DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/web_dir.c src/wl.c src/we_audio.c src/we_pulse.c \
               src/scene_pkg.c src/scene_tex.c src/scene_shader.c \
               src/scene_parse.c src/scene_core.c src/scene_gl.c \
+              src/scene_mesh.c \
               src/scene_image.c src/scene_text_gl.c \
               src/scene_particle.c src/scene_particle_gl.c src/scene_text.c \
               src/scene_sound.c src/scene_glsl.c \
@@ -257,6 +258,9 @@ tests/test_scene_pkg: tests/test_scene_pkg.c src/scene_pkg.o
 
 tests/test_scene_tex: tests/test_scene_tex.c src/scene_tex.o
 	$(CC) $(CFLAGS) $(LZ4_CFLAGS) -o $@ $< src/scene_tex.o $(LZ4_LIBS)
+
+tests/test_scene_mesh: tests/test_scene_mesh.c src/scene_mesh.o
+	$(CC) $(CFLAGS) -o $@ $< src/scene_mesh.o
 
 tests/test_scene_shader: tests/test_scene_shader.c src/scene_shader.o
 	$(CC) $(CFLAGS) -o $@ $< src/scene_shader.o

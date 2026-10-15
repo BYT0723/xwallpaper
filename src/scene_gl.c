@@ -17,6 +17,7 @@
 
 #include "scene_gl.h"
 #include "scene_glsl.h"
+#include "scene_mesh.h"
 #include "scene_shader.h"
 #include "scene_tex.h"
 #include "we_audio.h"
@@ -24,6 +25,7 @@
 #define XW_GL_PROG_MAX 16
 #define XW_GL_TEXCACHE_MAX 24
 #define XW_GL_VIDEO_MAX 2
+#define XW_GL_MESH_MAX 4
 #define XW_GL_DEFS_MAX 24
 #define XW_GL_TARGETS_MAX 8
 
@@ -83,6 +85,13 @@ struct XWGl {
     char tmp[128];
   } video[XW_GL_VIDEO_MAX];
   int nvideo;
+  /* MDLV puppet meshes, one interleaved [x,y,u,v] NDC buffer per (path, rect) */
+  struct {
+    char key[1152];
+    GLuint vao, vbo, ibo;
+    unsigned int n_idx;
+  } meshes[XW_GL_MESH_MAX];
+  int nmesh;
   GLuint utils[4];
   int flip; /* 1 while rendering into an FBO (see bind_target) */
   /* The engine's g_AudioSpectrum{N}{Left,Right} arrays, refreshed once per
@@ -380,6 +389,11 @@ void xw_gl_destroy(XWGl *g) {
   if (g->ctx) {
     glXMakeCurrent(g->dpy, g->win, g->ctx);
     for (i = 0; i < g->nvideo; i++) video_destroy(g, i);
+    for (i = 0; i < g->nmesh; i++) {
+      glDeleteVertexArrays(1, &g->meshes[i].vao);
+      glDeleteBuffers(1, &g->meshes[i].vbo);
+      glDeleteBuffers(1, &g->meshes[i].ibo);
+    }
     for (i = 0; i < g->nprogs; i++) glDeleteProgram(g->progs[i].prog);
     for (i = 0; i < g->ntex; i++)
       if (g->texcache[i].video < 0) glDeleteTextures(1, &g->texcache[i].tex);
@@ -1468,6 +1482,119 @@ int xw_gl_draw_tint(XWGl *g, unsigned int prog, unsigned int tex, float time,
   return draw_full(g, prog, tex, time, 1.0f, 0, 0, tint);
 }
 
+/* Build (and cache) the interleaved [x,y,u,v] buffer for one puppet mesh.
+ * The engine centres the mesh in the object's own rect and projects it with
+ * an ortho over [0,size] (CImage::updatePuppetPositionBuffer); mapping that
+ * straight to NDC gives the same result for our offscreen base draw. */
+static int mesh_build(XWGl *g, const char *key, const char *path, float sx,
+                      float sy, int *slot, XWError *err) {
+  XWMesh m;
+  unsigned char *file;
+  size_t len = 0;
+  float *v = NULL;
+  unsigned int i;
+  int s;
+  memset(&m, 0, sizeof(m));
+  file = slurp_file(path, &len, 64u * 1024u * 1024u);
+  if (!file) {
+    XW_ERROR_SET(err, 1, "cannot read puppet mesh");
+    return -1;
+  }
+  if (xw_mesh_parse(file, len, &m, err) != 0) {
+    free(file);
+    return -1;
+  }
+  free(file);
+  if (g->nmesh >= XW_GL_MESH_MAX || m.n_vertices == 0 || m.n_indices == 0) {
+    xw_mesh_free(&m);
+    XW_ERROR_SET(err, 1, "puppet mesh unusable");
+    return -1;
+  }
+  s = g->nmesh;
+  v = malloc(sizeof(float) * 4u * m.n_vertices);
+  if (!v) {
+    xw_mesh_free(&m);
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
+  for (i = 0; i < m.n_vertices; i++) {
+    const float lx = sx * 0.5f + m.pos[i * 3 + 0];
+    const float ly = sy * 0.5f - m.pos[i * 3 + 1];
+    v[i * 4 + 0] = lx / sx * 2.0f - 1.0f;
+    v[i * 4 + 1] = ly / sy * 2.0f - 1.0f;
+    v[i * 4 + 2] = m.uv[i * 2 + 0];
+    v[i * 4 + 3] = m.uv[i * 2 + 1];
+  }
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glGenVertexArrays(1, &g->meshes[s].vao);
+  glBindVertexArray(g->meshes[s].vao);
+  glGenBuffers(1, &g->meshes[s].vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, g->meshes[s].vbo);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 4u * m.n_vertices, v,
+               GL_STATIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 4,
+                        (void *)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 4,
+                        (void *)(sizeof(float) * 2));
+  glGenBuffers(1, &g->meshes[s].ibo);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g->meshes[s].ibo);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned short) * m.n_indices,
+               m.idx, GL_STATIC_DRAW);
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+  free(v);
+  snprintf(g->meshes[s].key, sizeof(g->meshes[s].key), "%s", key);
+  g->meshes[s].n_idx = m.n_indices;
+  g->nmesh++;
+  xw_mesh_free(&m);
+  *slot = s;
+  return 0;
+}
+
+int xw_gl_draw_mesh(XWGl *g, const char *path, float sx, float sy,
+                    unsigned int prog, unsigned int tex, float time,
+                    XWError *err) {
+  char key[1152];
+  int i, slot = -1;
+  GLint loc;
+  if (!g || !path || !path[0] || sx <= 0.0f || sy <= 0.0f)
+    return 1;
+  snprintf(key, sizeof(key), "%s|%.1fx%.1f", path, sx, sy);
+  for (i = 0; i < g->nmesh; i++)
+    if (strcmp(g->meshes[i].key, key) == 0) {
+      slot = i;
+      break;
+    }
+  if (slot < 0 && mesh_build(g, key, path, sx, sy, &slot, err) != 0)
+    return 1; /* unusable mesh: the caller falls back to the flat quad */
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glUseProgram(prog);
+  loc = sampler_location(prog);
+  if (loc >= 0 && tex) {
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glUniform1i(loc, 0);
+  }
+  loc = time_location(prog);
+  if (loc >= 0)
+    glUniform1f(loc, time);
+  loc = glGetUniformLocation(prog, "xw_flip");
+  if (loc >= 0)
+    glUniform1f(loc, g->flip ? -1.0f : 1.0f);
+  loc = glGetUniformLocation(prog, "xw_tint");
+  if (loc >= 0)
+    glUniform4f(loc, 1.0f, 1.0f, 1.0f, 1.0f);
+  glBindVertexArray(g->meshes[slot].vao);
+  glDrawElements(GL_TRIANGLES, (GLsizei)g->meshes[slot].n_idx, GL_UNSIGNED_SHORT,
+                 NULL);
+  glBindVertexArray(0);
+  glUseProgram(0);
+  return 0;
+}
+
 int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
                      float alpha) {
   return draw_full(g, prog, tex, time, alpha, 1, 0, NULL);
@@ -1998,6 +2125,20 @@ int xw_gl_draw_tint(XWGl *g, unsigned int prog, unsigned int tex, float time,
   (void)time;
   (void)tint;
   return -1;
+}
+
+int xw_gl_draw_mesh(XWGl *g, const char *path, float sx, float sy,
+                    unsigned int prog, unsigned int tex, float time,
+                    XWError *err) {
+  (void)g;
+  (void)path;
+  (void)sx;
+  (void)sy;
+  (void)prog;
+  (void)tex;
+  (void)time;
+  (void)err;
+  return 1;
 }
 
 int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex) {

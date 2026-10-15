@@ -1016,6 +1016,9 @@ static void resolve_material(const char *dir, XWSceneObject *o) {
   if (json_object_object_get_ex(model, "material", &v) && v &&
       json_object_get_type(v) == json_type_string)
     copy_str(o->material, sizeof(o->material), json_object_get_string(v));
+  if (json_object_object_get_ex(model, "puppet", &v) && v &&
+      json_object_get_type(v) == json_type_string)
+    copy_str(o->puppet, sizeof(o->puppet), json_object_get_string(v));
   json_object_put(model);
   if (!o->material[0])
     return;
