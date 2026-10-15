@@ -19,6 +19,8 @@ typedef enum {
   XW_TEXFMT_DXT3,
   XW_TEXFMT_DXT5,
   XW_TEXFMT_PNG,
+  /* the single mip is a whole MP4; px holds those bytes, not pixels */
+  XW_TEXFMT_MP4,
 } XWTexFmt;
 
 #define XW_TEX_FRAMES_MAX 16
@@ -34,6 +36,9 @@ typedef struct XWTexImage {
   unsigned int w, h;
   unsigned int tex_w, tex_h;
   unsigned int flags; /* WE TextureFlags: ClampUVs=2, NoInterpolation=1 */
+  /* 1 for a video texture (XW_TEXFMT_MP4): `px` is the embedded MP4 and the
+   * engine plays it instead of decoding pixels */
+  int is_video;
   unsigned char *px;
   size_t len;
   /* TEXS animation: sprite sheets pick a frame per tick (particles) */

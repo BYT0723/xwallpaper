@@ -104,9 +104,12 @@ void xw_tex_image_free(XWTexImage *img) {
 #define XW_TEX_DXT1 7u
 #define XW_TEX_RG88 8u
 #define XW_TEX_R8 9u
-/* FreeImage ids; PNG is the only embedded file we decode (via imlib) */
+/* FreeImage ids; PNG and MP4 are the embedded files we act on */
 #define XW_FIF_PNG 13u
+#define XW_FIF_MP4 35u /* aliases FIF_WEBP, as in the engine */
 #define XW_FIF_UNKNOWN 0xFFFFFFFFu
+/* WE TextureFlags_Video: the single mip is an MP4 rather than pixels */
+#define XW_TEX_FLAG_VIDEO 32u
 
 static size_t dxt_bytes(uint32_t w, uint32_t h, int block) {
   size_t bw = ((size_t)w + 3) / 4, bh = ((size_t)h + 3) / 4;
@@ -172,6 +175,7 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
   XWTexCursor c = {data, len, 0};
   uint32_t format, flags, texw, texh, w, h, fif = XW_FIF_UNKNOWN;
   uint32_t images, mipmaps, mw, mh, comp;
+  uint32_t is_video = 0;
   int32_t usize = 0, csize = 0;
   char container[9];
   size_t expect = 0;
@@ -204,7 +208,6 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
   if (memcmp(container, "TEXB0004", 8) == 0) {
     /* 0004 adds an isVideo flag after the file id; non-video entries
      * parse exactly like 0003 (reference downgrades the version). */
-    uint32_t is_video = 0;
     if (cur_u32(&c, &images, err, "images") != 0)
       return -1;
     if (images < 1 || images > 64) {
@@ -213,16 +216,12 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
     }
     if (cur_u32(&c, &fif, err, "fif") != 0)
       return -1;
-    if (fif != XW_FIF_UNKNOWN && fif != XW_FIF_PNG) {
+    if (fif != XW_FIF_UNKNOWN && fif != XW_FIF_PNG && fif != XW_FIF_MP4) {
       XW_ERROR_SET(err, 1, "unsupported embedded format %u", fif);
       return -1;
     }
     if (cur_u32(&c, &is_video, err, "isvideo") != 0)
       return -1;
-    if (is_video == 1) {
-      XW_ERROR_SET(err, 1, "video textures unsupported");
-      return -1;
-    }
   } else if (memcmp(container, "TEXB0003", 8) == 0) {
     /* NOTE: image count comes first here; the reference reads the
      * embedded-file id first, which only fits newer files */
@@ -234,7 +233,7 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
     }
     if (cur_u32(&c, &fif, err, "fif") != 0)
       return -1;
-    if (fif != XW_FIF_UNKNOWN && fif != XW_FIF_PNG) {
+    if (fif != XW_FIF_UNKNOWN && fif != XW_FIF_PNG && fif != XW_FIF_MP4) {
       XW_ERROR_SET(err, 1, "unsupported embedded format %u", fif);
       return -1;
     }
@@ -277,6 +276,30 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
   if (csize <= 0 || usize < 0 || (size_t)csize > c.len - c.pos) {
     XW_ERROR_SET(err, 1, "bad mip sizes");
     return -1;
+  }
+  if ((is_video == 1) || fif == XW_FIF_MP4 || (flags & XW_TEX_FLAG_VIDEO)) {
+    /* A video texture's single mip is a whole MP4, so the pixel-size checks
+     * below do not apply; hand the bytes up for the player instead. The
+     * shipped 3610097897 texture carries fif=UNKNOWN, isVideo=0 and
+     * TextureFlags_Video, which is why the flag is checked too. */
+    if ((size_t)csize > c.len - c.pos) {
+      XW_ERROR_SET(err, 1, "bad video payload size");
+      return -1;
+    }
+    img->px = malloc((size_t)csize);
+    if (!img->px) {
+      XW_ERROR_SET(err, 1, "out of memory");
+      return -1;
+    }
+    memcpy(img->px, c.base + c.pos, (size_t)csize);
+    img->len = (size_t)csize;
+    img->is_video = 1;
+    img->fmt = XW_TEXFMT_MP4;
+    img->w = w ? w : mw;
+    img->h = h ? h : mh;
+    img->tex_w = mw;
+    img->tex_h = mh;
+    return 0;
   }
   if (fif == XW_FIF_PNG) {
     /* embedded file: hand the raw bytes up for imlib */
