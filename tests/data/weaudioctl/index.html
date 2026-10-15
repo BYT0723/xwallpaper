@@ -4,6 +4,23 @@
 <body>
 <audio id="a"></audio>
 <script>
+  // Mirrors how the real WE web wallpapers play their BGM: a detached
+  // `new Audio()` (invisible to querySelectorAll), whose level the page sets
+  // itself and keeps re-syncing. If the master level is applied once instead
+  // of composed, the page's own writes silently undo it.
+  window.det = new Audio();
+  window.det.volume = 0.5;
+  setInterval(function () { window.det.volume = 0.5; }, 50);
+  window.detPlay = function () {
+    try { window.det.play(); } catch (e) {}
+  };
+
+  // A second detached element that only ever plays, never sets a level.
+  window.det2 = new Audio();
+  window.det2Play = function () {
+    try { window.det2.play(); } catch (e) {}
+  };
+
   window.ac = null;
   try {
     var AC = window.AudioContext || window.webkitAudioContext;

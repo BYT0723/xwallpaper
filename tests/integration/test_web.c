@@ -382,6 +382,18 @@ static void test_we_properties_delivered(void) {
  * must drive media elements and Web Audio graphs from inside the page. The
  * fixture has both an <audio> element and an AudioContext wired straight to
  * its destination, which is what a wallpaper using Web Audio does. */
+/* Effective (native) level of a media element, which is what actually
+ * reaches the audio device - as opposed to the level the page believes it
+ * set. Two decimals because the master is applied as a multiplier. */
+static char *js_vol(GtkWidget *view, const char *expr) {
+  char js[256];
+  snprintf(js, sizeof(js),
+           "(function(){try{return window.__xwCtlRaw(%s).toFixed(2);}"
+           "catch(e){return 'err';}})()",
+           expr);
+  return run_js_sync(view, js);
+}
+
 static void test_audio_control(void) {
   XWError err, ctl;
   Display *dpy;
@@ -434,15 +446,29 @@ static void test_audio_control(void) {
     return;
   }
 
-  /* nothing is pushed before the user turns the volume */
-  s = run_js_sync(view, "String(window.__xwCtl.vol)");
-  TEST_CHECK(s != NULL && strcmp(s, "null") == 0);
+  /* Nothing is pushed before the user turns the volume: a page's own level
+   * must be left exactly as it is. The detached elements are played first so
+   * the play() hook has seen them. */
+  s = run_js_sync(view, "String(window.__xwCtl.started)");
+  TEST_CHECK(s != NULL && strcmp(s, "false") == 0);
+  g_free(s);
+  g_free(run_js_sync(view, "window.detPlay();window.det2Play();0"));
+  s = js_vol(view, "window.det");
+  TEST_CHECK(s != NULL && strcmp(s, "0.50") == 0);
   g_free(s);
 
   TEST_CHECK_EQ_INT(backend.control(&backend, "volume", "50", &ctl), 0);
   pump_gtk(dpy, 3);
-  s = run_js_sync(view, "String(document.getElementById('a').volume)");
-  TEST_CHECK(s != NULL && strcmp(s, "0.5") == 0);
+  /* in-DOM element, the detached BGM the page levels itself, and a detached
+   * element the page never touches */
+  s = js_vol(view, "document.getElementById('a')");
+  TEST_CHECK(s != NULL && strcmp(s, "0.50") == 0);
+  g_free(s);
+  s = js_vol(view, "window.det");
+  TEST_CHECK(s != NULL && strcmp(s, "0.25") == 0);
+  g_free(s);
+  s = js_vol(view, "window.det2");
+  TEST_CHECK(s != NULL && strcmp(s, "0.50") == 0);
   g_free(s);
   s = run_js_sync(view, "String(window.__xwCtl.gains.length)");
   TEST_CHECK(s != NULL && strcmp(s, "1") == 0);
@@ -451,25 +477,39 @@ static void test_audio_control(void) {
   TEST_CHECK(s != NULL && strcmp(s, "0.5") == 0);
   g_free(s);
 
-  /* mute silences both paths, unmute restores the level */
+  /* Mute must survive the page re-syncing its own BGM level (the fixture
+   * does that every 50ms, exactly like the real wallpapers), which is why
+   * the level is composed on write instead of assigned once. */
   TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "toggle", &ctl), 0);
   pump_gtk(dpy, 3);
-  s = run_js_sync(view,
-                  "String(document.getElementById('a').volume)+','+"
-                  "String(window.__xwCtl.gains[0].gain.value)");
-  TEST_CHECK(s != NULL && strcmp(s, "0,0") == 0);
+  s = js_vol(view, "document.getElementById('a')");
+  TEST_CHECK(s != NULL && strcmp(s, "0.00") == 0);
   g_free(s);
-  TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "off", &ctl), 0);
-  pump_gtk(dpy, 3);
-  s = run_js_sync(view, "String(document.getElementById('a').volume)");
+  s = js_vol(view, "window.det");
+  TEST_CHECK(s != NULL && strcmp(s, "0.00") == 0);
+  g_free(s);
+  s = js_vol(view, "window.det2");
+  TEST_CHECK(s != NULL && strcmp(s, "0.00") == 0);
+  g_free(s);
+  s = run_js_sync(view, "String(window.__xwCtl.gains[0].gain.value)");
+  TEST_CHECK(s != NULL && strcmp(s, "0") == 0);
+  g_free(s);
+  /* the page still reads back the level it set, not the composed one */
+  s = run_js_sync(view, "String(window.det.volume)");
   TEST_CHECK(s != NULL && strcmp(s, "0.5") == 0);
   g_free(s);
 
-  /* a relative step works from the last level */
+  TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "off", &ctl), 0);
+  pump_gtk(dpy, 3);
+  s = js_vol(view, "window.det");
+  TEST_CHECK(s != NULL && strcmp(s, "0.25") == 0);
+  g_free(s);
+
+  /* a relative step scales from the last level */
   TEST_CHECK_EQ_INT(backend.control(&backend, "volume", "+10", &ctl), 0);
   pump_gtk(dpy, 3);
-  s = run_js_sync(view, "String(document.getElementById('a').volume)");
-  TEST_CHECK(s != NULL && strcmp(s, "0.6") == 0);
+  s = js_vol(view, "window.det");
+  TEST_CHECK(s != NULL && strcmp(s, "0.30") == 0);
   g_free(s);
 
   /* what a web page cannot do fails honestly */
@@ -481,8 +521,8 @@ static void test_audio_control(void) {
   webkit_web_view_reload(WEBKIT_WEB_VIEW(view));
   for (i = 0; i < 20; i++)
     pump_gtk(dpy, 2);
-  s = run_js_sync(view, "String(document.getElementById('a').volume)");
-  TEST_CHECK(s != NULL && strcmp(s, "0.6") == 0);
+  s = js_vol(view, "window.det");
+  TEST_CHECK(s != NULL && strcmp(s, "0.30") == 0);
   g_free(s);
 
   backend.destroy(&backend);

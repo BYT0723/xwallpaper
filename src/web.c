@@ -173,45 +173,88 @@ static const char *kAudioJS =
 static const char *kAudioCtlJS =
     "(function(){"
     "if(window.__xwCtl)return;"
-    "var st=window.__xwCtl={vol:null,muted:false,gains:[]};"
-    "function level(){return st.muted?0:st.vol;}"
-    "function applyEl(e){var v=level();if(v===null)return;"
-    "try{e.volume=v;}catch(x){}}"
-    "function allEls(){var n=document.querySelectorAll('audio,video');"
-    "for(var i=0;i<n.length;i++)applyEl(n[i]);}"
-    "function sync(){var v=level();if(v===null&&!st.muted)return;"
-    "allEls();"
-    "for(var i=0;i<st.gains.length;i++)"
-    "try{st.gains[i].gain.value=v;}catch(x){}}"
-    "window.__xwCtlApply=function(vol,muted){"
-    "st.vol=vol;st.muted=!!muted;sync();};"
-    "window.__xwCtlMedia=function(what,arg){"
+    /* master 1 = leave the page's own level alone, 0 = silent. */
+    "var st=window.__xwCtl={master:1,muted:false,started:false,els:[],gains:[]};"
+    "var vd=null;"
+    "try{vd=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'volume');}"
+    "catch(x){}"
+    "function eff(v){return st.muted?0:v*st.master;}"
+    "function track(e){if(e&&!e.__xwT){e.__xwT=1;st.els.push(e);}}"
+    /* Compose rather than assign: __xwVol holds the level the page asked
+     * for, so a page that keeps re-syncing its own BGM level (which is what
+     * WE web wallpapers do) cannot undo the master. */
+    "function apply(e){"
+    "if(!e)return;"
+    "track(e);"
+    "try{"
+    "var b=e.__xwVol;"
+    "if(b===undefined){b=vd?vd.get.call(e):e.volume;e.__xwVol=b;}"
+    "if(vd)vd.set.call(e,eff(b));else e.volume=eff(b);"
+    "}catch(x){}"
+    "}"
+    "function all(){"
     "var n=document.querySelectorAll('audio,video');"
-    "for(var i=0;i<n.length;i++){var e=n[i];"
+    "for(var i=0;i<n.length;i++)"
+    "if(!n[i].__xwT)apply(n[i]);"
+    "}"
+    "function sync(){"
+    "if(!st.started)return;"
+    "all();"
+    /* detached elements (new Audio()) are invisible to the DOM, so the
+     * tracked list is the only way master reaches them at all */
+    "for(var i=0;i<st.els.length;i++)apply(st.els[i]);"
+    "var g=st.muted?0:st.master;"
+    "for(var i=0;i<st.gains.length;i++)"
+    "try{st.gains[i].gain.value=g;}catch(x){}"
+    "}"
+    "window.__xwCtlRaw=function(e){"
+    "try{return vd?vd.get.call(e):e.volume;}catch(x){return -1;}};"
+    "window.__xwCtlApply=function(master,muted){"
+    "st.master=master;st.muted=!!muted;st.started=true;sync();};"
+    "window.__xwCtlMedia=function(what,arg){"
+    "function doit(e){"
     "try{"
     "if(what==='pause')e.pause();"
     "else if(what==='play'){var p=e.play();"
     "if(p&&p.catch)p.catch(function(){});}"
     "else if(what==='seek')e.currentTime=Math.max(0,e.currentTime+arg);"
-    "}catch(x){}}};"
+    "}catch(x){}"
+    "}"
+    "var n=document.querySelectorAll('audio,video');"
+    "for(var i=0;i<n.length;i++)doit(n[i]);"
+    "for(var i=0;i<st.els.length;i++)doit(st.els[i]);"
+    "};"
+    /* Everything above only holds if the page's own writes go through it. */
+    "try{"
+    "if(vd&&vd.configurable){"
+    "Object.defineProperty(HTMLMediaElement.prototype,'volume',{"
+    "configurable:true,enumerable:vd.enumerable,"
+    "get:function(){"
+    "return this.__xwVol===undefined?vd.get.call(this):this.__xwVol;},"
+    "set:function(v){this.__xwVol=v;track(this);vd.set.call(this,eff(v));}"
+    "});}"
+    "}catch(x){}"
     "try{new MutationObserver(function(m){"
     "for(var i=0;i<m.length;i++){var a=m[i].addedNodes;"
     "for(var j=0;j<a.length;j++){var n=a[j];"
-    "if(n.tagName==='AUDIO'||n.tagName==='VIDEO')applyEl(n);"
+    "if(n.tagName==='AUDIO'||n.tagName==='VIDEO')apply(n);"
     "if(n.querySelectorAll){var d=n.querySelectorAll('audio,video');"
-    "for(var k=0;k<d.length;k++)applyEl(d[k]);}}}"
+    "for(var k=0;k<d.length;k++)apply(d[k]);}}}"
     "}).observe(document.documentElement||document,"
     "{childList:true,subtree:true});}catch(x){}"
     "try{var op=HTMLMediaElement.prototype.play;"
     "HTMLMediaElement.prototype.play=function(){"
-    "applyEl(this);return op.apply(this,arguments);};}catch(x){}"
+    "track(this);"
+    "if(st.started)apply(this);"
+    "return op.apply(this,arguments);};}catch(x){}"
+    /* Web Audio: pages using an AudioContext ignore element volume entirely */
     "try{if(typeof AudioNode!=='undefined'&&window.AudioDestinationNode){"
     "var connect=AudioNode.prototype.connect;"
     "AudioNode.prototype.connect=function(dest){"
     "try{"
     "if(!this.__xwM&&dest instanceof AudioDestinationNode){"
     "var c=this.context,g=c.createGain();"
-    "g.__xwM=true;g.gain.value=(level()===null?1:level());"
+    "g.__xwM=true;g.gain.value=(st.muted?0:st.master);"
     "st.gains.push(g);"
     "connect.call(g,dest);"
     "return connect.call(this,g);}"
@@ -522,6 +565,9 @@ static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWErro
    * actually changes it (ctl_started) */
   ctx->ctl_volume = opt->volume > 0.0 ? opt->volume : 100.0;
   ctx->ctl_muted = opt->mute ? 1 : 0;
+  ctx->ctl_started = (opt->mute || (opt->volume > 0.0 && opt->volume != 100.0))
+                         ? 1
+                         : 0;
   ctx->path = strdup(opt->path);
   if (!ctx->path) {
     XW_ERROR_SET(err, 1, "out of memory");
@@ -707,6 +753,9 @@ static int web_init_wl(XWBackend *b, XWWlWindow *win,
   }
   ctx->ctl_volume = opt->volume > 0.0 ? opt->volume : 100.0;
   ctx->ctl_muted = opt->mute ? 1 : 0;
+  ctx->ctl_started = (opt->mute || (opt->volume > 0.0 && opt->volume != 100.0))
+                         ? 1
+                         : 0;
   ctx->path = strdup(opt->path);
   if (!ctx->path) {
     XW_ERROR_SET(err, 1, "out of memory");

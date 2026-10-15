@@ -123,6 +123,32 @@ shim 要求：
 5. 暂停/seek 作用于页面内媒体元素；
 6. 守护进程 → 页面走已有的 `webkit_web_view_evaluate_javascript`。
 
+**实测修正（第一版 shim 无效，已修）**：第一版只对
+`document.querySelectorAll('audio,video')` 设 `.volume`，用户 DP-1 上的
+`3650874083` 静音**完全无效**——`parec` 捕获显示静音前后 peak 7301 → 7120
+（等于没动）。两个叠加原因：
+
+1. 该壁纸的 BGM 是 `new Audio()`（**游离元素**），不在 DOM 里，
+   `querySelectorAll` 根本看不见它；
+2. 页面自己会重写 `bgm.volume`（该壁纸 524/530/532 行，配合 ducking/暂停），
+   一次性赋值随后就被覆盖。
+
+修正后的做法是**不赋值而合成**：
+
+- patch `HTMLMediaElement.prototype.volume` 的 setter：页面写多少记进
+  `__xwVol`，真正落到元素上的永远是 `eff(v) = muted ? 0 : v * master`；
+  getter 仍返回页面自己设的值，所以页面自己的淡入淡出、ducking 不受影响
+  （否则页面写 `.volume = .volume - 0.01` 这类淡出会跟 master 反复相乘）；
+- 元素登记进列表（DOM 扫描、`MutationObserver`、`play()` 钩子、setter 本身），
+  `sync()` 遍历列表 —— 这是 master 唯一能到达 `new Audio()` 的途径；
+- 音量语义：**web 上是缩放倍率**（100 = 页面原始音量，0 = 静音），
+  video 上是绝对值。因为 web 页面自带混音，覆盖式接管会跟页面互相打架。
+
+真机验证（`parec` 捕获独立 null sink）：
+`3650874083`（元素式）静音后 peak=0，`volume 30` peak 7301 → 2000（≈0.27）；
+`3768853831`（AudioContext）静音后 peak=0，`volume 30` peak 6315 → 1717。
+修复前同样步骤静音后 peak 仍有 7120。
+
 ### 协议（`src/proto.c/.h`）
 
 新增与 `set-prop` 同形的动词，保持向后兼容（旧 daemon 只报未知命令）：
@@ -224,6 +250,7 @@ int xw_keybinds_parse(const char *text, XWBind *out, int max, XWError *err) {
 | control 通道 + video + CLI/协议 | `f137fa0` | daemon 下读回 mpv 属性：50→60、绝对 30、mute 往返 |
 | 按键派发到聚焦窗口 | `80a8509` | `xdotool` 真机按键：`0 0 0` = +6（无双重处理）、`-/=/r` 生效 |
 | web | `ca3f217` | fixture 同时含 `<audio>` 与 `AudioContext`，两条路径都断言；重载后保持 |
+| web 静音失效修复 | 本次 | 游离 `new Audio()` 不可见 + 页面重写 `.volume`；真机 `parec`：静音 peak→0，修复前仍 7120 |
 | scene | `ecd0d81` | 真机：`=` 暂停时逐帧相同、恢复后逐帧不同 |
 | 多目标语义 + 文档 | 本次 | `--all` / `-m` / 未知输出报错；README 增补按键与动作章节 |
 

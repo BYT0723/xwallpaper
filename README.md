@@ -161,6 +161,11 @@ For dwm's `config.h`:
 { MODKEY,            XK_minus, spawn, SHCMD("xwallpaper mute") },
 ```
 
+For a **web** wallpaper the level is a multiplier on the page's own audio
+(`100` = exactly as the page mixes it, `0` = silent) rather than an absolute
+value, because the page has its own mixing and keeps re-applying it; for video
+and scene it is absolute. `0` silences every backend either way.
+
 An action a backend cannot do is ignored when it comes from a key press, and
 reported when it comes from the CLI (`that wallpaper does not support 'rotate'`).
 
