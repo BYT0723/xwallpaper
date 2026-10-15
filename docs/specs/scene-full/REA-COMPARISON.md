@@ -581,3 +581,48 @@ bloom 的真实压力只有 2/8（下调权重），而放置修复解锁了 S2 
 - 场景内视频（`.tex` 里的 MP4 交给 libmpv render API，`3610097897` 从整张空白到正常渲染）
 - 音频频谱接进 scene 着色器（并修掉一个共享 Pulse 引用的既有 bug）
 - 放置修复（见 §10.2）
+
+### 10.5 参考实现的边界：它无法加载 3808922316
+
+§10.2 提到 `3808922316` 没有基准，因为参考实现自己崩了。**已定位到具体原因**。
+
+现象：
+
+```
+terminate called after throwing an instance of 'nlohmann::json_abi_v3_11_3::detail::type_error'
+  what():  [json.exception.type_error.302] type must be number, but is string
+```
+
+**定位过程**（缩减法）：参考可以直接吃目录，只差 `project.json`。补上后复现，
+然后二分 `scene.json` 的 objects：
+
+```
+ 1..120  OK
+121..123  OK
+124       CRASH   <- 触发对象
+```
+
+第 124 个是一个**文本对象**：
+
+```json
+{ "font": "fonts/Tourner (100).ttf", "text": {"user": "newproperty5", "value": "HACHIWARE ..."},
+  "padding": "32.00000 32.00000", "spacing": "8.00000 0.00000", "pointsize": 26.0 }
+```
+
+**根因**：参考把 `padding` 当**标量 int** 读 —— `ObjectParser.cpp:139`
+`.padding = it.optional("padding", 0)`，模型是 `Object.h:614` 的 `int padding;`
+—— 而语料里的 `padding` 是 **2 分量字符串**。nlohmann 对字符串调 `.get<int>()`
+就抛这个错。
+
+字段级确认（只留该对象，其余不变）：
+
+```
+A  带 padding     CRASH
+B  去掉 padding   OK
+```
+
+**所以这是参考实现自己的 bug**：它无法加载 `padding` 写成向量字符串的文本对象。
+
+**对本侧的启示**：`xwallpaper` 根本不解析 `padding`（`scene_parse.c` 零命中），
+直接忽略，因此**能渲染这张参考渲染不了的壁纸**。这也是 §6 里"实现度"口径的一个提醒：
+对标时不应把参考的能力当作上界 —— 它在真实语料上也有加载不了的包。
