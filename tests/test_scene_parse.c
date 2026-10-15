@@ -517,6 +517,30 @@ static void test_particle_angular_parse(void) {
   xw_scene_free(&s);
 }
 
+static void test_angles_parse(void) {
+  XWScene s;
+  XWError err = {0};
+  TEST_BEGIN("object angles parse as a vec3 and default to zero");
+  memset(&s, 0, sizeof(s));
+  TEST_CHECK_EQ_INT(xw_scene_parse("tests/data/scene/angles", &s, &err), 0);
+  if (s.n_objects != 3) {
+    TEST_CHECK_EQ_INT(s.n_objects, 3);
+    xw_scene_free(&s);
+    return;
+  }
+  /* 2889253135 "Dust motes": a quarter turn stored in radians */
+  TEST_CHECK(s.objects[0].angles[2] > 1.5707f && s.objects[0].angles[2] < 1.5709f);
+  TEST_CHECK(s.objects[0].angles[0] > -0.0001f && s.objects[0].angles[0] < 0.0001f);
+  TEST_CHECK(s.objects[0].angles[1] > -0.0001f && s.objects[0].angles[1] < 0.0001f);
+  /* an object with no angles at all stays at zero */
+  TEST_CHECK(s.objects[1].angles[0] == 0.0f);
+  TEST_CHECK(s.objects[1].angles[1] == 0.0f);
+  TEST_CHECK(s.objects[1].angles[2] == 0.0f);
+  /* a scene-scripted angles property still contributes its base value */
+  TEST_CHECK(s.objects[2].angles[2] > 0.2499f && s.objects[2].angles[2] < 0.2501f);
+  xw_scene_free(&s);
+}
+
 int main(void) {
   TEST_SUITE("scene_parse");
   test_parse_fixture();
@@ -532,5 +556,6 @@ int main(void) {
   test_emitter_geometry();
   test_particle_defaults();
   test_particle_angular_parse();
+  test_angles_parse();
   TEST_SUMMARY();
 }

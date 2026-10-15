@@ -257,6 +257,57 @@ static void test_object_ndc_rect(void) {
   TEST_CHECK(ndc[7] > 0.999f && ndc[7] < 1.001f);
 }
 
+static void test_object_ndc_rect_rotation(void) {
+  XWSceneObject o;
+  float ndc[8];
+  TEST_BEGIN("object angles rotate the rectangle about its own centre");
+  /* 2889253135 "Dust motes" is a 400x200 object on a 1920x1080 canvas with
+   * angles "0.000 0.000 1.5708" — a quarter turn, so the half extents swap
+   * axes. The engine negates the sign to account for the Y-flipped
+   * coordinate system (see CImage::updateScreenSpacePosition). */
+  memset(&o, 0, sizeof(o));
+  o.scale[0] = o.scale[1] = 1.0f;
+  o.size[0] = 400.0f;
+  o.size[1] = 200.0f;
+  o.origin[0] = 960.0f;
+  o.origin[1] = 540.0f;
+  o.angles[2] = 1.5707963f;
+  xw_scene_object_ndc_rect(&o, 1920.0f, 1080.0f, ndc);
+  /* half extents before rotation: 200/960 = 0.208333, 100/540 = 0.185185 */
+  TEST_CHECK(ndc[0] > -0.1872f && ndc[0] < -0.1832f); /* -0.185185 */
+  TEST_CHECK(ndc[1] > 0.2063f && ndc[1] < 0.2103f);   /* +0.208333 */
+  TEST_CHECK(ndc[2] > -0.1872f && ndc[2] < -0.1832f);
+  TEST_CHECK(ndc[3] > -0.2103f && ndc[3] < -0.2063f);
+  TEST_CHECK(ndc[4] > 0.1832f && ndc[4] < 0.1872f);
+  TEST_CHECK(ndc[5] > 0.2063f && ndc[5] < 0.2103f);
+  TEST_CHECK(ndc[6] > 0.1832f && ndc[6] < 0.1872f);
+  TEST_CHECK(ndc[7] > -0.2103f && ndc[7] < -0.2063f);
+  /* an eighth turn pins the direction: a sign error would put corner 0 on
+   * the opposite side of the centre */
+  memset(&o, 0, sizeof(o));
+  o.scale[0] = o.scale[1] = 1.0f;
+  o.size[0] = 200.0f;
+  o.size[1] = 200.0f;
+  o.origin[0] = 960.0f;
+  o.origin[1] = 540.0f;
+  o.angles[2] = 0.7853982f; /* pi/4 */
+  xw_scene_object_ndc_rect(&o, 1920.0f, 1080.0f, ndc);
+  TEST_CHECK(ndc[0] > -0.2066f && ndc[0] < -0.2026f); /* -0.204610 */
+  TEST_CHECK(ndc[1] > -0.0593f && ndc[1] < -0.0553f);  /* -0.057296 */
+  /* zero angles leaves the rectangle exactly where it was */
+  memset(&o, 0, sizeof(o));
+  o.scale[0] = o.scale[1] = 1.0f;
+  o.size[0] = 400.0f;
+  o.size[1] = 200.0f;
+  o.origin[0] = 960.0f;
+  o.origin[1] = 540.0f;
+  xw_scene_object_ndc_rect(&o, 1920.0f, 1080.0f, ndc);
+  TEST_CHECK(ndc[0] > -0.2104f && ndc[0] < -0.2063f); /* cx - hw = -0.208333 */
+  TEST_CHECK(ndc[1] > -0.1872f && ndc[1] < -0.1832f); /* cy - hh = -0.185185 */
+  TEST_CHECK(ndc[6] > 0.2063f && ndc[6] < 0.2104f);
+  TEST_CHECK(ndc[7] > 0.1832f && ndc[7] < 0.1872f);
+}
+
 int main(void) {
   TEST_SUITE("scene_core");
   test_fbo_table();
@@ -269,5 +320,6 @@ int main(void) {
   test_text_place();
   test_object_rect();
   test_object_ndc_rect();
+  test_object_ndc_rect_rotation();
   TEST_SUMMARY();
 }

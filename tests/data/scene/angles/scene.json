@@ -1,0 +1,31 @@
+{
+  "camera": {
+    "orthogonalprojection": [1920, 1080],
+    "clearcolor": [0.0, 0.0, 0.0]
+  },
+  "objects": [
+    {
+      "name": "rotated",
+      "image": "models/a.json",
+      "origin": "960.00000 540.00000 0.00000",
+      "scale": "1.00000 1.00000 1.00000",
+      "size": "400.00000 200.00000",
+      "angles": "0.00000 0.00000 1.57080"
+    },
+    {
+      "name": "plain",
+      "image": "models/a.json",
+      "origin": "960.00000 540.00000 0.00000",
+      "size": "100.00000 100.00000"
+    },
+    {
+      "name": "stateful",
+      "image": "models/a.json",
+      "size": "100.00000 100.00000",
+      "angles": {
+        "script": "'use strict';\nexport function update(value) { value.z = 0 - engine.runtime; return value; }",
+        "value": "0.00000 0.00000 0.25000"
+      }
+    }
+  ]
+}

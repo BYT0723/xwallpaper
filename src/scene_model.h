@@ -229,6 +229,9 @@ typedef struct XWSceneObject {
   float origin[2];
   float scale[2];
   float size[2];
+  /* `angles` is stored in radians and only its z component rotates a flat
+   * image object (linux-wallpaperengine: CImage::localTransform) */
+  float angles[3];
   int visible;
   XWDynFloat alpha;
   XWParticleCfg particle;
