@@ -710,3 +710,34 @@ fps=30/150 tick）给出**完全相同**的结果（均值 15.5%，最差格也�
 - 确定性捕获：像 `tests/integration/test_scene_gl.c` 那样在进程内驱动窗口，
   `tick()` N 次 + `XW_FIXED_TIME` + `XGetImage` 写 PPM。同场景两次逐字节相同。
 - 相位不敏感比较：两图各切 16x16、比每格平均色（§10.6）。
+
+### 10.8 §10.7 的更正，以及定位到的确切缺陷：两个连续合成层会打坏画面
+
+**先更正 §10.7 的一句**："合成层不吞它" 是错的。当时我用**空格**分隔对象名，而
+`Post-Processing Layer` 是多词名字，根本没被选进子集 —— 所以第 3、4 组实际与第 2 组
+是同一个对象集，才得出"不变"。修正分隔符后结论完全相反。
+
+**确切缺陷**：这个场景有两个 `_rt_FullFrameBuffer` 合成层 —— `Post-Processing Layer`
+（`models/util/fullscreenlayer.json`）与 `Full Composition Layer`
+（`models/util/projectlayer.json`）。用确定性捕获逐个组合测得：
+
+| 对象集 | 角色区域 mean / stddev |
+| --- | --- |
+| `[Rin_BG, Rin]` | 0.318 / 0.214 ← 角色正常 |
+| `+ Post-Processing Layer` | 0.318 / 0.214 ← **无影响** |
+| `+ Full Composition Layer` | 0.318 / 0.214 ← **无影响** |
+| `+ 两个都有` | **0.925 / 0.112 ← 角色被盖掉** |
+
+从全量场景反向剔除也一致：删掉**任一**个都恢复 0.318（因为剩下的那个单独无害）。
+
+**所以缺陷是"两个连续的合成层"**，不是任一层本身。合成层的职责是"把当前帧缓冲再合成
+一遍"（语义上接近 no-op，只叠加它自己的 effect），本侧走
+`xw_gl_framebuffer_snapshot` + `xw_gl_draw_window_source` + `xw_gl_set_shader_quad`
+这条路。两个连起来就打坏画面，最可能是**帧缓冲快照与翻转在连续两轮里互相抵消/叠加**
+（`xw_gl_bind_target` 的注释正是"any number of FBO round trips keeps the image upright"
+—— 那句话在这里不成立）。
+
+**这也是"角色看起来缺失"的最终答案**：角色一直在画，是第二个合成层把它盖住了。
+
+**证据强度**：本节的每个数字都来自同一个确定性捕获（同场景两次运行逐字节相同），
+对象集由名字精确匹配（`|` 分隔）选定，并与从全量反向剔除的结果互相印证。
