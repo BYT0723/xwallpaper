@@ -5,6 +5,7 @@
 
 #include "scene_core.h"
 #include "scene_model.h"
+#include "we_audio.h"
 #include "xw_err.h"
 
 /* Desktop-GL runtime for scene wallpapers (daemon-only).
@@ -168,6 +169,13 @@ int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
 /* Make WE shader passes see a_Position as this rectangle (4 corners, NDC,
  * xy pairs) instead of the whole window; NULL restores the full quad. */
 void xw_gl_set_shader_quad(XWGl *g, const float ndc[8]);
+
+/* Feed the engine's g_AudioSpectrum{N}{Left,Right} arrays for the passes
+ * drawn from now on; a NULL/binless call leaves a silent spectrum. */
+void xw_gl_set_audio_spectrum(XWGl *g, const float bins[XW_WE_AUDIO_BINS]);
+
+/* Non-zero once a drawn pass has declared an audio spectrum uniform. */
+int xw_gl_audio_used(XWGl *g);
 
 int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
                        int *rh);

@@ -14,6 +14,7 @@
 #include "scene_glsl.h"
 #include "scene_shader.h"
 #include "scene_tex.h"
+#include "we_audio.h"
 
 #define XW_GL_PROG_MAX 16
 #define XW_GL_TEXCACHE_MAX 24
@@ -67,6 +68,12 @@ struct XWGl {
   int ntex;
   GLuint utils[4];
   int flip; /* 1 while rendering into an FBO (see bind_target) */
+  /* The engine's g_AudioSpectrum{N}{Left,Right} arrays, refreshed once per
+   * frame by the scene backend from the Pulse monitor. audio_used records
+   * whether any compiled pass actually declares one of them, so the backend
+   * only captures audio for scenes that read it. */
+  XWWeSpectrum spectrum;
+  int audio_used;
   /* named offscreen targets declared by effects ("fbos") */
   struct {
     char name[64];
@@ -1562,6 +1569,16 @@ void xw_gl_set_shader_quad(XWGl *g, const float ndc[8]) {
   (void)ndc;
 }
 
+void xw_gl_set_audio_spectrum(XWGl *g, const float bins[XW_WE_AUDIO_BINS]) {
+  (void)g;
+  (void)bins;
+}
+
+int xw_gl_audio_used(XWGl *g) {
+  (void)g;
+  return 0;
+}
+
 int xw_gl_texture_size(XWGl *g, unsigned int tex, int *tw, int *th, int *rw,
                        int *rh) {
   (void)g;
@@ -1958,6 +1975,40 @@ int xw_gl_program_sampler_default(XWGl *g, unsigned int prog,
   return -1;
 }
 
+/* Bind the engine's audio spectrum arrays when the pass declares them, and
+ * note that this scene reads audio so the backend can start the monitor. */
+static void bind_audio_spectrum(XWGl *g, GLuint prog) {
+  static const char *const k_names[6] = {
+      "g_AudioSpectrum16Left", "g_AudioSpectrum16Right",
+      "g_AudioSpectrum32Left", "g_AudioSpectrum32Right",
+      "g_AudioSpectrum64Left", "g_AudioSpectrum64Right"};
+  static const int k_count[6] = {16, 16, 32, 32, 64, 64};
+  const float *src[6];
+  int i;
+  src[0] = g->spectrum.left16;
+  src[1] = g->spectrum.right16;
+  src[2] = g->spectrum.left32;
+  src[3] = g->spectrum.right32;
+  src[4] = g->spectrum.left64;
+  src[5] = g->spectrum.right64;
+  for (i = 0; i < 6; i++) {
+    GLint loc = glGetUniformLocation(prog, k_names[i]);
+    if (loc >= 0) {
+      glUniform1fv(loc, k_count[i], src[i]);
+      g->audio_used = 1;
+    }
+  }
+}
+
+void xw_gl_set_audio_spectrum(XWGl *g, const float bins[XW_WE_AUDIO_BINS]) {
+  if (!g)
+    return;
+  if (xw_we_audio_spectrum(bins, &g->spectrum) != 0)
+    memset(&g->spectrum, 0, sizeof(g->spectrum));
+}
+
+int xw_gl_audio_used(XWGl *g) { return g ? g->audio_used : 0; }
+
 int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
                   const float input_res[4], const XWWeSlot *slots,
                   const XWSceneConst *consts, int n_consts, float time) {
@@ -2018,6 +2069,7 @@ int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
       glUniform2f(loc, 0.5f / g->w, 0.5f / g->h);
   }
   bind_prog_defaults(g, prog, consts, n_consts);
+  bind_audio_spectrum(g, prog);
   if (g->quad_rect_on) {
     /* positions from the object's rectangle, uvs stay the full quad so
      * shaders that build gl_Position from texcoords still fill the target */

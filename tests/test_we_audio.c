@@ -97,6 +97,65 @@ static void test_bad_args(void) {
   TEST_CHECK_EQ_INT(xw_we_audio_format(NULL, dummy, sizeof(dummy)), -1);
 }
 
+static void test_spectrum_arrays(void) {
+  XWWeSpectrum s;
+  float in[128];
+  int i;
+  TEST_BEGIN("128 bins split into the six engine uniform arrays");
+  /* the corpus shaders (workshop/2084198056 effects, audio_ring) read all six
+   * g_AudioSpectrum{16,32,64}{Left,Right} arrays */
+  memset(in, 0, sizeof(in));
+  xw_we_audio_spectrum(in, &s);
+  for (i = 0; i < 64; i++) {
+    TEST_CHECK(s.left64[i] == 0.0f);
+    TEST_CHECK(s.right64[i] == 0.0f);
+  }
+  for (i = 0; i < 32; i++) {
+    TEST_CHECK(s.left32[i] == 0.0f);
+    TEST_CHECK(s.right32[i] == 0.0f);
+  }
+  for (i = 0; i < 16; i++) {
+    TEST_CHECK(s.left16[i] == 0.0f);
+    TEST_CHECK(s.right16[i] == 0.0f);
+  }
+  /* bins 0-63 are the left channel and 64-127 the right, so a ramp in the
+   * left half must not leak into the right arrays */
+  for (i = 0; i < 128; i++)
+    in[i] = (float)i;
+  xw_we_audio_spectrum(in, &s);
+  for (i = 0; i < 64; i++) {
+    TEST_CHECK(s.left64[i] > (float)i - 0.001f && s.left64[i] < (float)i + 0.001f);
+    TEST_CHECK(s.right64[i] > (float)(i + 64) - 0.001f &&
+               s.right64[i] < (float)(i + 64) + 0.001f);
+  }
+  /* linux-wallpaperengine decimates with destination[band >> 1] and
+   * [band >> 2], where the last write of each group wins, so the surviving
+   * source band is the odd one: 32[k] = 64[2k+1], 16[k] = 64[4k+3] */
+  for (i = 0; i < 32; i++) {
+    TEST_CHECK(s.left32[i] > (float)(2 * i + 1) - 0.001f &&
+               s.left32[i] < (float)(2 * i + 1) + 0.001f);
+    TEST_CHECK(s.right32[i] > (float)(2 * i + 1 + 64) - 0.001f &&
+               s.right32[i] < (float)(2 * i + 1 + 64) + 0.001f);
+  }
+  for (i = 0; i < 16; i++) {
+    TEST_CHECK(s.left16[i] > (float)(4 * i + 3) - 0.001f &&
+               s.left16[i] < (float)(4 * i + 3) + 0.001f);
+    TEST_CHECK(s.right16[i] > (float)(4 * i + 3 + 64) - 0.001f &&
+               s.right16[i] < (float)(4 * i + 3 + 64) + 0.001f);
+  }
+}
+
+static void test_spectrum_bad_args(void) {
+  XWWeSpectrum s;
+  TEST_BEGIN("spectrum split rejects null args");
+  float in[128];
+  memset(in, 0, sizeof(in));
+  TEST_CHECK_EQ_INT(xw_we_audio_spectrum(NULL, &s), -1);
+  TEST_CHECK(s.left64[0] == 0.0f);
+  TEST_CHECK(s.right16[0] == 0.0f);
+  TEST_CHECK_EQ_INT(xw_we_audio_spectrum(in, NULL), -1);
+}
+
 int main(void) {
   TEST_SUITE("we_audio");
   test_silence_is_zeros();
@@ -105,5 +164,7 @@ int main(void) {
   test_fullscale_clamped();
   test_format_128();
   test_bad_args();
+  test_spectrum_arrays();
+  test_spectrum_bad_args();
   TEST_SUMMARY();
 }
