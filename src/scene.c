@@ -60,6 +60,8 @@ typedef struct XWSceneCtx {
   int *order;
   unsigned char *order_scratch;
   int order_n;
+  /* 1 while this context holds a reference to the shared Pulse monitor */
+  int pulse_ref;
 } XWSceneCtx;
 
 static void free_order(XWSceneCtx *c) {
@@ -419,9 +421,11 @@ static int paint_gl(XWSceneCtx *c) {
    * scenes without audio-reactive materials stay silent and idle. */
   {
     float bins[XW_WE_AUDIO_BINS];
-    if (xw_gl_audio_used(c->gl) && !xw_we_pulse_running())
-      xw_we_pulse_start(); /* may fail without Pulse; get() still yields zeros */
-    if (xw_we_pulse_running() && xw_we_pulse_get(bins) == 0)
+    /* The monitor is a process-wide refcount shared with the other backends,
+     * so hold our own reference and never release one we do not own. */
+    if (xw_gl_audio_used(c->gl) && !c->pulse_ref && xw_we_pulse_start() == 0)
+      c->pulse_ref = 1; /* failure just leaves a silent spectrum */
+    if (c->pulse_ref && xw_we_pulse_get(bins) == 0)
       xw_gl_set_audio_spectrum(c->gl, bins);
     else
       xw_gl_set_audio_spectrum(c->gl, NULL);
@@ -656,8 +660,10 @@ static void scene_destroy(XWBackend *b) {
   if (c->gl)
     xw_gl_destroy(c->gl);
   c->gl = NULL;
-  if (xw_we_pulse_running())
+  if (c->pulse_ref) {
     xw_we_pulse_stop();
+    c->pulse_ref = 0;
+  }
   free_sounds(c);
   free_emitters(c);
   free_order(c);
