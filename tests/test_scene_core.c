@@ -234,6 +234,20 @@ static void test_object_rect(void) {
   TEST_CHECK_EQ_INT(y, 0);
   TEST_CHECK_EQ_INT(w, 1920);
   TEST_CHECK_EQ_INT(h, 1080);
+  /* negative scale mirrors upstream (vertices from the inverted quad, same
+   * UVs), so the covered rect is identical to the positive one; refusing it
+   * aborted the whole frame on 2889253135's lens-flare layers */
+  memset(&o, 0, sizeof(o));
+  o.scale[0] = -1.0f;
+  o.scale[1] = -1.0f;
+  o.origin[0] = 948.114f;
+  o.origin[1] = 540.0f;
+  xw_scene_object_rect(&o, 1920, 1080, 1920.0f, 1080.0f, 1920, 1080, &x, &y,
+                       &w, &h);
+  TEST_CHECK_EQ_INT(x, -12);
+  TEST_CHECK_EQ_INT(y, 0);
+  TEST_CHECK_EQ_INT(w, 1920);
+  TEST_CHECK_EQ_INT(h, 1080);
 }
 
 static void test_object_ndc_rect(void) {

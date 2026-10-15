@@ -1,0 +1,25 @@
+{
+  "camera": {
+    "orthogonalprojection": [1920, 1080],
+    "clearcolor": [0.0, 0.0, 0.0]
+  },
+  "objects": [
+    {
+      "name": "normal",
+      "image": "models/a.json",
+      "size": "100.00000 100.00000"
+    },
+    {
+      "name": "screen flare",
+      "image": "models/a.json",
+      "size": "100.00000 100.00000",
+      "colorBlendMode": 7
+    },
+    {
+      "name": "lighten flare",
+      "image": "models/a.json",
+      "size": "100.00000 100.00000",
+      "colorBlendMode": 6
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "camera": {
+    "orthogonalprojection": [1280, 720],
+    "clearcolor": [0.0, 0.0, 0.0]
+  },
+  "objects": [
+    {
+      "id": "base",
+      "name": "base",
+      "texture": "textures/blue.png",
+      "origin": [640, 360],
+      "size": [1280, 720]
+    },
+    {
+      "id": "screen-black",
+      "name": "screen-black",
+      "texture": "textures/black.png",
+      "origin": [320, 360],
+      "size": [640, 720],
+      "colorBlendMode": 7
+    },
+    {
+      "id": "multiply-white",
+      "name": "multiply-white",
+      "texture": "textures/white.png",
+      "origin": [960, 360],
+      "size": [640, 720],
+      "colorBlendMode": 2
+    }
+  ]
+}

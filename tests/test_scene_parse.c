@@ -572,6 +572,24 @@ static void test_object_color(void) {
   xw_scene_free(&s);
 }
 
+static void test_color_blend_mode(void) {
+  XWScene s;
+  XWError err = {0};
+  TEST_BEGIN("colorBlendMode parses as int, defaulting to normal");
+  memset(&s, 0, sizeof(s));
+  TEST_CHECK_EQ_INT(xw_scene_parse("tests/data/scene/blendmode", &s, &err),
+                    0);
+  if (s.n_objects != 3) {
+    TEST_CHECK_EQ_INT(s.n_objects, 3);
+    xw_scene_free(&s);
+    return;
+  }
+  TEST_CHECK_EQ_INT(s.objects[0].color_blend, 0);
+  TEST_CHECK_EQ_INT(s.objects[1].color_blend, 7);
+  TEST_CHECK_EQ_INT(s.objects[2].color_blend, 6);
+  xw_scene_free(&s);
+}
+
 int main(void) {
   TEST_SUITE("scene_parse");
   test_parse_fixture();
@@ -589,5 +607,6 @@ int main(void) {
   test_particle_angular_parse();
   test_angles_parse();
   test_object_color();
+  test_color_blend_mode();
   TEST_SUMMARY();
 }

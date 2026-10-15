@@ -57,6 +57,11 @@ int xw_gl_program_copy(XWGl *g, unsigned int *prog, XWError *err);
  * per-object alpha modulates arbitrary effect chains. */
 int xw_gl_program_composite(XWGl *g, unsigned int *prog, XWError *err);
 
+/* Builtin Photoshop-style blend program: layer in xw_tex0 over the screen
+ * snapshot in xw_tex1, xw_mode selects the formula (2/6/7), xw_alpha scales
+ * the layer opacity. Writes through with blending off. */
+int xw_gl_program_blend(XWGl *g, unsigned int *prog, XWError *err);
+
 /* One particle splat in window pixels (x/y) with size px and alpha.
  * frame is the sprite-sheet index (ignored for plain sprites). */
 typedef struct XWPoint {
@@ -168,6 +173,12 @@ int xw_gl_draw_window_source(XWGl *g, unsigned int prog, unsigned int tex,
 int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
                      float alpha);
 
+/* Fullscreen blend of src_tex (the object's layer) over dst_tex (a snapshot
+ * of the screen so far) with the xw_blend program: mode 2/6/7, alpha scales
+ * the layer opacity. Draws to the bound target with blending off. */
+int xw_gl_draw_blend(XWGl *g, unsigned int prog, unsigned int src_tex,
+                     unsigned int dst_tex, float alpha, int mode);
+
 /* Effect-pass draw: binds g_Texture0..7 (unit 0 = input, the rest = slots
  * with input as fallback), g_Texture{i}Resolution vec4s, identity MVP
  * matrices, g_Time, and annotated uniform defaults overridden by the
@@ -232,10 +243,12 @@ int xw_gl_draw_rect_alpha(XWGl *g, unsigned int prog, unsigned int tex,
                           float time, float alpha, int dx, int dy, int dw,
                           int dh);
 
-/* Like draw_rect, multiplying the sample by the object's tint. */
+/* Like draw_rect, multiplying the sample by the object's tint. A negative
+ * object scale mirrors the texture, so flip_u/flip_v mirror the sampled
+ * axes to match. */
 int xw_gl_draw_rect_tint(XWGl *g, unsigned int prog, unsigned int tex,
                          float time, const float tint[4], int dx, int dy,
-                         int dw, int dh);
+                         int dw, int dh, int flip_u, int flip_v);
 
 /* Swap window buffers. */
 int xw_gl_present(XWGl *g);

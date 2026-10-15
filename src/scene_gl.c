@@ -146,6 +146,30 @@ static const char *composite_frag_src =
     "  xw_out = vec4(c.rgb, c.a * xw_alpha);\n"
     "}\n";
 
+/* Photoshop-style blend of the object's layer (xw_tex0, on transparency)
+ * over the screen so far (xw_tex1): 2 multiply, 6 lighten, 7 screen, the
+ * only modes the corpus uses. Opacity is the layer alpha times the object
+ * alpha, matching ApplyBlending(BLENDMODE, screen, color, color.a). */
+static const char *blend_frag_src =
+    "#version 330 core\n"
+    "in vec2 v_TexCoord;\n"
+    "uniform sampler2D xw_tex0;\n"
+    "uniform sampler2D xw_tex1;\n"
+    "uniform float xw_alpha;\n"
+    "uniform int xw_mode;\n"
+    "out vec4 xw_out;\n"
+    "void main() {\n"
+    "  vec4 s = texture(xw_tex0, v_TexCoord);\n"
+    /* window snapshots store row 0 at the screen bottom while FBO layers
+     * store it at the image top, so the screen sample is V-flipped */
+    "  vec4 d = texture(xw_tex1, vec2(v_TexCoord.x, 1.0 - v_TexCoord.y));\n"
+    "  float op = clamp(s.a * xw_alpha, 0.0, 1.0);\n"
+    "  vec3 b = vec3(1.0) - (vec3(1.0) - d.rgb) * (vec3(1.0) - s.rgb);\n"
+    "  if (xw_mode == 2) { b = d.rgb * s.rgb; }\n"
+    "  else if (xw_mode == 6) { b = max(d.rgb, s.rgb); }\n"
+    "  xw_out = vec4(mix(d.rgb, b, op), d.a);\n"
+    "}\n";
+
 static const char *points_vert_src =
     "#version 330 core\n"
     "layout(location=0) in vec2 pos;\n"
@@ -1155,6 +1179,12 @@ int xw_gl_program_composite(XWGl *g, unsigned int *prog, XWError *err) {
                       err);
 }
 
+int xw_gl_program_blend(XWGl *g, unsigned int *prog, XWError *err) {
+  if (!g || !prog)
+    return gl_error("invalid args", err);
+  return link_program("xw_blend", vert_src, blend_frag_src, g, prog, err);
+}
+
 int xw_gl_program_points(XWGl *g, unsigned int *prog, XWError *err) {
   if (!g || !prog)
     return gl_error("invalid args", err);
@@ -1610,6 +1640,46 @@ int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
   return draw_full(g, prog, tex, time, alpha, 1, 0, NULL);
 }
 
+/* Fullscreen Photoshop-style blend of the object's layer over a snapshot of
+ * the screen so far. Writes through with blending off: the formula already
+ * mixes against the destination. */
+int xw_gl_draw_blend(XWGl *g, unsigned int prog, unsigned int src_tex,
+                     unsigned int dst_tex, float alpha, int mode) {
+  GLint loc;
+  if (!g || !prog || !src_tex || !dst_tex)
+    return -1;
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  glDisable(GL_BLEND);
+  glUseProgram(prog);
+  loc = sampler_location(prog);
+  if (loc >= 0) {
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, src_tex);
+    glUniform1i(loc, 0);
+  }
+  loc = glGetUniformLocation(prog, "xw_tex1");
+  if (loc >= 0) {
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, dst_tex);
+    glUniform1i(loc, 1);
+  }
+  loc = glGetUniformLocation(prog, "xw_alpha");
+  if (loc >= 0)
+    glUniform1f(loc, alpha);
+  loc = glGetUniformLocation(prog, "xw_mode");
+  if (loc >= 0)
+    glUniform1i(loc, mode);
+  loc = glGetUniformLocation(prog, "xw_flip");
+  if (loc >= 0)
+    glUniform1f(loc, g->flip ? -1.0f : 1.0f);
+  glBindVertexArray(g->quad_vao);
+  glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+  glBindVertexArray(0);
+  glActiveTexture(GL_TEXTURE0);
+  glUseProgram(0);
+  return 0;
+}
+
 int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
                       const XWPoint *pts, int n) {
   GLint sloc;
@@ -1705,8 +1775,9 @@ int xw_gl_delete_texture(XWGl *g, unsigned int tex) {
 
 static int draw_rect_full(XWGl *g, unsigned int prog, unsigned int tex,
                           float time, float alpha, int use_alpha, int dx,
-                          int dy, int dw, int dh, const float *tint) {
-  float x0, x1, y0, y1, verts[16];
+                          int dy, int dw, int dh, const float *tint,
+                          int flip_u, int flip_v) {
+  float x0, x1, y0, y1, u0, u1, v0, v1, verts[16];
   GLint sloc, tloc, aloc;
   if (!g || !prog || dw <= 0 || dh <= 0 || g->w <= 0 || g->h <= 0)
     return -1;
@@ -1714,22 +1785,26 @@ static int draw_rect_full(XWGl *g, unsigned int prog, unsigned int tex,
   x1 = (float)(dx + dw) / (float)g->w * 2.0f - 1.0f;
   y0 = 1.0f - (float)dy / (float)g->h * 2.0f;
   y1 = 1.0f - (float)(dy + dh) / (float)g->h * 2.0f;
+  u0 = flip_u ? 1.0f : 0.0f;
+  u1 = flip_u ? 0.0f : 1.0f;
+  v0 = flip_v ? 1.0f : 0.0f;
+  v1 = flip_v ? 0.0f : 1.0f;
   verts[0] = x0;
   verts[1] = y1;
-  verts[2] = 0.0f;
-  verts[3] = 1.0f;
+  verts[2] = u0;
+  verts[3] = v1;
   verts[4] = x1;
   verts[5] = y1;
-  verts[6] = 1.0f;
-  verts[7] = 1.0f;
+  verts[6] = u1;
+  verts[7] = v1;
   verts[8] = x0;
   verts[9] = y0;
-  verts[10] = 0.0f;
-  verts[11] = 0.0f;
+  verts[10] = u0;
+  verts[11] = v0;
   verts[12] = x1;
   verts[13] = y0;
-  verts[14] = 1.0f;
-  verts[15] = 0.0f;
+  verts[14] = u1;
+  verts[15] = v0;
   glXMakeCurrent(g->dpy, g->win, g->ctx);
   glUseProgram(prog);
   sloc = sampler_location(prog);
@@ -1767,19 +1842,22 @@ static int draw_rect_full(XWGl *g, unsigned int prog, unsigned int tex,
 
 int xw_gl_draw_rect(XWGl *g, unsigned int prog, unsigned int tex, float time,
                     int dx, int dy, int dw, int dh) {
-  return draw_rect_full(g, prog, tex, time, 1.0f, 0, dx, dy, dw, dh, NULL);
+  return draw_rect_full(g, prog, tex, time, 1.0f, 0, dx, dy, dw, dh, NULL, 0,
+                        0);
 }
 
 int xw_gl_draw_rect_alpha(XWGl *g, unsigned int prog, unsigned int tex,
                           float time, float alpha, int dx, int dy, int dw,
                           int dh) {
-  return draw_rect_full(g, prog, tex, time, alpha, 1, dx, dy, dw, dh, NULL);
+  return draw_rect_full(g, prog, tex, time, alpha, 1, dx, dy, dw, dh, NULL, 0,
+                        0);
 }
 
 int xw_gl_draw_rect_tint(XWGl *g, unsigned int prog, unsigned int tex,
                          float time, const float tint[4], int dx, int dy,
-                         int dw, int dh) {
-  return draw_rect_full(g, prog, tex, time, 1.0f, 0, dx, dy, dw, dh, tint);
+                         int dw, int dh, int flip_u, int flip_v) {
+  return draw_rect_full(g, prog, tex, time, 1.0f, 0, dx, dy, dw, dh, tint,
+                        flip_u, flip_v);
 }
 
 int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex) {
@@ -2050,6 +2128,13 @@ int xw_gl_program_composite(XWGl *g, unsigned int *prog, XWError *err) {
   return -1;
 }
 
+int xw_gl_program_blend(XWGl *g, unsigned int *prog, XWError *err) {
+  (void)g;
+  (void)prog;
+  XW_ERROR_SET(err, 1, "scene GL support not compiled in (need gl/glew)");
+  return -1;
+}
+
 int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
                       const XWPoint *pts, int n) {
   (void)g;
@@ -2067,6 +2152,17 @@ int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
   (void)tex;
   (void)time;
   (void)alpha;
+  return -1;
+}
+
+int xw_gl_draw_blend(XWGl *g, unsigned int prog, unsigned int src_tex,
+                     unsigned int dst_tex, float alpha, int mode) {
+  (void)g;
+  (void)prog;
+  (void)src_tex;
+  (void)dst_tex;
+  (void)alpha;
+  (void)mode;
   return -1;
 }
 
@@ -2128,7 +2224,7 @@ int xw_gl_draw_rect_alpha(XWGl *g, unsigned int prog, unsigned int tex,
 
 int xw_gl_draw_rect_tint(XWGl *g, unsigned int prog, unsigned int tex,
                          float time, const float tint[4], int dx, int dy,
-                         int dw, int dh) {
+                         int dw, int dh, int flip_u, int flip_v) {
   (void)g;
   (void)prog;
   (void)tex;
@@ -2138,6 +2234,8 @@ int xw_gl_draw_rect_tint(XWGl *g, unsigned int prog, unsigned int tex,
   (void)dy;
   (void)dw;
   (void)dh;
+  (void)flip_u;
+  (void)flip_v;
   return -1;
 }
 

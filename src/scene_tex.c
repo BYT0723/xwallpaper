@@ -394,32 +394,40 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
 int xw_tex_resolve(const char *dir, const char *material, const char *ref,
                    char *out, size_t n) {
   static const char *exts[] = {"", ".tex", ".png", ".jpg"};
-  char base[1024], anchor[1024];
-  size_t i;
+  char base[1024], anchors[2][1024];
+  size_t i, a, na = 0;
   if (!dir || !ref || !ref[0] || !out || n == 0)
     return -1;
   if (strstr(ref, "..") != NULL)
     return -1;
   if (strchr(ref, '/') != NULL) {
-    snprintf(anchor, sizeof(anchor), "%s", dir);
+    /* pass refs resolve against materials/ upstream, so try that first and
+     * keep the scene root as the fallback for synthetic scenes */
+    snprintf(anchors[0], sizeof(anchors[0]), "%s/materials", dir);
+    snprintf(anchors[1], sizeof(anchors[1]), "%s", dir);
+    na = 2;
   } else {
     const char *slash = material ? strrchr(material, '/') : NULL;
-    if (slash && (size_t)(slash - material) < sizeof(anchor) - 1) {
+    if (slash && (size_t)(slash - material) < sizeof(anchors[0]) - 1) {
       size_t dl = (size_t)(slash - material);
-      memcpy(anchor, material, dl);
-      anchor[dl] = '\0';
-      snprintf(base, sizeof(base), "%.512s/%.400s", dir, anchor);
-      snprintf(anchor, sizeof(anchor), "%.1000s", base);
+      memcpy(anchors[0], material, dl);
+      anchors[0][dl] = '\0';
+      snprintf(base, sizeof(base), "%.512s/%.400s", dir, anchors[0]);
+      snprintf(anchors[0], sizeof(anchors[0]), "%.1000s", base);
     } else {
-      snprintf(anchor, sizeof(anchor), "%s", dir);
+      snprintf(anchors[0], sizeof(anchors[0]), "%s", dir);
     }
+    na = 1;
   }
-  for (i = 0; i < sizeof(exts) / sizeof(exts[0]); i++) {
-    struct stat st;
-    snprintf(base, sizeof(base), "%.512s/%.400s%s", anchor, ref, exts[i]);
-    if (stat(base, &st) == 0 && S_ISREG(st.st_mode)) {
-      snprintf(out, n, "%.1000s", base);
-      return 0;
+  for (a = 0; a < na; a++) {
+    for (i = 0; i < sizeof(exts) / sizeof(exts[0]); i++) {
+      struct stat st;
+      snprintf(base, sizeof(base), "%.512s/%.400s%s", anchors[a], ref,
+               exts[i]);
+      if (stat(base, &st) == 0 && S_ISREG(st.st_mode)) {
+        snprintf(out, n, "%.1000s", base);
+        return 0;
+      }
     }
   }
   return -1;

@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #ifdef XW_HAVE_LZ4
 #include <lz4.h>
@@ -466,6 +468,85 @@ static void test_bad_inputs(void) {
   TEST_CHECK_EQ_INT(xw_tex_find_image(tiny, sizeof(tiny), NULL, NULL, NULL, NULL), -1);
 }
 
+static void mkdir_p(const char *path) {
+  char tmp[1024], *p;
+  snprintf(tmp, sizeof(tmp), "%s", path);
+  for (p = tmp + 1; *p; p++) {
+    if (*p == '/') {
+      *p = '\0';
+      mkdir(tmp, 0755);
+      *p = '/';
+    }
+  }
+  mkdir(tmp, 0755);
+}
+
+static void test_resolve_workshop_ref(void) {
+  TEST_BEGIN("slash refs resolve against materials/ first");
+  char dir[] = "/tmp/xw-tex-resolve-XXXXXX";
+  char *tmpd;
+  char out[1024], p[1024];
+  FILE *f;
+  tmpd = mkdtemp(dir);
+  TEST_CHECK(tmpd != NULL);
+  if (tmpd == NULL)
+    return;
+  {
+    /* the real-wall layout: materials/workshop/<id>/foo.tex */
+    snprintf(p, sizeof(p), "%s/materials/workshop/2188505192", dir);
+    mkdir_p(p);
+    snprintf(p, sizeof(p), "%s/materials/workshop/2188505192/foo.tex", dir);
+    f = fopen(p, "w");
+    if (f) {
+      fputs("x", f);
+      fclose(f);
+    }
+    /* a scene-root ref keeps working when materials/ has no match */
+    snprintf(p, sizeof(p), "%s/loose", dir);
+    mkdir_p(p);
+    snprintf(p, sizeof(p), "%s/loose/bar.png", dir);
+    f = fopen(p, "w");
+    if (f) {
+      fputs("x", f);
+      fclose(f);
+    }
+
+    memset(out, 0, sizeof(out));
+    TEST_CHECK_EQ_INT(xw_tex_resolve(dir,
+                                     "materials/workshop/2188505192/foo.json",
+                                     "workshop/2188505192/foo", out,
+                                     sizeof(out)),
+                      0);
+    snprintf(p, sizeof(p), "%s/materials/workshop/2188505192/foo.tex", dir);
+    TEST_CHECK(strcmp(out, p) == 0);
+
+    memset(out, 0, sizeof(out));
+    TEST_CHECK_EQ_INT(xw_tex_resolve(dir, NULL, "loose/bar", out, sizeof(out)),
+                      0);
+    snprintf(p, sizeof(p), "%s/loose/bar.png", dir);
+    TEST_CHECK(strcmp(out, p) == 0);
+
+    memset(out, 0, sizeof(out));
+    TEST_CHECK_EQ_INT(xw_tex_resolve(dir, NULL, "missing/nope", out,
+                                     sizeof(out)),
+                      -1);
+
+    snprintf(p, sizeof(p), "%s/materials/workshop/2188505192/foo.tex", dir);
+    unlink(p);
+    snprintf(p, sizeof(p), "%s/loose/bar.png", dir);
+    unlink(p);
+    snprintf(p, sizeof(p), "%s/loose", dir);
+    rmdir(p);
+    snprintf(p, sizeof(p), "%s/materials/workshop/2188505192", dir);
+    rmdir(p);
+    snprintf(p, sizeof(p), "%s/materials/workshop", dir);
+    rmdir(p);
+    snprintf(p, sizeof(p), "%s/materials", dir);
+    rmdir(p);
+    rmdir(dir);
+  }
+}
+
 int main(void) {
   TEST_SUITE("scene_tex");
   test_find_mini_tex();
@@ -475,5 +556,6 @@ int main(void) {
   test_decode_video_texture();
   test_decode_texs();
   test_decode_edges();
+  test_resolve_workshop_ref();
   TEST_SUMMARY();
 }

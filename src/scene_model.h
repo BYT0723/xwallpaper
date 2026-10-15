@@ -228,6 +228,10 @@ typedef struct XWSceneObject {
   /* model.puppet: an MDLV mesh drawn instead of a flat quad */
   char puppet[XW_SCENE_PATH_MAX];
   XWBlend blend;                   /* material blending (real walls) */
+  /* Image::colorBlendMode: a Photoshop-style blend against the frame so far
+   * (0 = normal alpha composite; the corpus uses 2 multiply, 6 lighten,
+   * 7 screen, which is what makes lens-flare blacks transparent) */
+  int color_blend;
   float origin[2];
   float scale[2];
   float size[2];

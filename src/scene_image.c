@@ -145,8 +145,11 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
                          XWError *err) {
   char path[1152];
   char shpath[1152];
-  unsigned int tex = 0, prog = 0, comp = 0, src = 0;
+  unsigned int tex = 0, prog = 0, comp = 0, src = 0, blendp = 0, shot = 0;
   int i, e, dst = 1, ffb = 0;
+  /* Photoshop-style blends the corpus actually uses; anything else stays a
+   * normal alpha composite for now */
+  int cblend = o->color_blend == 2 || o->color_blend == 6 || o->color_blend == 7;
   if (o->texture[0]) {
     snprintf(path, sizeof(path), "%.512s/%.400s", dir, o->texture);
   } else if (o->mat_tex[0] && strncmp(o->mat_tex, "_rt_", 4) == 0) {
@@ -175,6 +178,8 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
   if (xw_gl_program_copy(gl, &prog, err) != 0)
     return -1;
   if (xw_gl_program_composite(gl, &comp, err) != 0)
+    return -1;
+  if (cblend && xw_gl_program_blend(gl, &blendp, err) != 0)
     return -1;
   /* base copy always lands in an FBO; the composite pass owns the window
    * so resolved alpha modulates arbitrary effect chains uniformly. */
@@ -207,7 +212,8 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
         return -1;
     }
     if (mrc != 0 && xw_gl_draw_rect_tint(gl, prog, tex, time, o->color, rx, ry,
-                                         rw, rh) != 0)
+                                         rw, rh, o->scale[0] < 0.0f,
+                                         o->scale[1] < 0.0f) != 0)
       return -1; /* unusable mesh: keep the quad rather than nothing */
   }
   if (xw_gl_fbo_texture(gl, 0, &src) != 0)
@@ -364,6 +370,17 @@ static int render_object(XWGl *gl, const XWSceneObject *o, const char *dir,
   }
   if (ffb)
     xw_gl_set_shader_quad(gl, NULL);
+  if (cblend) {
+    /* the blend reads the screen so far, so snapshot the window before the
+     * object lands on it, then write the formula result through */
+    if (xw_gl_framebuffer_snapshot(gl, &shot) != 0)
+      return -1;
+    if (xw_gl_bind_target(gl, -1) != 0)
+      return -1;
+    if (xw_gl_draw_blend(gl, blendp, src, shot, alpha, o->color_blend) != 0)
+      return -1;
+    return 0;
+  }
   if (xw_gl_blend_begin(gl, XW_BLEND_TRANSLUCENT) != 0)
     return -1;
   if (xw_gl_bind_target(gl, -1) != 0) {

@@ -172,6 +172,49 @@ int main(void) {
     backend.destroy(&backend);
   }
 
+  /* Photoshop-style blends against the frame so far: screen makes black
+   * transparent, multiply makes white transparent. Without them the left
+   * box would composite black and the right one white over the blue base. */
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_SCENE;
+  opt.path = "tests/data/scene/blend";
+  opt.fps = 1000.0;
+  backend = *xw_scene_backend_new();
+  memset(&err, 0, sizeof(err));
+  if (backend.init(&backend, win, &opt, &err) != 0) {
+    TEST_FAIL("blend init: %s", err.msg);
+  } else if (!xw_scene_has_gl(&backend)) {
+    printf("  SKIP: no GLX for the blend-mode check\n");
+    backend.destroy(&backend);
+  } else {
+    TEST_BEGIN("screen black and multiply white stay transparent");
+    TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+    usleep(2000);
+    backend.tick(&backend);
+    XSync(dpy, False);
+    img = XGetImage(dpy, win->win, w / 4, h / 2, 1, 1, AllPlanes, ZPixmap);
+    TEST_CHECK(img != NULL);
+    if (img) {
+      unsigned long px = XGetPixel(img, 0, 0);
+      XDestroyImage(img);
+      int r = (px >> 16) & 0xff;
+      int g = (px >> 8) & 0xff;
+      int b = px & 0xff;
+      TEST_CHECK(r < 100 && g < 100 && b > 150); /* blue, not black */
+    }
+    img = XGetImage(dpy, win->win, 3 * w / 4, h / 2, 1, 1, AllPlanes, ZPixmap);
+    TEST_CHECK(img != NULL);
+    if (img) {
+      unsigned long px = XGetPixel(img, 0, 0);
+      XDestroyImage(img);
+      int r = (px >> 16) & 0xff;
+      int g = (px >> 8) & 0xff;
+      int b = px & 0xff;
+      TEST_CHECK(r < 100 && g < 100 && b > 150); /* blue, not white */
+    }
+    backend.destroy(&backend);
+  }
+
   xw_x11_destroy_window(win);
   TEST_SUMMARY();
 }

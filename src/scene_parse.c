@@ -1075,6 +1075,9 @@ static int parse_object_at(const char *dir, struct json_object *jo,
       json_object_get_type(v) == json_type_string)
     copy_str(o->texture, sizeof(o->texture), json_object_get_string(v));
   resolve_material(dir, o);
+  if (json_object_object_get_ex(jo, "colorBlendMode", &v) && v &&
+      json_object_get_type(v) == json_type_int)
+    o->color_blend = json_object_get_int(v);
   if (get_vec2(jo, "origin", &o->origin[0], &o->origin[1], 0, 0) != 0 ||
       get_vec2(jo, "scale", &o->scale[0], &o->scale[1], 1, 1) != 0 ||
       get_vec2(jo, "size", &o->size[0], &o->size[1], 0, 0) != 0) {

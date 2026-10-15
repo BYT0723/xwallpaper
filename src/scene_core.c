@@ -173,13 +173,15 @@ void xw_scene_object_rect(const XWSceneObject *o, int tex_w, int tex_h,
   /* CImage::getSize: a texture decides the quad, and an object without one
    * falls back to its declared size before the window. Compose and project
    * layers are that second case - they declare the canvas size and are what
-   * covers the scene, so sizing them from the window left the frame bare. */
-  qw = (float)(tex_w > 0 ? tex_w
+   * covers the scene, so sizing them from the window left the frame bare.
+   * A negative scale mirrors upstream (same covered rect, flipped UVs), so
+   * the rect uses the magnitude; the flip is applied when sampling. */
+  qw = fabsf((float)(tex_w > 0 ? tex_w
                          : (o->size[0] > 0.0f ? (int)o->size[0] : win_w)) *
-       o->scale[0];
-  qh = (float)(tex_h > 0 ? tex_h
+       o->scale[0]);
+  qh = fabsf((float)(tex_h > 0 ? tex_h
                          : (o->size[1] > 0.0f ? (int)o->size[1] : win_h)) *
-       o->scale[1];
+       o->scale[1]);
   sx = (ortho_w > 0.0f && win_w > 0) ? (float)win_w / ortho_w : 1.0f;
   sy = (ortho_h > 0.0f && win_h > 0) ? (float)win_h / ortho_h : 1.0f;
   left = (o->origin[0] - qw * 0.5f) * sx;
