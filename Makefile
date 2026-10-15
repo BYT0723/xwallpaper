@@ -230,6 +230,7 @@ xwallpaperd: $(DAEMON_OBJ)
 HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/client.h src/state.h src/x11.h src/app.h src/backends.h \
   src/wl.h src/daemon.h src/web_dir.h src/we_audio.h src/we_pulse.h \
+  src/keybinds.h \
   src/scene_pkg.h src/scene_tex.h src/scene_shader.h src/scene_parse.h \
   src/scene_model.h src/scene_core.h src/scene_gl.h src/scene_image.h \
   src/scene_text_gl.h src/scene_particle_gl.h src/scene_glsl.h \
@@ -252,6 +253,10 @@ tests/test_web_dir: tests/test_web_dir.c src/web_dir.o
 
 tests/test_we_audio: tests/test_we_audio.c src/we_audio.o
 	$(CC) $(CFLAGS) -o $@ $< src/we_audio.o -lm
+
+tests/test_keybinds: tests/test_keybinds.c src/keybinds.o
+	$(CC) $(CFLAGS) -o $@ $< src/keybinds.o
+
 
 tests/test_scene_pkg: tests/test_scene_pkg.c src/scene_pkg.o
 	$(CC) $(CFLAGS) -o $@ $< src/scene_pkg.o
