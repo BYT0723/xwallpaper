@@ -1084,6 +1084,17 @@ static int parse_object_at(const char *dir, struct json_object *jo,
     XW_ERROR_SET(err, 1, "object angles must be [x, y, z]");
     return -1;
   }
+  /* `color` is a tint over the object's own texture. scene.json ships three
+   * components and the engine's Color keeps alpha at 1 then; four are
+   * accepted too. */
+  o->color[0] = o->color[1] = o->color[2] = o->color[3] = 1.0f;
+  if (get_vec4(jo, "color", o->color) != 0) {
+    if (get_vec3(jo, "color", o->color) != 0) {
+      XW_ERROR_SET(err, 1, "object color must be [r, g, b] or [r, g, b, a]");
+      return -1;
+    }
+    o->color[3] = 1.0f;
+  }
   {
     static const char *const prop_names[XW_PROP_COUNT] = {"origin", "scale",
                                                           "size", "visible"};

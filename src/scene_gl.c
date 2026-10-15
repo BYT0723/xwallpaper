@@ -119,8 +119,11 @@ static const char *copy_frag_src =
     "#version 330 core\n"
     "in vec2 v_TexCoord;\n"
     "uniform sampler2D xw_tex0;\n"
+    /* the object tint: WE's genericimage*.frag multiplies the sample by
+     * g_Color4, which this builtin copy replaces */
+    "uniform vec4 xw_tint;\n"
     "out vec4 xw_out;\n"
-    "void main() { xw_out = texture(xw_tex0, v_TexCoord); }\n";
+    "void main() { xw_out = texture(xw_tex0, v_TexCoord) * xw_tint; }\n";
 
 static const char *composite_frag_src =
     "#version 330 core\n"
@@ -1418,7 +1421,8 @@ static GLint alpha_location(GLuint prog) {
 }
 
 static int draw_full(XWGl *g, unsigned int prog, unsigned int tex, float time,
-                     float alpha, int use_alpha, int flip_invert) {
+                     float alpha, int use_alpha, int flip_invert,
+                     const float *tint) {
   GLint sloc, tloc, aloc;
   if (!g || !prog)
     return -1;
@@ -1441,6 +1445,13 @@ static int draw_full(XWGl *g, unsigned int prog, unsigned int tex, float time,
   aloc = glGetUniformLocation(prog, "xw_flip");
   if (aloc >= 0)
     glUniform1f(aloc, ((g->flip != 0) != (flip_invert != 0)) ? -1.0f : 1.0f);
+  aloc = glGetUniformLocation(prog, "xw_tint");
+  if (aloc >= 0) {
+    if (tint)
+      glUniform4f(aloc, tint[0], tint[1], tint[2], tint[3]);
+    else
+      glUniform4f(aloc, 1.0f, 1.0f, 1.0f, 1.0f);
+  }
   glBindVertexArray(g->quad_vao);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   glBindVertexArray(0);
@@ -1449,12 +1460,17 @@ static int draw_full(XWGl *g, unsigned int prog, unsigned int tex, float time,
 }
 
 int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time) {
-  return draw_full(g, prog, tex, time, 1.0f, 0, 0);
+  return draw_full(g, prog, tex, time, 1.0f, 0, 0, NULL);
+}
+
+int xw_gl_draw_tint(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                    const float tint[4]) {
+  return draw_full(g, prog, tex, time, 1.0f, 0, 0, tint);
 }
 
 int xw_gl_draw_alpha(XWGl *g, unsigned int prog, unsigned int tex, float time,
                      float alpha) {
-  return draw_full(g, prog, tex, time, alpha, 1, 0);
+  return draw_full(g, prog, tex, time, alpha, 1, 0, NULL);
 }
 
 int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
@@ -1974,6 +1990,16 @@ int xw_gl_draw(XWGl *g, unsigned int prog, unsigned int tex, float time) {
   return -1;
 }
 
+int xw_gl_draw_tint(XWGl *g, unsigned int prog, unsigned int tex, float time,
+                    const float tint[4]) {
+  (void)g;
+  (void)prog;
+  (void)tex;
+  (void)time;
+  (void)tint;
+  return -1;
+}
+
 int xw_gl_fbo_texture(XWGl *g, int idx, unsigned int *tex) {
   (void)g;
   (void)idx;
@@ -2309,7 +2335,7 @@ int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
  * to flip the other way for the result to land upright. */
 int xw_gl_draw_window_source(XWGl *g, unsigned int prog, unsigned int tex,
                              float time) {
-  return draw_full(g, prog, tex, time, 1.0f, 0, 1);
+  return draw_full(g, prog, tex, time, 1.0f, 0, 1, NULL);
 }
 
 void xw_gl_set_shader_quad(XWGl *g, const float ndc[8]) {

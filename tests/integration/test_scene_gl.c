@@ -100,6 +100,43 @@ int main(void) {
   }
 
   backend.destroy(&backend);
+
+  /* The object tint: WE multiplies the sampled texture by Image::color
+   * (genericimage*.frag's g_Color4), which our builtin base copy replaces.
+   * Grey 128 through a (0.5, 0.25, 1.0) tint must land near (64, 32, 128);
+   * before this was wired the object drew untinted, i.e. (128, 128, 128). */
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_SCENE;
+  opt.path = "tests/data/scene/tint";
+  opt.fps = 1000.0;
+  backend = *xw_scene_backend_new();
+  memset(&err, 0, sizeof(err));
+  if (backend.init(&backend, win, &opt, &err) != 0) {
+    TEST_FAIL("tint init: %s", err.msg);
+  } else if (!xw_scene_has_gl(&backend)) {
+    printf("  SKIP: no GLX for the tint check\n");
+    backend.destroy(&backend);
+  } else {
+    TEST_BEGIN("object color tints the base texture");
+    TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+    usleep(2000);
+    backend.tick(&backend);
+    XSync(dpy, False);
+    img = XGetImage(dpy, win->win, cx, cy, 1, 1, AllPlanes, ZPixmap);
+    TEST_CHECK(img != NULL);
+    if (img) {
+      unsigned long px = XGetPixel(img, 0, 0);
+      XDestroyImage(img);
+      int r = (px >> 16) & 0xff;
+      int g = (px >> 8) & 0xff;
+      int b = px & 0xff;
+      TEST_CHECK(r > 54 && r < 74);
+      TEST_CHECK(g > 22 && g < 42);
+      TEST_CHECK(b > 118 && b < 138);
+    }
+    backend.destroy(&backend);
+  }
+
   xw_x11_destroy_window(win);
   TEST_SUMMARY();
 }
