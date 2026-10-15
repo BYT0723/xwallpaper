@@ -176,11 +176,11 @@ static void test_decode_raw(void) {
 }
 
 /* TEXB0004 builder: like build_texv plus the isVideo flag word */
-static unsigned char *build_texv4(uint32_t fif, uint32_t is_video,
-                                   uint32_t w, uint32_t h, uint32_t mw,
-                                   uint32_t mh, uint32_t comp, int32_t usize,
-                                   const unsigned char *payload, size_t plen,
-                                   size_t *out_len) {
+static unsigned char *build_texv4f(uint32_t fif, uint32_t is_video,
+                                    uint32_t flags, uint32_t w, uint32_t h,
+                                    uint32_t mw, uint32_t mh, uint32_t comp,
+                                    int32_t usize, const unsigned char *payload,
+                                    size_t plen, size_t *out_len) {
   unsigned char *blob, *dst;
   uint32_t m[8] = {1, fif, is_video, 1, mw, mh, comp, (uint32_t)usize};
   size_t hdr = 9 + 9 + 28 + 9 + 8 * 4 + 4, total = hdr + plen;
@@ -194,7 +194,7 @@ static unsigned char *build_texv4(uint32_t fif, uint32_t is_video,
   memcpy(dst, "TEXI0001\0", 9);
   dst += 9;
   {
-    uint32_t f[7] = {0, 0, w, h, w, h, 0};
+    uint32_t f[7] = {0, flags, w, h, w, h, 0};
     for (i = 0; i < 7; i++) {
       dst[0] = (unsigned char)(f[i] & 0xff);
       dst[1] = (unsigned char)((f[i] >> 8) & 0xff);
@@ -224,8 +224,17 @@ static unsigned char *build_texv4(uint32_t fif, uint32_t is_video,
   return blob;
 }
 
+static unsigned char *build_texv4(uint32_t fif, uint32_t is_video, uint32_t w,
+                                  uint32_t h, uint32_t mw, uint32_t mh,
+                                  uint32_t comp, int32_t usize,
+                                  const unsigned char *payload, size_t plen,
+                                  size_t *out_len) {
+  return build_texv4f(fif, is_video, 0u, w, h, mw, mh, comp, usize, payload,
+                      plen, out_len);
+}
+
 static void test_decode_texb0004(void) {
-  TEST_BEGIN("TEXB0004 stills decode, video refused");
+  TEST_BEGIN("TEXB0004 stills decode, TextureFlags_Video accepted");
   XWError err = {0};
   XWTexImage img;
   unsigned char px[64];
@@ -259,13 +268,71 @@ static void test_decode_texb0004(void) {
       free(blob);
     }
   }
-  /* video flag refused */
-  blob = build_texv4(13, 1, 4, 4, 4, 4, 0, 64, px, sizeof(px), &len);
+  /* a real video texture is accepted and handed up undecoded; the shipped
+   * file for 3610097897 carries fif=UNKNOWN, isVideo=0 and
+   * TextureFlags_Video (32) with a whole MP4 as the mip payload */
+  blob = build_texv4f(0xFFFFFFFFu, 0, 32u, 1440, 2560, 1440, 2560, 0, 0, px,
+                      sizeof(px), &len);
   TEST_CHECK(blob != NULL);
   if (blob) {
     memset(&img, 0, sizeof(img));
     memset(&err, 0, sizeof(err));
-    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), -1);
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+    TEST_CHECK_EQ_INT(img.is_video, 1);
+    TEST_CHECK_EQ_INT((int)img.len, (int)sizeof(px));
+    TEST_CHECK(memcmp(img.px, px, sizeof(px)) == 0);
+    xw_tex_image_free(&img);
+    free(blob);
+  }
+}
+
+static void test_decode_video_texture(void) {
+  TEST_BEGIN("video textures hand the embedded MP4 up undecoded");
+  XWError err = {0};
+  XWTexImage img;
+  unsigned char mp4[48];
+  size_t len = 0;
+  unsigned char *blob;
+  int i;
+  for (i = 0; i < 48; i++) mp4[i] = (unsigned char)(0x40 + i);
+  /* fif FIF_MP4 (35), the same value as FIF_WEBP */
+  blob = build_texv4f(35u, 0, 0u, 640, 480, 640, 480, 0, 0, mp4, sizeof(mp4),
+                      &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+    TEST_CHECK_EQ_INT(img.is_video, 1);
+    TEST_CHECK_EQ_INT((int)img.len, (int)sizeof(mp4));
+    TEST_CHECK(memcmp(img.px, mp4, sizeof(mp4)) == 0);
+    TEST_CHECK_EQ_INT((int)img.w, 640);
+    TEST_CHECK_EQ_INT((int)img.h, 480);
+    xw_tex_image_free(&img);
+    free(blob);
+  }
+  /* isVideo=1 with an UNKNOWN fif, the other shape the engine accepts */
+  blob = build_texv4f(0xFFFFFFFFu, 1, 0u, 640, 480, 640, 480, 0, 0, mp4,
+                      sizeof(mp4), &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+    TEST_CHECK_EQ_INT(img.is_video, 1);
+    TEST_CHECK(memcmp(img.px, mp4, sizeof(mp4)) == 0);
+    xw_tex_image_free(&img);
+    free(blob);
+  }
+  /* a still with the same payload is not a video */
+  blob = build_texv4f(0xFFFFFFFFu, 0, 0u, 4, 4, 4, 4, 0, 64, mp4, 64, &len);
+  TEST_CHECK(blob != NULL);
+  if (blob) {
+    memset(&img, 0, sizeof(img));
+    memset(&err, 0, sizeof(err));
+    TEST_CHECK_EQ_INT(xw_tex_decode(blob, len, &img, &err), 0);
+    TEST_CHECK_EQ_INT(img.is_video, 0);
+    xw_tex_image_free(&img);
     free(blob);
   }
 }
@@ -405,6 +472,7 @@ int main(void) {
   test_bad_inputs();
   test_decode_raw();
   test_decode_texb0004();
+  test_decode_video_texture();
   test_decode_texs();
   test_decode_edges();
   TEST_SUMMARY();
