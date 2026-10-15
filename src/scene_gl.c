@@ -6,7 +6,12 @@
 #ifdef XW_HAVE_GL
 #include <GL/glew.h>
 #include <GL/glx.h>
+#include <mpv/client.h>
+#include <mpv/render_gl.h>
 #endif
+
+#include <sys/types.h>
+#include <unistd.h>
 
 #include <Imlib2.h>
 
@@ -17,6 +22,7 @@
 
 #define XW_GL_PROG_MAX 16
 #define XW_GL_TEXCACHE_MAX 24
+#define XW_GL_VIDEO_MAX 2
 #define XW_GL_DEFS_MAX 24
 #define XW_GL_TARGETS_MAX 8
 
@@ -63,8 +69,19 @@ struct XWGl {
     float frame_time;
     float frames[XW_TEX_FRAMES_MAX][4]; /* normalised x, y, w, h */
     float frame_times[XW_TEX_FRAMES_MAX];
+    int video; /* index into g->video, -1 when this is a still */
   } texcache[XW_GL_TEXCACHE_MAX];
   int ntex;
+  /* One libmpv render context per video texture (see video_open). */
+  struct {
+    mpv_handle *mpv;
+    mpv_render_context *rctx;
+    GLuint tex, fbo;
+    int vw, vh;
+    int live, drew;
+    char tmp[128];
+  } video[XW_GL_VIDEO_MAX];
+  int nvideo;
   GLuint utils[4];
   int flip; /* 1 while rendering into an FBO (see bind_target) */
   /* named offscreen targets declared by effects ("fbos") */
@@ -343,14 +360,19 @@ int xw_gl_create(XWGl **out, Display *dpy, Window win, int w, int h,
   return 0;
 }
 
+static void video_destroy(XWGl *g, int i);
+static void video_pump(XWGl *g);
+
 void xw_gl_destroy(XWGl *g) {
   int i;
   if (!g)
     return;
   if (g->ctx) {
     glXMakeCurrent(g->dpy, g->win, g->ctx);
+    for (i = 0; i < g->nvideo; i++) video_destroy(g, i);
     for (i = 0; i < g->nprogs; i++) glDeleteProgram(g->progs[i].prog);
-    for (i = 0; i < g->ntex; i++) glDeleteTextures(1, &g->texcache[i].tex);
+    for (i = 0; i < g->ntex; i++)
+      if (g->texcache[i].video < 0) glDeleteTextures(1, &g->texcache[i].tex);
     glDeleteTextures(4, g->utils);
     for (i = 0; i < g->ntargets; i++) {
       glDeleteFramebuffers(1, &g->targets[i].fbo);
@@ -379,9 +401,173 @@ void xw_gl_destroy(XWGl *g) {
 }
 
 
+/* ---- video textures -----------------------------------------------------
+ * An XW_TEXFMT_MP4 texture's single mip is a whole MP4. The engine hands it
+ * to libmpv's render API and samples the GL texture mpv draws into
+ * (CTexture / GLPlayer); we do the same, one render context per texture. The
+ * MP4 is spooled to a private temp file because mpv seeks within it. */
+
+static void *video_proc_address(void *ctx, const char *name) {
+  (void)ctx;
+  return (void *)glXGetProcAddressARB((const GLubyte *)name);
+}
+
+static void video_destroy(XWGl *g, int i) {
+  if (!g->video[i].live)
+    return;
+  if (g->ctx)
+    glXMakeCurrent(g->dpy, g->win, g->ctx);
+  if (g->video[i].rctx)
+    mpv_render_context_free(g->video[i].rctx);
+  if (g->video[i].mpv)
+    mpv_terminate_destroy(g->video[i].mpv);
+  if (g->ctx) {
+    if (g->video[i].fbo)
+      glDeleteFramebuffers(1, &g->video[i].fbo);
+    if (g->video[i].tex)
+      glDeleteTextures(1, &g->video[i].tex);
+  }
+  if (g->video[i].tmp[0])
+    unlink(g->video[i].tmp);
+  memset(&g->video[i], 0, sizeof(g->video[i]));
+}
+
+static int video_spool(const unsigned char *mp4, size_t len, char *out,
+                       size_t n, XWError *err) {
+  int fd;
+  size_t off = 0;
+  const char *tmpdir = getenv("TMPDIR");
+  snprintf(out, n, "%s/xw-scene-video-XXXXXX", tmpdir && tmpdir[0] ? tmpdir
+                                                                  : "/tmp");
+  fd = mkstemp(out);
+  if (fd < 0) {
+    XW_ERROR_SET(err, 1, "cannot create video temp file");
+    return -1;
+  }
+  while (off < len) {
+    ssize_t w = write(fd, mp4 + off, len - off);
+    if (w <= 0) {
+      close(fd);
+      unlink(out);
+      out[0] = '\0';
+      XW_ERROR_SET(err, 1, "cannot write video temp file");
+      return -1;
+    }
+    off += (size_t)w;
+  }
+  close(fd);
+  return 0;
+}
+
+static int video_open(XWGl *g, const unsigned char *mp4, size_t len, int vw,
+                      int vh, unsigned int *tex_out, int *idx_out,
+                      XWError *err) {
+  mpv_opengl_init_params gl_init;
+  mpv_render_param params[4];
+  const char *cmd[3];
+  int advanced = 1, i;
+  if (g->nvideo >= XW_GL_VIDEO_MAX) {
+    XW_ERROR_SET(err, 1, "video texture limit reached");
+    return -1;
+  }
+  i = g->nvideo;
+  memset(&g->video[i], 0, sizeof(g->video[i]));
+  g->video[i].vw = vw > 0 ? vw : 16;
+  g->video[i].vh = vh > 0 ? vh : 16;
+  if (video_spool(mp4, len, g->video[i].tmp, sizeof(g->video[i].tmp), err) != 0)
+    return -1;
+  g->video[i].mpv = mpv_create();
+  if (!g->video[i].mpv) {
+    video_destroy(g, i);
+    XW_ERROR_SET(err, 1, "mpv_create failed");
+    return -1;
+  }
+  mpv_set_option_string(g->video[i].mpv, "vo", "libmpv");
+  mpv_set_option_string(g->video[i].mpv, "audio", "no");
+  mpv_set_option_string(g->video[i].mpv, "loop-file", "inf");
+  mpv_set_option_string(g->video[i].mpv, "hwdec", "auto-safe");
+  mpv_set_option_string(g->video[i].mpv, "input-default-bindings", "no");
+  mpv_set_option_string(g->video[i].mpv, "input-vo-keyboard", "no");
+  mpv_set_option_string(g->video[i].mpv, "osc", "no");
+  mpv_set_option_string(g->video[i].mpv, "osd-level", "0");
+  if (mpv_initialize(g->video[i].mpv) < 0) {
+    video_destroy(g, i);
+    XW_ERROR_SET(err, 1, "mpv_initialize failed");
+    return -1;
+  }
+  /* the render context must be created with our GL context current */
+  glXMakeCurrent(g->dpy, g->win, g->ctx);
+  memset(&gl_init, 0, sizeof(gl_init));
+  gl_init.get_proc_address = video_proc_address;
+  params[0].type = MPV_RENDER_PARAM_API_TYPE;
+  params[0].data = (void *)MPV_RENDER_API_TYPE_OPENGL;
+  params[1].type = MPV_RENDER_PARAM_OPENGL_INIT_PARAMS;
+  params[1].data = &gl_init;
+  params[2].type = MPV_RENDER_PARAM_ADVANCED_CONTROL;
+  params[2].data = &advanced;
+  params[3].type = (mpv_render_param_type)0;
+  params[3].data = NULL;
+  if (mpv_render_context_create(&g->video[i].rctx, g->video[i].mpv, params) <
+      0) {
+    video_destroy(g, i);
+    XW_ERROR_SET(err, 1, "mpv render context unavailable");
+    return -1;
+  }
+  glGenTextures(1, &g->video[i].tex);
+  glBindTexture(GL_TEXTURE_2D, g->video[i].tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, g->video[i].vw, g->video[i].vh, 0,
+               GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+  glGenFramebuffers(1, &g->video[i].fbo);
+  glBindFramebuffer(GL_FRAMEBUFFER, g->video[i].fbo);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                         g->video[i].tex, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  cmd[0] = "loadfile";
+  cmd[1] = g->video[i].tmp;
+  cmd[2] = NULL;
+  mpv_command(g->video[i].mpv, cmd);
+  g->video[i].live = 1;
+  g->nvideo++;
+  *tex_out = g->video[i].tex;
+  *idx_out = i;
+  return 0;
+}
+
+/* Draw the newest frame of every live video into its own texture. */
+static void video_pump(XWGl *g) {
+  int i;
+  for (i = 0; i < g->nvideo; i++) {
+    mpv_opengl_fbo target;
+    mpv_render_param rp[2];
+    uint64_t flags;
+    if (!g->video[i].live || !g->video[i].rctx)
+      continue;
+    flags = mpv_render_context_update(g->video[i].rctx);
+    if (!(flags & MPV_RENDER_UPDATE_FRAME) && g->video[i].drew)
+      continue;
+    glXMakeCurrent(g->dpy, g->win, g->ctx);
+    target.fbo = (int)g->video[i].fbo;
+    target.w = g->video[i].vw;
+    target.h = g->video[i].vh;
+    target.internal_format = GL_RGBA8;
+    rp[0].type = MPV_RENDER_PARAM_OPENGL_FBO;
+    rp[0].data = &target;
+    rp[1].type = (mpv_render_param_type)0;
+    rp[1].data = NULL;
+    glBindFramebuffer(GL_FRAMEBUFFER, g->video[i].fbo);
+    if (mpv_render_context_render(g->video[i].rctx, rp) >= 0)
+      g->video[i].drew = 1;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  }
+}
+
 static int cache_store(XWGl *g, const char *path, GLuint t, int tw, int th,
                      int rw, int rh, unsigned int flags,
-                     const XWTexImage *img, XWError *err) {
+                     const XWTexImage *img, int video, XWError *err) {
   if (g->ntex >= XW_GL_TEXCACHE_MAX) {
     if (t)
       glDeleteTextures(1, &t);
@@ -398,6 +584,7 @@ static int cache_store(XWGl *g, const char *path, GLuint t, int tw, int th,
   g->texcache[g->ntex].flags = flags;
   g->texcache[g->ntex].nframes = 0;
   g->texcache[g->ntex].frame_time = 0.0f;
+  g->texcache[g->ntex].video = video;
   if (img && img->n_frames > 0 && img->tex_w > 0 && img->tex_h > 0) {
     int fi;
     g->texcache[g->ntex].nframes = img->n_frames;
@@ -480,14 +667,29 @@ static int upload_imlib_current(XWGl *g, const char *path, GLuint *t,
 static int upload_texv(XWGl *g, const unsigned char *file, size_t flen,
                        GLuint *t, int *twp, int *thp, int *rwp, int *rhp,
                        unsigned int *flagsp, XWTexImage *frames_out,
-                       XWError *err) {
+                       int *video_out, XWError *err) {
   XWTexImage img;
   int rc = -1;
+  *video_out = -1;
   memset(&img, 0, sizeof(img));
   if (xw_tex_decode(file, flen, &img, err) != 0)
     return -1;
   glXMakeCurrent(g->dpy, g->win, g->ctx);
   switch (img.fmt) {
+  case XW_TEXFMT_MP4:
+    /* the payload is a whole MP4; libmpv draws it into a texture of ours */
+    if (video_open(g, img.px, img.len, (int)img.tex_w, (int)img.tex_h, t,
+                   video_out, err) != 0) {
+      xw_tex_image_free(&img);
+      return -1;
+    }
+    *twp = (int)img.tex_w;
+    *thp = (int)img.tex_h;
+    *rwp = (int)img.tex_w;
+    *rhp = (int)img.tex_h;
+    *flagsp = img.flags;
+    rc = 0;
+    break;
   case XW_TEXFMT_RGBA8:
     /* byte order exactly as the reference uploads it */
     glGenTextures(1, t);
@@ -643,18 +845,18 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
   if (!file)
     return cache_fail(g, path, err, "cannot read texture");
   if (flen >= 4 && memcmp(file, "TEXV", 4) == 0) {
-    int tw = 0, th = 0, rw = 0, rh = 0;
+    int tw = 0, th = 0, rw = 0, rh = 0, vidx = -1;
     unsigned int flags = 0;
     XWTexImage frames;
     memset(&frames, 0, sizeof(frames));
     rc = upload_texv(g, file, flen, &t, &tw, &th, &rw, &rh, &flags, &frames,
-                     err);
+                     &vidx, err);
     free(file);
     if (rc != 0) {
       cache_fail(g, path, err, "cannot decode texture");
       return -1;
     }
-    if (cache_store(g, path, t, tw, th, rw, rh, flags, &frames, err) != 0)
+    if (cache_store(g, path, t, tw, th, rw, rh, flags, &frames, vidx, err) != 0)
       return -1;
     *tex = t;
     return 0;
@@ -681,7 +883,7 @@ int xw_gl_upload(XWGl *g, const char *path, unsigned int *tex, XWError *err) {
       cache_fail(g, path, err, "cannot decode texture");
       return -1;
     }
-    if (cache_store(g, path, t, iw, ih, iw, ih, 2u, NULL, err) != 0)
+    if (cache_store(g, path, t, iw, ih, iw, ih, 2u, NULL, -1, err) != 0)
       return -1;
   }
   *tex = t;
@@ -1881,8 +2083,11 @@ static void bind_prog_defaults(XWGl *g, GLuint prog,
  * copy keeps every object sampling the same scene and avoids stacking the
  * effect of the objects drawn earlier in the frame. */
 void xw_gl_frame_begin(XWGl *g) {
-  if (g)
-    g->ffb_frame++;
+  if (!g)
+    return;
+  /* video textures advance once per frame, before anything samples them */
+  video_pump(g);
+  g->ffb_frame++;
 }
 
 int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex) {
