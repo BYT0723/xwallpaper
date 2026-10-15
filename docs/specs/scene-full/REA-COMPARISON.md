@@ -741,3 +741,30 @@ fps=30/150 tick）给出**完全相同**的结果（均值 15.5%，最差格也�
 
 **证据强度**：本节的每个数字都来自同一个确定性捕获（同场景两次运行逐字节相同），
 对象集由名字精确匹配（`|` 分隔）选定，并与从全量反向剔除的结果互相印证。
+
+### 10.9 workshop 纹理、负 scale 与 colorBlendMode（2889253135：15.5% → 3.5%）
+
+**链条（一环扣一环）**：底部暖色带差得最多 → 两个 flare 对象材质纹理解析失败
+→ 修解析（`workshop/<id>/<name>` 按参考实现应先试 `materials/` 前缀，
+`AssetLocator::texture` 即如此）→ 纹理能解出来了，全帧变平（33%）
+→ 探针显示 `c7884` 算出负矩形 `rw=-1243`，`draw_rect_full` 拒画返回 -1，
+整帧夭折后 `paint_fill` 用 clearcolor 刷平（`(180,188,218)` 恰为
+`general.clearcolor`）
+→ 负 scale 按参考（`CImage.cpp:234`，反转顶点、同 UV）应为镜像，改矩形取
+幅值 + 采样镜像 → 黑盒子盖住角色脸（20%）
+→ 黑盒纹理本身是不透明黑底小彩虹弧；参考跑同场景无盒 → 这两个对象的
+`colorBlendMode`（7 screen、6 lighten；3808922316 用 2 multiply ×9）经
+`common_blending.h:ApplyBlending` 使黑色透明 → 实现 2/6/7 三档合成 → **3.5%**。
+
+验证链：参考 `--screenshot`（默认 lensflare=true）无盒；`--set-property
+lensflare=false` 只拿掉弧光与整体提亮（粒子相位会变，A/B 不完全干净，
+只看弧光有无）；纹理解包确认 `c7884` 有效区 alpha 全 255。
+
+**教训**：集成测试一度全黑，查了两小时 GL，最后发现是 fixture 自己的 bug
+（64×64 纹理按"纹理尺寸优先"只画 96×96 小盒，盒下快照是黑 clearcolor 而非
+蓝 base —— skill 说的"先怀疑测试本身"是成立的）。fixture 改成足尺寸纹理后
+4/4 通过，且撤掉 src 修复会变红。
+
+状态：`1695f5a`（代码+回归测试），门禁 `make test` 18 套、
+`make test-xvfb` 16 组、`make check-client-libs` 全绿。残余最大差距在底部
+暖色带（粒子相位对不上系预期内）与头部高光一格。
