@@ -99,6 +99,28 @@ int xw_we_audio_map(const float *l, const float *r, int n, float out[128]) {
   return 0;
 }
 
+int xw_we_audio_spectrum(const float in[XW_WE_AUDIO_BINS], XWWeSpectrum *out) {
+  int i;
+  if (!out)
+    return -1;
+  memset(out, 0, sizeof(*out));
+  if (!in)
+    return -1;
+  for (i = 0; i < 64; i++) {
+    out->left64[i] = in[i];
+    out->right64[i] = in[XW_WE_AUDIO_BINS / 2 + i];
+  }
+  for (i = 0; i < 32; i++) {
+    out->left32[i] = out->left64[2 * i + 1];
+    out->right32[i] = out->right64[2 * i + 1];
+  }
+  for (i = 0; i < 16; i++) {
+    out->left16[i] = out->left64[4 * i + 3];
+    out->right16[i] = out->right64[4 * i + 3];
+  }
+  return 0;
+}
+
 int xw_we_audio_format(const float in[128], char *out, size_t n) {
   if (!in || !out || n == 0)
     return -1;

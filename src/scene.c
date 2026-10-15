@@ -25,6 +25,8 @@
 #include "scene_sound.h"
 #include "scene_text.h"
 #include "scene_text_gl.h"
+#include "we_audio.h"
+#include "we_pulse.h"
 #include "x11.h"
 
 /* Scene backend shell (Task 7): parses the wallpaper directory, paints the
@@ -412,6 +414,18 @@ static int paint_gl(XWSceneCtx *c) {
       return -1;
     }
   }
+  /* The engine hands scene shaders g_AudioSpectrum{N}{Left,Right}. Only pay
+   * for the monitor capture once a drawn pass has actually declared one, so
+   * scenes without audio-reactive materials stay silent and idle. */
+  {
+    float bins[XW_WE_AUDIO_BINS];
+    if (xw_gl_audio_used(c->gl) && !xw_we_pulse_running())
+      xw_we_pulse_start(); /* may fail without Pulse; get() still yields zeros */
+    if (xw_we_pulse_running() && xw_we_pulse_get(bins) == 0)
+      xw_gl_set_audio_spectrum(c->gl, bins);
+    else
+      xw_gl_set_audio_spectrum(c->gl, NULL);
+  }
   /* XW_FIXED_TIME drives the clock from the frame counter so renders are
    * reproducible; timing noise otherwise swamps frame-to-frame A/Bs */
   if (getenv("XW_FIXED_TIME"))
@@ -642,6 +656,8 @@ static void scene_destroy(XWBackend *b) {
   if (c->gl)
     xw_gl_destroy(c->gl);
   c->gl = NULL;
+  if (xw_we_pulse_running())
+    xw_we_pulse_stop();
   free_sounds(c);
   free_emitters(c);
   free_order(c);
