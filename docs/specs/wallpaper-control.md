@@ -214,3 +214,29 @@ int xw_keybinds_parse(const char *text, XWBind *out, int max, XWError *err) {
 - 按键由**守护进程接管**，mpv 不再接 `input-conf`。
 - 动作范围：**完整覆盖** `wallpaper.keys`（seek/volume/mute/pause/rotate）。
 - 目标选择：**聚焦窗口**（不做全局抓键）。
+
+## 实现状态（全部完成）
+
+| 任务 | 提交 | 验证要点 |
+| --- | --- | --- |
+| keybinds 解析/匹配 | `9943928` | 用户真实文件逐条解析，10/10 单测 |
+| 动作算术 | 同上 | 音量相对/绝对 + 钳位、旋转轮转 |
+| control 通道 + video + CLI/协议 | `f137fa0` | daemon 下读回 mpv 属性：50→60、绝对 30、mute 往返 |
+| 按键派发到聚焦窗口 | `80a8509` | `xdotool` 真机按键：`0 0 0` = +6（无双重处理）、`-/=/r` 生效 |
+| web | `ca3f217` | fixture 同时含 `<audio>` 与 `AudioContext`，两条路径都断言；重载后保持 |
+| scene | `ecd0d81` | 真机：`=` 暂停时逐帧相同、恢复后逐帧不同 |
+| 多目标语义 + 文档 | 本次 | `--all` / `-m` / 未知输出报错；README 增补按键与动作章节 |
+
+### 实现与本文档的两处偏差（有意为之，记录在此）
+
+1. **旋转的 ring 未按文件取值**：按键触发 `rotate` 时统一用默认环
+   `90 180 270 0`（与仓库内所有已知 key 文件一致）。若将来出现自定义环，
+   需要把环一路传到后端（`control` 的 value 已在协议中预留了位置）。
+2. **`pause` 只走按键路径**，没有 `xwallpaper pause` 子命令——用户确认的 CLI
+   范围只有 volume/mute；要加的话只是 `cli.c` 里再加一个分支。
+
+### 已知不覆盖
+
+- Wayland 下按键派发未做（Wayland 无法在应用侧抓全局键，且 dwl 无对应协议）；
+  Wayland 用户走上面的 CLI 绑键路径即可，`control` 本身与平台无关。
+- 音量/静音**不写回 state 文件**（本次范围），`restore` 会回到设置时的值。
