@@ -1,3 +1,4 @@
+#include <locale.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -110,6 +111,23 @@ void xw_web_we_tick(void) {
 
 /* gtk_init runs at first web backend init (process-wide, idempotent) */
 static int gtk_initialized = 0;
+
+/* gtk_init_check() runs setlocale(LC_ALL, "") even when it fails, dropping the
+ * process into the environment's numeric locale: mpv_create() then returns NULL
+ * for anything but "C"/"C.UTF-8" (no video wallpaper) and the daemon's own
+ * %g/atof output would use ",". Restore the C numeric locale on both paths. */
+static int web_gtk_ensure(XWError *err) {
+  if (gtk_initialized)
+    return 0;
+  int ok = gtk_init_check(NULL, NULL);
+  setlocale(LC_NUMERIC, "C");
+  if (!ok) {
+    XW_ERROR_SET(err, 1, "gtk_init_check failed");
+    return -1;
+  }
+  gtk_initialized = 1;
+  return 0;
+}
 
 static gboolean web_block_context_menu(WebKitWebView *view,
                                        WebKitContextMenu *menu,
@@ -420,13 +438,8 @@ static void web_terminate(WebCtx *ctx) {
 }
 
 static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWError *err) {
-  if (!gtk_initialized) {
-    if (!gtk_init_check(NULL, NULL)) {
-      XW_ERROR_SET(err, 1, "gtk_init_check failed");
-      return -1;
-    }
-    gtk_initialized = 1;
-  }
+  if (web_gtk_ensure(err) != 0)
+    return -1;
 
   WebCtx *ctx = calloc(1, sizeof(*ctx));
   if (!ctx) {
@@ -604,13 +617,8 @@ XWBackend *xw_web_backend_new(void) {
  * GDK backend. */
 static int web_init_wl(XWBackend *b, XWWlWindow *win,
                        const XWBackendOpt *opt, XWError *err) {
-  if (!gtk_initialized) {
-    if (!gtk_init_check(NULL, NULL)) {
-      XW_ERROR_SET(err, 1, "gtk_init_check failed");
-      return -1;
-    }
-    gtk_initialized = 1;
-  }
+  if (web_gtk_ensure(err) != 0)
+    return -1;
 
   WebCtx *ctx = calloc(1, sizeof(*ctx));
   if (!ctx) {
