@@ -149,6 +149,17 @@ shim 要求：
 `3768853831`（AudioContext）静音后 peak=0，`volume 30` peak 6315 → 1717。
 修复前同样步骤静音后 peak 仍有 7120。
 
+**实测修正（第二版）**：上表只验的是 `xwallpaper mute` 直控；**按键路径在 web 上从不生效**。
+`web` 把 WebKit 的 GTK 子窗口 reparent 到壁纸窗口上，指针落点在最深的 WebKit 视图窗口，
+而 WebKit 为页面输入在该窗口上保留 `GDK_KEY_PRESS_MASK`（GDK 经 XI2 选键，故 X 服务端的
+core `all_event_masks` 看不出来），KeyPress 被它吃掉，永远冒泡不到守护进程自己的壁纸窗口
+——`wallpaper.keys` 在 web 上等于摆设；video 的 mpv 子窗口不收键，所以 video 正常。
+修法：`web_init` 里对 GTK toplevel 与视图窗口清掉 `GDK_KEY_PRESS_MASK|GDK_KEY_RELEASE_MASK`
+（并在视图 `map-event` 时重清），让 X 把 KeyPress 冒泡到壁纸窗口，与 video 走同一条派发路径。
+壁纸页不需要键盘输入，无副作用。回归：`test_web` 的
+`nested web windows do not swallow wallpaper.keys` 断言两层子窗口都不含 `GDK_KEY_PRESS_MASK`
+（撤掉修复即红）。真机 `parec`：给 web 壁纸挂上 keybinds 后按 `-`，peak 7418 → 0，再按恢复。
+
 ### 协议（`src/proto.c/.h`）
 
 新增与 `set-prop` 同形的动词，保持向后兼容（旧 daemon 只报未知命令）：
@@ -251,6 +262,7 @@ int xw_keybinds_parse(const char *text, XWBind *out, int max, XWError *err) {
 | 按键派发到聚焦窗口 | `80a8509` | `xdotool` 真机按键：`0 0 0` = +6（无双重处理）、`-/=/r` 生效 |
 | web | `ca3f217` | fixture 同时含 `<audio>` 与 `AudioContext`，两条路径都断言；重载后保持 |
 | web 静音失效修复 | 本次 | 游离 `new Audio()` 不可见 + 页面重写 `.volume`；真机 `parec`：静音 peak→0，修复前仍 7120 |
+| web 按键失效修复 | 本次 | WebKit 子窗口吃掉 KeyPress；清嵌套窗口键掩码；`test_web` 断言 + 真机 `parec` |
 | scene | `ecd0d81` | 真机：`=` 暂停时逐帧相同、恢复后逐帧不同 |
 | 多目标语义 + 文档 | 本次 | `--all` / `-m` / 未知输出报错；README 增补按键与动作章节 |
 

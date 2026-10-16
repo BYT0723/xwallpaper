@@ -545,6 +545,26 @@ static void web_terminate(WebCtx *ctx) {
 #endif
 }
 
+/* The WebKit view is a nested X window sitting under the pointer. It selects
+ * key events for in-page input, so a KeyPress aimed at the wallpaper is
+ * consumed there and never reaches the daemon's own wallpaper window - the one
+ * whose KeyPressMask drives wallpaper.keys. Wallpapers have no use for page
+ * keyboard input, so drop the key masks on the nested windows and let X
+ * propagate the KeyPress up to the wallpaper window, exactly like video. */
+static void web_drop_key_mask(GtkWidget *w) {
+  GdkWindow *g = w ? gtk_widget_get_window(w) : NULL;
+  if (g)
+    gdk_window_set_events(g, gdk_window_get_events(g) &
+                              ~(GDK_KEY_PRESS_MASK | GDK_KEY_RELEASE_MASK));
+}
+
+static gboolean web_view_map_cb(GtkWidget *w, GdkEvent *ev, gpointer ud) {
+  (void)ev;
+  (void)ud;
+  web_drop_key_mask(w);
+  return FALSE;
+}
+
 static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWError *err) {
   if (!gtk_initialized) {
     if (!gtk_init_check(NULL, NULL)) {
@@ -615,6 +635,9 @@ static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWErro
     XSync(dpy, False);
   }
   gtk_widget_show_all(ctx->window);
+  web_drop_key_mask(ctx->window);
+  web_drop_key_mask(ctx->view);
+  g_signal_connect(ctx->view, "map-event", G_CALLBACK(web_view_map_cb), ctx);
 
   b->priv = ctx;
   return 0;

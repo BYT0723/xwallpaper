@@ -529,6 +529,77 @@ static void test_audio_control(void) {
   xw_x11_destroy_window(win);
 }
 
+/* A wallpaper.keys press only reaches the daemon if nothing nested in the
+ * wallpaper window consumes it. X delivers the press to the deepest window
+ * under the pointer - the WebKit view - and WebKit keeps GDK_KEY_PRESS_MASK on
+ * it for in-page keyboard input, so X hands the press there and the daemon's
+ * own wallpaper window never sees it. That made every binding on a web
+ * wallpaper a silent no-op while video (mpv's window takes no keys) worked.
+ * The backend must drop the key mask from the nested windows so the press
+ * propagates up to the wallpaper window, which is where the daemon dispatches
+ * from. The mask lives at the GDK level (GDK selects key input through XI2, so
+ * the X server's core all_event_masks does not reflect it). */
+static void test_keys_not_swallowed(void) {
+  XWError err;
+  Display *dpy;
+  XWConfig cfg;
+  XWWindow *win;
+  XWBackendOpt opt;
+  XWBackend backend;
+  GtkWidget *view;
+  GdkWindow *vw, *tw;
+  unsigned int vm = 0, tm = 0;
+
+  TEST_BEGIN("nested web windows do not swallow wallpaper.keys");
+  memset(&err, 0, sizeof(err));
+  dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wkeys");
+  cfg.geom_w = 400;
+  cfg.geom_h = 300;
+  win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/weaudioctl";
+  opt.volume = 100.0;
+  backend = *xw_web_backend_new();
+  if (backend.init(&backend, win, &opt, &err) != 0) {
+    TEST_FAIL("web init: %s", err.msg);
+    xw_x11_destroy_window(win);
+    return;
+  }
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 4);
+
+  view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    vw = gtk_widget_get_window(view);
+    tw = gtk_widget_get_window(gtk_widget_get_toplevel(view));
+    TEST_CHECK(vw != NULL);
+    TEST_CHECK(tw != NULL);
+    if (vw)
+      vm = gdk_window_get_events(vw);
+    if (tw)
+      tm = gdk_window_get_events(tw);
+    TEST_CHECK((vm & GDK_KEY_PRESS_MASK) == 0);
+    TEST_CHECK((tm & GDK_KEY_PRESS_MASK) == 0);
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_paints();
@@ -537,5 +608,6 @@ int main(void) {
   test_storage_persistent();
   test_we_properties_delivered();
   test_audio_control();
+  test_keys_not_swallowed();
   TEST_SUMMARY();
 }
