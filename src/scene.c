@@ -756,7 +756,7 @@ static int scene_control(XWBackend *b, const char *name, const char *value,
   }
   if (strcmp(name, "volume") == 0) {
     if (xw_audio_apply((int)(c->volume + 0.5), value, &v) != 0) {
-      XW_ERROR_SET(err, 1, "volume needs a number like +2, -2 or 50");
+      XW_ERROR_SET(err, 1, XW_VOLUME_HINT);
       return -1;
     }
     c->volume = v;
@@ -766,16 +766,9 @@ static int scene_control(XWBackend *b, const char *name, const char *value,
   }
   if (strcmp(name, "mute") == 0 || strcmp(name, "pause") == 0) {
     int is_mute = strcmp(name, "mute") == 0;
-    want = (is_mute ? c->mute : c->paused) ? 0 : 1;
-    if (value && value[0]) {
-      if (strcmp(value, "on") == 0)
-        want = 1;
-      else if (strcmp(value, "off") == 0)
-        want = 0;
-      else if (strcmp(value, "toggle") != 0) {
-        XW_ERROR_SET(err, 1, "%s takes on, off or toggle", name);
-        return -1;
-      }
+    if (xw_ctl_toggle(is_mute ? c->mute : c->paused, value, &want) != 0) {
+      XW_ERROR_SET(err, 1, "%s takes on, off or toggle", name);
+      return -1;
     }
     if (is_mute) {
       c->mute = want;

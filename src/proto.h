@@ -50,6 +50,7 @@ int xw_proto_encode_list(char *msg, size_t n);
 int xw_proto_encode_list_props(const XWConfig *cfg, char *msg, size_t n);
 int xw_proto_encode_set_prop(const XWConfig *cfg, char *msg, size_t n);
 int xw_proto_encode_control(const XWConfig *cfg, char *msg, size_t n);
-int xw_proto_encode_restore(char *msg, size_t n);int xw_proto_encode_exit(char *msg, size_t n);
+int xw_proto_encode_restore(char *msg, size_t n);
+int xw_proto_encode_exit(char *msg, size_t n);
 
 #endif /* XW_PROTO_H */

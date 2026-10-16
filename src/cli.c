@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 
 #include "cli.h"
+#include "keybinds.h" /* XW_VOLUME_HINT (header-only, no extra link) */
 #include "web_dir.h"
 
 /* Parse an X11 geometry string "WxH+X+Y" or "WxH". Returns 1 on success.
@@ -262,7 +263,7 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
         cfg->target = XW_TARGET_ALL;
       } else if (is_volume && cfg->ctl_value[0] == '\0') {
         if (parse_ctl_volume(a, cfg->ctl_value, sizeof(cfg->ctl_value)) != 0) {
-          XW_ERROR_SET(err, 1, "volume needs a number like +2, -2 or 50");
+          XW_ERROR_SET(err, 1, XW_VOLUME_HINT);
           return -1;
         }
       } else if (!is_volume && cfg->ctl_value[0] == '\0' &&
@@ -277,7 +278,7 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
       }
     }
     if (is_volume && cfg->ctl_value[0] == '\0') {
-      XW_ERROR_SET(err, 1, "volume needs a number like +2, -2 or 50");
+      XW_ERROR_SET(err, 1, XW_VOLUME_HINT);
       return -1;
     }
     /* bare `mute` is the keybind case: toggle whatever it currently is */

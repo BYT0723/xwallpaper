@@ -233,6 +233,20 @@ int xw_values_cycle(const int *vals, int n, int cur, int *out) {
   return 0;
 }
 
+int xw_ctl_toggle(int cur, const char *value, int *out) {
+  if (!out)
+    return -1;
+  if (!value || !value[0] || strcmp(value, "toggle") == 0)
+    *out = !cur;
+  else if (strcmp(value, "on") == 0)
+    *out = 1;
+  else if (strcmp(value, "off") == 0)
+    *out = 0;
+  else
+    return -1;
+  return 0;
+}
+
 int xw_keybinds_load(const char *path, XWBind *out, int max) {
   FILE *f;
   long sz;

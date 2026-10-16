@@ -315,7 +315,7 @@ static int web_control(XWBackend *b, const char *name, const char *value,
   if (strcmp(name, "volume") == 0) {
     int v = 0;
     if (xw_audio_apply((int)(ctx->ctl_volume + 0.5), value, &v) != 0) {
-      XW_ERROR_SET(err, 1, "volume needs a number like +2, -2 or 50");
+      XW_ERROR_SET(err, 1, XW_VOLUME_HINT);
       return -1;
     }
     ctx->ctl_volume = v;
@@ -326,16 +326,10 @@ static int web_control(XWBackend *b, const char *name, const char *value,
   }
   if (strcmp(name, "mute") == 0 || strcmp(name, "pause") == 0) {
     int *flag = strcmp(name, "mute") == 0 ? &ctx->ctl_muted : &ctx->ctl_paused;
-    int want = !*flag;
-    if (value && value[0]) {
-      if (strcmp(value, "on") == 0)
-        want = 1;
-      else if (strcmp(value, "off") == 0)
-        want = 0;
-      else if (strcmp(value, "toggle") != 0) {
-        XW_ERROR_SET(err, 1, "%s takes on, off or toggle", name);
-        return -1;
-      }
+    int want;
+    if (xw_ctl_toggle(*flag, value, &want) != 0) {
+      XW_ERROR_SET(err, 1, "%s takes on, off or toggle", name);
+      return -1;
     }
     *flag = want;
     if (strcmp(name, "mute") == 0) {

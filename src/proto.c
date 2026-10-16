@@ -214,7 +214,8 @@ int xw_proto_encode_control(const XWConfig *cfg, char *msg, size_t n) {
   return finish(msg, n, &off);
 }
 
-int xw_proto_encode_restore(char *msg, size_t n) {  return snprintf(msg, n, "restore\n") < (int)n ? (int)strlen("restore\n") : -1;
+int xw_proto_encode_restore(char *msg, size_t n) {
+  return snprintf(msg, n, "restore\n") < (int)n ? (int)strlen("restore\n") : -1;
 }
 
 int xw_proto_encode_exit(char *msg, size_t n) {

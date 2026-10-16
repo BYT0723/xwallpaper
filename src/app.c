@@ -920,7 +920,7 @@ void xw_app_tick_backends(XWApp *app) {
  * backend control action it names. Returns 1 when a binding consumed it.
  * An action this backend cannot do is silently ignored — a keypress must
  * never surface an error. */
-static int dispatch_key(XWApp *app, XWWindow *win, XWBackend *b, XEvent *ev) {
+static int dispatch_key(XWWindow *win, XWBackend *b, XEvent *ev) {
   char key[XW_BIND_KEY_MAX], name[32], value[64];
   const XWBind *bind;
   const char *sym;
@@ -942,7 +942,6 @@ static int dispatch_key(XWApp *app, XWWindow *win, XWBackend *b, XEvent *ev) {
     memset(&err, 0, sizeof(err));
     (void)b->control(b, name, value, &err);
   }
-  (void)app;
   return 1;
 }
 
@@ -951,7 +950,7 @@ int xw_app_handle_event(XWApp *app, XEvent *ev) {
     XWWindow *win = app->wins[i];
     if (win && ev->xany.window == win->win) {
       if (ev->type == KeyPress)
-        dispatch_key(app, win, app->backends[i], ev);
+        dispatch_key(win, app->backends[i], ev);
       xw_x11_handle_event(win, ev);
       if (app->backends[i] && app->backends[i]->on_event)
         app->backends[i]->on_event(app->backends[i], ev);

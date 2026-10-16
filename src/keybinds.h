@@ -50,6 +50,14 @@ int xw_audio_apply(int cur, const char *value, int *out);
  * when cur is not in the list. Returns 0, or -1 on bad arguments. */
 int xw_values_cycle(const int *vals, int n, int cur, int *out);
 
+/* Resolve on/off/toggle for a boolean control (mute/pause). An empty or
+ * "toggle" value flips `cur`; "on"/"off" force it. Returns 0, or -1 when the
+ * value is none of those. */
+int xw_ctl_toggle(int cur, const char *value, int *out);
+
+/* The one wording every backend and the CLI use for a bad volume argument. */
+#define XW_VOLUME_HINT "volume needs a number like +2, -2 or 50"
+
 /* Read a key file from disk; returns the bind count, or -1 when it cannot be
  * read (callers treat that as "no key bindings"). */
 int xw_keybinds_load(const char *path, XWBind *out, int max);

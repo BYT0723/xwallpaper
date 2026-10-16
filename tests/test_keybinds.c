@@ -165,6 +165,26 @@ static void test_audio_apply(void) {
   TEST_CHECK_EQ_INT(xw_audio_apply(50, "+2", NULL), -1);
 }
 
+static void test_ctl_toggle(void) {
+  int out = -1;
+  TEST_BEGIN("on/off/toggle resolves a boolean control");
+  TEST_CHECK_EQ_INT(xw_ctl_toggle(0, "toggle", &out), 0);
+  TEST_CHECK_EQ_INT(out, 1);
+  TEST_CHECK_EQ_INT(xw_ctl_toggle(1, "toggle", &out), 0);
+  TEST_CHECK_EQ_INT(out, 0);
+  /* empty means the keybind case: toggle */
+  TEST_CHECK_EQ_INT(xw_ctl_toggle(1, "", &out), 0);
+  TEST_CHECK_EQ_INT(out, 0);
+  TEST_CHECK_EQ_INT(xw_ctl_toggle(0, NULL, &out), 0);
+  TEST_CHECK_EQ_INT(out, 1);
+  TEST_CHECK_EQ_INT(xw_ctl_toggle(0, "on", &out), 0);
+  TEST_CHECK_EQ_INT(out, 1);
+  TEST_CHECK_EQ_INT(xw_ctl_toggle(1, "off", &out), 0);
+  TEST_CHECK_EQ_INT(out, 0);
+  TEST_CHECK_EQ_INT(xw_ctl_toggle(0, "bogus", &out), -1);
+  TEST_CHECK_EQ_INT(xw_ctl_toggle(0, "toggle", NULL), -1);
+}
+
 static void test_values_cycle(void) {
   const int vals[4] = {90, 180, 270, 0};
   int out = -1;
@@ -266,6 +286,7 @@ int main(void) {
   test_long_line();
   test_find_and_norm();
   test_audio_apply();
+  test_ctl_toggle();
   test_values_cycle();
   test_to_action();
   test_load_and_default_path();

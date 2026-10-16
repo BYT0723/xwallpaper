@@ -228,7 +228,7 @@ static int video_control(XWBackend *b, const char *name, const char *value,
     if (mpv_get_property(m->mpv, "volume", MPV_FORMAT_DOUBLE, &now) < 0)
       return -1;
     if (xw_audio_apply((int)(now + 0.5), value, &cur) != 0) {
-      XW_ERROR_SET(err, 1, "volume needs a number like +2, -2 or 50");
+      XW_ERROR_SET(err, 1, XW_VOLUME_HINT);
       return -1;
     }
     next = (double)cur;
@@ -245,13 +245,7 @@ static int video_control(XWBackend *b, const char *name, const char *value,
   if (strcmp(name, "mute") == 0 || strcmp(name, "pause") == 0) {
     if (mpv_get_property(m->mpv, name, MPV_FORMAT_FLAG, &cur) < 0)
       return -1;
-    if (!value || !value[0] || strcmp(value, "toggle") == 0)
-      want = !cur;
-    else if (strcmp(value, "on") == 0)
-      want = 1;
-    else if (strcmp(value, "off") == 0)
-      want = 0;
-    else {
+    if (xw_ctl_toggle(cur, value, &want) != 0) {
       XW_ERROR_SET(err, 1, "%s takes on, off or toggle", name);
       return -1;
     }
