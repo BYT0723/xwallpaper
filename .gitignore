@@ -18,6 +18,7 @@ xwallpaperd
 /tests/test_scene_particle
 /tests/test_scene_parse
 /tests/test_scene_core
+/tests/test_scene_mesh
 /tests/integration/test_x11
 /tests/integration/test_image
 /tests/integration/test_video
