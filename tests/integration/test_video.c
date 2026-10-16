@@ -4,6 +4,7 @@
  * is clean, i.e. the backend integrates with app without crashing. Real visual
  * verification happens on a real X session. */
 
+#include <locale.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -163,6 +164,66 @@ static void test_video_retry_antipileup(void) {
   xw_x11_close_display(dpy);
 }
 
+/* Regression: the web backend calls gtk_init_check() in this process and GTK
+ * runs setlocale(LC_ALL, ""), putting the process back into the environment's
+ * numeric locale. libmpv's mpv_create() then returns NULL for any LC_NUMERIC
+ * other than "C"/"C.UTF-8", so every video wallpaper set after a web wallpaper
+ * failed with "mpv_create failed" and nothing was displayed. The web backend
+ * must restore the C numeric locale the daemon establishes at startup. */
+static void test_video_after_web_gtk_init(void) {
+  TEST_BEGIN("video backend works after a web wallpaper initialized GTK");
+  /* gtk_init_check() runs setlocale(LC_ALL, ""), so pin the environment it
+   * reads. The daemon invariant (daemon.c) is LC_NUMERIC == "C", which is also
+   * what mpv_create() demands — it merely tolerates C.UTF-8, so this asserts
+   * the invariant, not only the mpv failure. */
+  setenv("LC_ALL", "C.UTF-8", 1);
+  setlocale(LC_ALL, "");
+  /* a C runner would leave the regression below unobservable */
+  TEST_CHECK(strcmp(setlocale(LC_NUMERIC, NULL), "C") != 0);
+  setlocale(LC_NUMERIC, "C");
+
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "weblocale");
+  cfg.geom_x = 0;
+  cfg.geom_y = 0;
+  cfg.geom_w = 400;
+  cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (win) {
+    XWBackendOpt wopt;
+    memset(&wopt, 0, sizeof(wopt));
+    wopt.type = XW_BACKEND_WEB;
+    wopt.path = "tests/data/webdir";
+    XWBackend *wtmpl = xw_web_backend_new();
+    XWBackend web = *wtmpl;
+    TEST_CHECK_EQ_INT(web.init(&web, win, &wopt, &err), 0); /* gtk_init_check() */
+    TEST_CHECK_EQ_STR(setlocale(LC_NUMERIC, NULL), "C");
+    web.destroy(&web);
+    xw_x11_destroy_window(win);
+  }
+  xw_x11_close_display(dpy);
+
+  /* video init must survive whatever the web backend did to the process */
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_VIDEO;
+  opt.path = "tests/data/bounce.mp4";
+  opt.mute = 1;
+  TEST_CHECK_EQ_INT(run_with_opts(&opt), 0);
+}
+
 int main(void) {
   TEST_SUITE("video backend (Xvfb)");
   test_video_lifecycle();
@@ -170,5 +231,7 @@ int main(void) {
   test_video_fps_override();
   test_video_audio_client_name();
   test_video_retry_antipileup();
+  /* keep last: the only GTK user here, and it pins the process locale */
+  test_video_after_web_gtk_init();
   TEST_SUMMARY();
 }
