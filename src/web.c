@@ -27,6 +27,9 @@ typedef struct {
   char root_dir[1024]; /* dir mode: absolute wallpaper root ("" when unused) */
   char entry[256];     /* dir mode: entry file, always index.html */
   int want_audio;      /* page called wallpaperRegisterAudioListener */
+  int dead;            /* web_destroy in progress: ignore late signals */
+  int crash_count;     /* terminations inside the current 60s window */
+  uint64_t crash_first_ms;
 } WebCtx;
 
 /* Process-wide registry of live web wallpapers (main thread only:
@@ -259,6 +262,68 @@ static void web_load_changed_cb(WebKitWebView *view,
   web_deliver_we_properties(view);
 }
 
+static uint64_t web_now_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+}
+
+/* A dead renderer used to freeze the wallpaper forever (last frame kept
+ * on screen, clock stopped, no input). Reload the view instead; stop
+ * after repeated crashes so a poison page cannot respawn it in a loop. */
+static void web_process_terminated_cb(WebKitWebView *view,
+                                      WebKitWebProcessTerminationReason reason,
+                                      gpointer ud) {
+  WebCtx *ctx = (WebCtx *)ud;
+  uint64_t now;
+  if (!ctx || ctx->dead || view != WEBKIT_WEB_VIEW(ctx->view))
+    return;
+  if (reason == WEBKIT_WEB_PROCESS_TERMINATED_BY_API)
+    return;
+  fprintf(stderr, "xwallpaperd: web process %s, reloading '%s'\n",
+          reason == WEBKIT_WEB_PROCESS_EXCEEDED_MEMORY_LIMIT
+              ? "ran out of memory"
+              : "crashed",
+          ctx->path ? ctx->path : "");
+  now = web_now_ms();
+  if (!ctx->crash_first_ms || now - ctx->crash_first_ms > 60000) {
+    ctx->crash_first_ms = now;
+    ctx->crash_count = 0;
+  }
+  if (++ctx->crash_count > 5) {
+    fprintf(stderr,
+            "xwallpaperd: web process keeps dying, giving up auto-reload\n");
+    return;
+  }
+  webkit_web_view_reload(view);
+}
+
+/* GStreamer's OpenAL sink aborts the whole WebProcess when Pulse is
+ * unreachable (pa_threaded_mainloop_start assertion); native runs show
+ * autoaudiosink falls back to it once pulsesink fails. Take openal out
+ * of auto-selection so a Pulse hiccup degrades to another sink instead
+ * of killing the page. Inherited by the WebProcess via the environment. */
+static void web_pin_audio_sink(void) {
+  static int done = 0;
+  const char *cur;
+  char *merged;
+  if (done)
+    return;
+  done = 1;
+  cur = getenv("GST_PLUGIN_FEATURE_RANK");
+  if (!cur || !cur[0]) {
+    g_setenv("GST_PLUGIN_FEATURE_RANK", "openalsink:NONE", TRUE);
+    return;
+  }
+  if (strstr(cur, "openal"))
+    return;
+  merged = g_strjoin(",", cur, "openalsink:NONE", NULL);
+  if (merged) {
+    g_setenv("GST_PLUGIN_FEATURE_RANK", merged, TRUE);
+    g_free(merged);
+  }
+}
+
 /* Per-wallpaper isolated context: each wallpaper gets its own WebKitWebContext
  * (own Web/Network processes, which die with the wallpaper instead of
  * lingering in the shared default pool holding GPU/DMA-BUF) backed by the
@@ -295,6 +360,9 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
                    G_CALLBACK(web_block_context_menu), NULL);
   g_signal_connect(ctx->view, "load-changed",
                    G_CALLBACK(web_load_changed_cb), ctx);
+  g_signal_connect(ctx->view, "web-process-terminated",
+                   G_CALLBACK(web_process_terminated_cb), ctx);
+  web_pin_audio_sink();
   web_apply_wallpaper_policy(WEBKIT_WEB_VIEW(ctx->view), ctx);
   web_reg_add(ctx);
   return 0;
@@ -473,6 +541,7 @@ static void web_destroy(XWBackend *b) {
     return;
   WebCtx *ctx = (WebCtx *)b->priv;
   b->priv = NULL;
+  ctx->dead = 1;
   web_reg_remove(ctx);
   web_terminate(ctx);
   if (ctx->window)
