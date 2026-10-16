@@ -14,7 +14,6 @@ typedef struct XWParticle {
   float age, life, size;
   float r, g, b, a;
   float a0;    /* alpha before the alphafade operator */
-  float frame; /* sprite-sheet frame index (set by the renderer) */
   float rot;   /* in-plane rotation (radians) */
   float rnd;   /* stable per-particle random draw (randomframe) */
   /* per-particle oscillator state, drawn once at spawn like the engine's
@@ -33,9 +32,6 @@ typedef struct XWEmitter {
   int alive;
   float acc;
   unsigned int rng;
-  /* screen size for the emitter-origin transform (engine converts the
-   * emitter origin from screen space into centered space at setup) */
-  float screen_w, screen_h;
   float t; /* animation clock for sprite-sheet sequences */
 } XWEmitter;
 

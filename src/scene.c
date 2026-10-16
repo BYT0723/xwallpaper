@@ -312,22 +312,59 @@ static int unlink_cb(const char *path, const struct stat *st, int flag,
   return 0;
 }
 
-static void free_tmpdir(XWSceneCtx *c) {
-  if (!c || !c->tmpdir[0])
+static void free_tmpdir_path(char *tmpdir) {
+  if (!tmpdir || !tmpdir[0])
     return;
-  nftw(c->tmpdir, unlink_cb, 16, FTW_DEPTH | FTW_PHYS);
-  rmdir(c->tmpdir);
-  c->tmpdir[0] = '\0';
+  nftw(tmpdir, unlink_cb, 16, FTW_DEPTH | FTW_PHYS);
+  rmdir(tmpdir);
+  tmpdir[0] = '\0';
+}
+
+static void free_tmpdir(XWSceneCtx *c) {
+  if (c)
+    free_tmpdir_path(c->tmpdir);
+}
+
+/* Copy a file byte for byte; returns -1 on any read/write/open failure. */
+static int copy_file(const char *src, const char *dst) {
+  char buf[8192];
+  FILE *in = fopen(src, "rb");
+  FILE *out;
+  size_t got;
+  if (!in)
+    return -1;
+  out = fopen(dst, "wb");
+  if (!out) {
+    fclose(in);
+    return -1;
+  }
+  while ((got = fread(buf, 1, sizeof(buf), in)) > 0) {
+    if (fwrite(buf, 1, got, out) != got) {
+      fclose(out);
+      fclose(in);
+      return -1;
+    }
+  }
+  {
+    int rc = ferror(in) ? -1 : 0;
+    fclose(out);
+    fclose(in);
+    return rc;
+  }
 }
 
 /* Resolve the asset directory: loose scene.json wins, otherwise unpack
- * scene.pkg into a temp dir (cleaned up at destroy). c->dir always points
- * at parsed assets; opt->path stays the user's dir for --list. */
-static int resolve_dir(XWSceneCtx *c, const char *optpath, XWError *err) {
+ * scene.pkg into a temp dir (cleaned up at destroy). `dir` always points at
+ * parsed assets, `tmpdir` is the tree to remove ("" when none); opt->path
+ * stays the user's dir for --list. Outputs are written even on failure so a
+ * caller can unwind what was created. */
+static int resolve_dir(const char *optpath, char *dir, size_t dirlen,
+                       char *tmpdir, size_t tmplen, XWError *err) {
   char probe[1152], pkgpath[1152];
   struct stat st;
   int loose;
-  snprintf(c->dir, sizeof(c->dir), "%s", optpath);
+  snprintf(dir, dirlen, "%s", optpath);
+  tmpdir[0] = '\0';
   snprintf(probe, sizeof(probe), "%.512s/scene.json", optpath);
   loose = stat(probe, &st) == 0;
   snprintf(pkgpath, sizeof(pkgpath), "%.512s/scene.pkg", optpath);
@@ -348,7 +385,10 @@ static int resolve_dir(XWSceneCtx *c, const char *optpath, XWError *err) {
         xw_pkg_extract_all(pkg, tmp) != 0) {
       if (pkg)
         xw_pkg_close(pkg);
-      rmdir(tmp);
+      /* a partial extract leaves files behind, so a bare rmdir would leak
+       * the whole tree; nftw it away instead */
+      snprintf(tmpdir, tmplen, "%s", tmp);
+      free_tmpdir_path(tmpdir);
       if (loose)
         return 0; /* a loose scene that stands on its own still works */
       XW_ERROR_SET(err, 1, "cannot unpack scene.pkg");
@@ -362,19 +402,8 @@ static int resolve_dir(XWSceneCtx *c, const char *optpath, XWError *err) {
       char proj[1152], dst[1152];
       snprintf(proj, sizeof(proj), "%.512s/project.json", optpath);
       if (stat(proj, &st) == 0) {
-        FILE *in = fopen(proj, "rb");
-        if (in) {
-          snprintf(dst, sizeof(dst), "%.1000s/project.json", tmp);
-          FILE *outp = fopen(dst, "wb");
-          if (outp) {
-            char buf[8192];
-            size_t got;
-            while ((got = fread(buf, 1, sizeof(buf), in)) > 0)
-              fwrite(buf, 1, got, outp);
-            fclose(outp);
-          }
-          fclose(in);
-        }
+        snprintf(dst, sizeof(dst), "%.1000s/project.json", tmp);
+        (void)copy_file(proj, dst);
       }
     }
     /* the engine mounts the directory and the package together, so a loose
@@ -382,22 +411,11 @@ static int resolve_dir(XWSceneCtx *c, const char *optpath, XWError *err) {
      * models, materials and textures it references */
     if (loose) {
       char dst[1152];
-      FILE *in = fopen(probe, "rb");
       snprintf(dst, sizeof(dst), "%.1000s/scene.json", tmp);
-      if (in) {
-        FILE *outp = fopen(dst, "wb");
-        if (outp) {
-          char buf[8192];
-          size_t got;
-          while ((got = fread(buf, 1, sizeof(buf), in)) > 0)
-            fwrite(buf, 1, got, outp);
-          fclose(outp);
-        }
-        fclose(in);
-      }
+      (void)copy_file(probe, dst);
     }
-    snprintf(c->dir, sizeof(c->dir), "%s", tmp);
-    snprintf(c->tmpdir, sizeof(c->tmpdir), "%s", tmp);
+    snprintf(dir, dirlen, "%s", tmp);
+    snprintf(tmpdir, tmplen, "%s", tmp);
   }
   return 0;
 }
@@ -570,7 +588,8 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
         fprintf(stderr, "[scene] engine assets: %s\n", assets);
     }
   }
-  if (resolve_dir(c, opt->path, err) != 0) {
+  if (resolve_dir(opt->path, c->dir, sizeof(c->dir), c->tmpdir,
+                  sizeof(c->tmpdir), err) != 0) {
     free(c);
     return -1;
   }
@@ -680,23 +699,30 @@ static void scene_destroy(XWBackend *b) {
 static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   XWSceneCtx *c = b ? (XWSceneCtx *)b->priv : NULL;
   XWScene next;
+  char dir[1024], tmpdir[1024];
   if (!c || !c->parsed || !opt || !opt->path || !opt->path[0]) {
     XW_ERROR_SET(err, 1, "scene reload needs a wallpaper directory");
     return -1;
   }
+  /* Stage the replacement before touching the live scene: a bad path or a
+   * parse error must keep the old wallpaper up (app.c promises exactly
+   * that), not blank the window. */
   memset(&next, 0, sizeof(next));
+  dir[0] = '\0';
+  tmpdir[0] = '\0';
+  if (resolve_dir(opt->path, dir, sizeof(dir), tmpdir, sizeof(tmpdir), err) != 0)
+    return -1;
+  if (xw_scene_parse(dir, &next, err) != 0) {
+    free_tmpdir_path(tmpdir);
+    return -1;
+  }
   free_texts(c);
   free_sounds(c);
   free_script(c);
   xw_scene_free(&c->scene);
   free_tmpdir(c);
-  memset(&c->scene, 0, sizeof(c->scene));
-  if (resolve_dir(c, opt->path, err) != 0)
-    return -1;
-  if (xw_scene_parse(c->dir, &next, err) != 0) {
-    free_tmpdir(c);
-    return -1;
-  }
+  snprintf(c->dir, sizeof(c->dir), "%s", dir);
+  snprintf(c->tmpdir, sizeof(c->tmpdir), "%s", tmpdir);
   c->scene = next;
   c->mute = opt->mute ? 1 : 0;
   c->volume = opt->volume;

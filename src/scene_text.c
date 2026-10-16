@@ -14,7 +14,7 @@ int xw_text_rasterize(const char *font_path, const char *content, float size_px,
   FT_Library lib = NULL;
   FT_Face face = NULL;
 
-  int top = 0, bottom = 0, px = 0, baseline = 0, line_h = 0, n_lines = 0;
+  int top = 0, bottom = 0, px = 0, baseline = 0, line_h = 0;
   unsigned int cp = 0;
   unsigned char *buf = NULL;
   int bw = 0, bh = 0;
@@ -77,7 +77,6 @@ int xw_text_rasterize(const char *font_path, const char *content, float size_px,
     if (line_h <= 0)
       line_h = (int)size_px;
     bh = top + bottom + 2 + (lines - 1) * line_h;
-    n_lines = lines;
   }
   if (bw < 2)
     bw = 2;
@@ -133,7 +132,6 @@ int xw_text_rasterize(const char *font_path, const char *content, float size_px,
       }
       px += (int)(g->advance.x >> 6);
     }
-    (void)n_lines;
   }
   FT_Done_Face(face);
   FT_Done_FreeType(lib);

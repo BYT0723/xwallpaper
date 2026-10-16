@@ -16,11 +16,12 @@ static void copy_str(char *dst, size_t n, const char *src) {
   snprintf(dst, n, "%s", src);
 }
 
-static int parse_project_props(const char *dir, XWScene *out, XWError *err);
 static void resolve_user_props(XWScene *s);
-static struct json_object *slurp_json(const char *dir, const char *rel);
 
 #ifdef XW_HAVE_JSONC
+static int parse_project_props(const char *dir, XWScene *out, XWError *err);
+static struct json_object *slurp_json(const char *dir, const char *rel);
+
 static int parse_vec_str(const char *s, float *v, int n) {
   int i;
   if (!s)
@@ -1417,8 +1418,10 @@ int xw_scene_parse(const char *dir, XWScene *out, XWError *err) {
         XW_ERROR_SET(err, 1, "object must be an object");
         goto fail;
       }
+      /* count the slot before parsing: if the object fails halfway, its
+       * half-built strings/effects must still be freed by xw_scene_free */
+      out->n_objects = (int)(i + 1);
       if (parse_object_at(dir, oj, &out->objects[i], err) != 0) goto fail;
-      out->n_objects++;
     }
   }
   json_object_put(root);
@@ -1466,6 +1469,7 @@ static void resolve_user_props(XWScene *s) {
   }
 }
 
+#ifdef XW_HAVE_JSONC
 static int parse_project_props(const char *dir, XWScene *out, XWError *err) {
   char path[1024];
   snprintf(path, sizeof(path), "%s/project.json", dir);
@@ -1540,6 +1544,7 @@ static int parse_project_props(const char *dir, XWScene *out, XWError *err) {
   json_object_put(root);
   return rc;
 }
+#endif /* XW_HAVE_JSONC */
 
 void xw_scene_free(XWScene *s) {
   if (!s) return;

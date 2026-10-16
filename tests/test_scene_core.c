@@ -68,10 +68,7 @@ static void test_blend_modes(void) {
 }
 
 static void test_present_bloom(void) {
-  TEST_BEGIN("present UVs full quad, bloom flag passthrough");
-  float u0 = -1, v0 = -1, u1 = -1, v1 = -1;
-  TEST_CHECK_EQ_INT(xw_core_present_uvs(&u0, &v0, &u1, &v1), 0);
-  TEST_CHECK(u0 == 0.0f && v0 == 0.0f && u1 == 1.0f && v1 == 1.0f);
+  TEST_BEGIN("bloom flag passthrough");
   XWSceneCamera on, off;
   memset(&on, 0, sizeof(on));
   memset(&off, 0, sizeof(off));

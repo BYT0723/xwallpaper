@@ -37,6 +37,10 @@ struct XWScript {
   int64_t adjust_ms;
   char last_error[256];
   XWScene *scene;
+  /* Set when this runtime backs a property script: the JSContext opaque is
+   * always the XWScript, and the prop handlers find their XWPropScript here
+   * rather than overloading the opaque with a second type. */
+  XWPropScript *prop;
   const XWUserProp *props;
   int n_props;
   struct {
@@ -48,8 +52,6 @@ struct XWScript {
   float mouse_x, mouse_y;
   XWObjPropRunners *objr;
   int objr_n;
-  int *order;
-  int n_order;
   double runtime_s;
   double frametime_s;
 };
@@ -92,6 +94,7 @@ static JSValue js_set_timer(JSContext *ctx, JSValueConst this_val, int argc,
   double delay = 0.0;
   int64_t ms;
   int id;
+  JSValue fn;
   (void)this_val;
   if (!s || argc < 1 || !JS_IsFunction(ctx, argv[0]))
     return JS_ThrowTypeError(ctx, "first argument must be a function");
@@ -100,9 +103,12 @@ static JSValue js_set_timer(JSContext *ctx, JSValueConst this_val, int argc,
   if (isnan(delay) || delay < 0.0)
     delay = 0.0;
   ms = (int64_t)delay;
-  id = push_timer(s, JS_DupValue(ctx, argv[0]), ms, repeat);
-  if (id < 0)
+  fn = JS_DupValue(ctx, argv[0]);
+  id = push_timer(s, fn, ms, repeat);
+  if (id < 0) {
+    JS_FreeValue(ctx, fn); /* push_timer only takes ownership on success */
     return JS_ThrowOutOfMemory(ctx);
+  }
   return JS_NewInt32(ctx, id);
 }
 
@@ -848,10 +854,7 @@ static void strip_export(const char *src, char *out, size_t n) {
     }
     if (strncmp(p, "export", 6) == 0 &&
         (p[6] == ' ' || p[6] == '\t' || p[6] == '\n' || p[6] == '\r') &&
-        (p == src || !(p[-1] == '_' ||
-                       (p[-1] >= 'a' && p[-1] <= 'z') ||
-                       (p[-1] >= 'A' && p[-1] <= 'Z') ||
-                       (p[-1] >= '0' && p[-1] <= '9')))) {
+        at_word_start(src, p)) {
       p += 6;
       while (*p == ' ' || *p == '\t')
         p++;
@@ -947,9 +950,7 @@ void xw_script_text_layer_free(XWTextLayer *l) {
 
 struct XWPropScript {
   XWScript *js;
-  XWScene *scene; /* borrowed */
-  int *order;     /* borrowed render order the script may reorder */
-  int n_order;
+  XWScene *scene; /* borrowed; holds the render order the script may reorder */
   int owner; /* index of the object the script belongs to, -1 when unknown */
 };
 
@@ -985,7 +986,8 @@ static JSValue layer_handle(JSContext *ctx, XWScene *scene, int i) {
 static JSValue scene_get_layer(JSContext *ctx, JSValueConst this_val, int argc,
                                JSValueConst *argv) {
   (void)this_val;
-  XWPropScript *p = JS_GetContextOpaque(ctx);
+  XWScript *js = ctx_script(ctx);
+  XWPropScript *p = js ? js->prop : NULL;
   XWScene *sc;
   int i;
   if (!p || !p->scene || argc != 1)
@@ -1012,7 +1014,8 @@ static JSValue scene_get_layer(JSContext *ctx, JSValueConst this_val, int argc,
 static JSValue scene_get_layer_index(JSContext *ctx, JSValueConst this_val,
                                      int argc, JSValueConst *argv) {
   (void)this_val;
-  XWPropScript *p = JS_GetContextOpaque(ctx);
+  XWScript *js = ctx_script(ctx);
+  XWPropScript *p = js ? js->prop : NULL;
   int i, k, *order, n;
   if (!p || !p->scene || argc != 1)
     return JS_NewInt32(ctx, -1);
@@ -1032,7 +1035,8 @@ static JSValue scene_get_layer_index(JSContext *ctx, JSValueConst this_val,
 static JSValue scene_sort_layer(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv) {
   (void)this_val;
-  XWPropScript *p = JS_GetContextOpaque(ctx);
+  XWScript *js = ctx_script(ctx);
+  XWPropScript *p = js ? js->prop : NULL;
   int i, at, from, k, *order, n;
   if (!p || !p->scene || argc != 2)
     return JS_UNDEFINED;
@@ -1067,7 +1071,8 @@ static JSValue scene_sort_layer(JSContext *ctx, JSValueConst this_val,
 
 static JSValue scene_layer_count(JSContext *ctx, JSValueConst this_val,
                                  int argc, JSValueConst *argv) {
-  XWPropScript *p = JS_GetContextOpaque(ctx);
+  XWScript *js = ctx_script(ctx);
+  XWPropScript *p = js ? js->prop : NULL;
   (void)this_val;
   (void)argc;
   (void)argv;
@@ -1075,20 +1080,16 @@ static JSValue scene_layer_count(JSContext *ctx, JSValueConst this_val,
 }
 
 /* installs thisScene / thisLayer and runs init() once */
-void xw_script_prop_bind(XWPropScript *p, XWScene *scene, int *order,
-                         int n_order, int owner) {
+void xw_script_prop_bind(XWPropScript *p, XWScene *scene, int owner) {
   JSValue global, obj, handle;
   JSContext *ctx;
   if (!p || !p->js)
     return;
   ctx = p->js->ctx;
-  JS_SetContextOpaque(ctx, p);
+  ctx_script(ctx)->prop = p;
+  xw_script_set_scene(p->js, scene); /* the global scene.* API needs it too */
   p->scene = scene;
-  p->order = order;
-  p->n_order = n_order > 0 ? n_order : 0;
   p->owner = owner;
-  (void)order;
-  (void)n_order;
   global = JS_GetGlobalObject(ctx);
   obj = JS_NewObject(ctx);
   JS_SetPropertyStr(ctx, obj, "getLayer",
@@ -1120,8 +1121,6 @@ void xw_script_prop_bind(XWPropScript *p, XWScene *scene, int *order,
   JS_FreeValue(ctx, global);
   /* the engine runs init() once when the layer is created; a script whose
    * init throws is logged and skipped, which is what the engine does too */
-  /* the engine runs init() once when the layer is created; a script whose
-   * init throws is logged and skipped there too */
   xw_script_eval(p->js,
                  "if (typeof init === 'function') {\n"
                  "  init(typeof thisLayer !== 'undefined' ? thisLayer : null);\n"
@@ -1304,8 +1303,7 @@ void xw_script_apply_object_props(XWScript *s, XWSceneObject *o) {
         o->prop_script[k][0] = '\0';
         continue;
       }
-      xw_script_prop_bind(r->p[k], s->scene, s->order, s->n_order, i);
-      prop_sync_time(r->p[k], s->runtime_s, s->frametime_s);
+      xw_script_prop_bind(r->p[k], s->scene, i);
     }
     prop_sync_time(r->p[k], s->runtime_s, s->frametime_s);
     if (k == XW_PROP_VISIBLE) {
