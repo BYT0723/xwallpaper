@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -23,6 +24,24 @@ static void daemon_sigsegv(int sig) {
   (void)sig;
   fprintf(stderr, "xwallpaperd: FATAL: caught signal %d\n", sig);
   _exit(1);
+}
+
+/* Web wallpapers can briefly hold hundreds of files, sockets and Pulse
+ * connections at once (one page probes dozens of clips in parallel while
+ * GStreamer prerolls several pipelines). Under the default 1024 NOFILE
+ * ceiling the WebProcess then dies of EMFILE at startup and its audio
+ * sink falls back to OpenAL, which aborts the whole renderer. Raise the
+ * soft limit; WebKit children inherit it. */
+static void raise_nofile(void) {
+  struct rlimit rl;
+  rlim_t want = 8192;
+  if (getrlimit(RLIMIT_NOFILE, &rl) != 0)
+    return;
+  if (rl.rlim_cur >= want)
+    return;
+  rl.rlim_cur = rl.rlim_max < want ? rl.rlim_max : want;
+  if (setrlimit(RLIMIT_NOFILE, &rl) != 0)
+    fprintf(stderr, "xwallpaperd: setrlimit NOFILE: %s\n", strerror(errno));
 }
 
 /* Build an error reply: "error" NUL <msg> LF. Returns bytes (excl NUL term). */
@@ -230,6 +249,7 @@ int xw_daemon_main(void) {
   signal(SIGPIPE, SIG_IGN);
   signal(SIGSEGV, daemon_sigsegv);
   signal(SIGABRT, daemon_sigsegv);
+  raise_nofile();
 
   char path[XW_MSG_MAX];
   xw_daemon_socket_path(path, sizeof(path));

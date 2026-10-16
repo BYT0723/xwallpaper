@@ -3,6 +3,13 @@ CFLAGS  ?= -O2 -g
 CFLAGS  += -std=c11 -Wall -Wextra -D_GNU_SOURCE
 LDFLAGS ?=
 
+# Parallel by default: a from-scratch make is 37 compiles, and quickjs.c alone
+# is most of the serial time, so a single-threaded make leaves every other core
+# idle. An explicit -jN (command line or environment) still wins.
+ifeq ($(filter -j%,$(MAKEFLAGS)),)
+MAKEFLAGS += -j$(shell nproc 2>/dev/null || echo 2)
+endif
+
 # install locations (override: PREFIX= PREFIX=/usr, or DESTDIR=... for staging)
 PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
@@ -22,9 +29,12 @@ CLI_OBJ := $(CLI_SRC:.c=.o)
 QJS_SRC := vendor/quickjs/quickjs.c vendor/quickjs/cutils.c \
            vendor/quickjs/libregexp.c vendor/quickjs/libunicode.c \
            vendor/quickjs/libbf.c
+# vendor warnings are not ours; version macro comes from upstream's Makefile.
+# -g1: quickjs.c is 55k lines and ~65% of a from-scratch build; this keeps the
+# machine code byte-identical to -g (checked via the .text section) and saves
+# ~3s of debug-info generation per rebuild.
 QJS_OBJ := $(QJS_SRC:.c=.o)
-# vendor warnings are not ours; version macro comes from upstream's Makefile
-$(QJS_OBJ): CFLAGS += -w -DCONFIG_VERSION='"2024-01-13"'
+$(QJS_OBJ): CFLAGS += -w -g1 -DCONFIG_VERSION='"2024-01-13"'
 src/scene_script.o: CFLAGS += -Ivendor/quickjs
 
 # daemon: owns all wallpaper windows, links the full backend stack.
@@ -228,6 +238,8 @@ xwallpaperd: $(DAEMON_OBJ)
 
 # header deps (no auto-deps in this Makefile): without these, a struct
 # layout change relinks stale objects against new ones (mixed ABI).
+# vendored QuickJS is excluded: it includes no project header, so keeping it
+# here made every header edit recompile the engine (~18s for quickjs.c alone).
 HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/client.h src/state.h src/x11.h src/app.h src/backends.h \
   src/wl.h src/daemon.h src/web_dir.h src/we_audio.h src/we_pulse.h \
@@ -237,7 +249,8 @@ HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/scene_text_gl.h src/scene_particle_gl.h src/scene_glsl.h \
   src/scene_sound.h src/scene_script.h \
   src/scene.h $(wildcard src/proto/*-client-protocol.h)
-$(CLI_OBJ) $(DAEMON_OBJ) $(TEST_BIN) $(INTEG_BIN) $(WL_INTEG_BIN): $(HEADER_DEPS)
+$(CLI_OBJ) $(filter-out $(QJS_OBJ),$(DAEMON_OBJ)) \
+  $(TEST_BIN) $(INTEG_BIN) $(WL_INTEG_BIN): $(HEADER_DEPS)
 
 # thin unit tests: only the client-side objects, no heavy libs
 tests/test_cli tests/test_geom: tests/%: tests/%.c src/cli.o src/web_dir.o
