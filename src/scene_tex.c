@@ -53,6 +53,14 @@ static uint32_t rd32le(const unsigned char *p) {
          ((uint32_t)p[3] << 24);
 }
 
+/* Little-endian float without an aliasing/alignment-violating cast. */
+static float rd_f32le(const unsigned char *p) {
+  uint32_t u = rd32le(p);
+  float f;
+  memcpy(&f, &u, sizeof(f));
+  return f;
+}
+
 typedef struct XWTexCursor {
   const unsigned char *base;
   size_t len;
@@ -151,18 +159,18 @@ static void parse_texs(const unsigned char *data, size_t len, XWTexImage *img) {
     f->time = 0.0f;
     if (v1) {
       /* u32 number, float time, u32 x, y, w1, ?, ?, h1 */
-      f->time = *(const float *)(data + off + 4);
+      f->time = rd_f32le(data + off + 4);
       f->x = (float)rd32le(data + off + 8);
       f->y = (float)rd32le(data + off + 12);
       f->w = (float)rd32le(data + off + 16);
       f->h = (float)rd32le(data + off + 28);
     } else {
       /* u32 number, float time, float x, y, w1, w2, h2, h1 */
-      f->time = *(const float *)(data + off + 4);
-      f->x = *(const float *)(data + off + 8);
-      f->y = *(const float *)(data + off + 12);
-      f->w = *(const float *)(data + off + 16);
-      f->h = *(const float *)(data + off + 28);
+      f->time = rd_f32le(data + off + 4);
+      f->x = rd_f32le(data + off + 8);
+      f->y = rd_f32le(data + off + 12);
+      f->w = rd_f32le(data + off + 16);
+      f->h = rd_f32le(data + off + 28);
     }
     img->frame_time += f->time;
     img->n_frames++;
@@ -179,12 +187,12 @@ int xw_tex_decode(const unsigned char *data, size_t len, XWTexImage *img,
   int32_t usize = 0, csize = 0;
   char container[9];
   size_t expect = 0;
-  memset(img, 0, sizeof(*img));
-  memset(container, 0, sizeof(container));
-  if (!data || len < 64) {
+  if (!data || !img || len < 64) {
     XW_ERROR_SET(err, 1, "invalid args");
     return -1;
   }
+  memset(img, 0, sizeof(*img));
+  memset(container, 0, sizeof(container));
   if (cur_magic(&c, "TEXV0005", err) != 0)
     return -1;
   if (cur_magic(&c, "TEXI0001", err) != 0)

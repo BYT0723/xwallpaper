@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,12 +26,6 @@ int xw_scene_particle_render_cam(XWGl *g, const XWSceneObject *o, XWEmitter *e,
   if (!g || !o || !e || !dir) {
     XW_ERROR_SET(err, 1, "invalid args");
     return -1;
-  }
-  {
-    int sw = 0, sh = 0;
-    xw_gl_target_size(g, &sw, &sh);
-    e->screen_w = (float)sw;
-    e->screen_h = (float)sh;
   }
   if (xw_emitter_update(e, dt) < 0) {
     XW_ERROR_SET(err, 1, "emitter update failed");
@@ -151,10 +144,10 @@ int xw_scene_particle_render_cam(XWGl *g, const XWSceneObject *o, XWEmitter *e,
        * annotated default; _rt_FullFrameBuffer is the scene so far (the
        * refractive rain multiplies its colour by it) */
       for (ti = 1; ti < XW_GL_WE_SLOTS; ti++) {
-        unsigned int dt = 0;
+        unsigned int dtex = 0;
         if (!texs[ti] &&
-            xw_scene_sampler_default_tex(g, dir, pp, ti, &dt, NULL) == 0)
-          texs[ti] = dt;
+            xw_scene_sampler_default_tex(g, dir, pp, ti, &dtex, NULL) == 0)
+          texs[ti] = dtex;
       }
       verts = malloc((size_t)e->alive * 6 * XW_PARTICLE_FLOATS *
                      sizeof(float));

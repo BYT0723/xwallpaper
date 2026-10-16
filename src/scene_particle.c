@@ -383,7 +383,6 @@ static void spawn_one(XWEmitter *e) {
             speed;
   }
   p->rnd = next_unit(&e->rng);
-  p->frame = 0.0f;
   /* oscillator operators draw their per-particle frequency/scale/phase once
    * (the engine initialises the state on the operator's first run); the
    * phase spans phaseMin..phaseMax+2pi and the base is the post-initializer

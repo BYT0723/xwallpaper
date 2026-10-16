@@ -1,4 +1,5 @@
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,7 +19,9 @@ typedef struct {
   float latest[128];
   int refcount;
   int running;
-  int stop;
+  /* the worker polls this while it cannot hold the mutex (it blocks in
+   * pa_mainloop_iterate), so it has to be atomic rather than mutex-guarded */
+  atomic_int stop;
   pa_mainloop *ml;
   pa_context *ctx;
   pa_stream *st;

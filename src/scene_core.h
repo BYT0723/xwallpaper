@@ -50,8 +50,6 @@ int xw_bloom_enabled(const XWSceneCamera *cam);
 float xw_particle_texture_ratio(int tex_w, int tex_h, int real_w, int real_h,
                                 float frame_w, float frame_h, int spritesheet);
 
-int xw_core_present_uvs(float *u0, float *v0, float *u1, float *v1);
-
 /* Text anchors live in the scene's centred canvas space (Y up, origin at
  * the canvas centre); map one to window pixels (Y down) and report the
  * scale to rasterise its glyphs at. */

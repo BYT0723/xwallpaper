@@ -51,10 +51,6 @@ struct XWGl {
   GLuint part_vao;
   GLuint part_vbo;
   GLuint ffb_tex; /* screen-sized copy of the scene so far */
-  unsigned ffb_frame; /* frame counter; the full-frame snapshot is refreshed
-                       * on every use, because it is a copy rather than the
-                       * engine's live target */
-  unsigned ffb_stamp;
   GLuint fbos[2];
   GLuint fbo_tex[2];
   struct {
@@ -462,8 +458,9 @@ static void *video_proc_address(void *ctx, const char *name) {
 }
 
 static void video_destroy(XWGl *g, int i) {
-  if (!g->video[i].live)
-    return;
+  /* No `live` guard: video_open's failure paths call this to unwind a
+   * half-built player, when live is not set yet. Every field below is
+   * null/zero-checked, so a clean slot is a no-op. */
   if (g->ctx)
     glXMakeCurrent(g->dpy, g->win, g->ctx);
   if (g->video[i].rctx)
@@ -792,8 +789,13 @@ static int upload_texv(XWGl *g, const unsigned char *file, size_t flen,
     glCompressedTexImage2D(GL_TEXTURE_2D, 0, internal, (int)img.tex_w,
                            (int)img.tex_h, 0, (GLsizei)img.len, img.px);
     rc = glGetError() == GL_NO_ERROR ? 0 : -1;
-    if (rc != 0)
+    if (rc != 0) {
+      /* the caller only deletes textures it thinks were created, so a
+       * rejected upload must drop its own here */
+      glDeleteTextures(1, t);
+      *t = 0;
       XW_ERROR_SET(err, 1, "driver rejected compressed texture");
+    }
     break;
   }
   case XW_TEXFMT_PNG: {
@@ -1695,6 +1697,10 @@ int xw_gl_draw_points(XWGl *g, unsigned int prog, unsigned int tex,
     ndc[i].y = 1.0f - pts[i].y / (float)g->h * 2.0f;
     ndc[i].size = pts[i].size;
     ndc[i].alpha = pts[i].alpha;
+    /* both are read by the point shader; the caller fills them for
+     * rotating / sprite-sheet particles */
+    ndc[i].frame = pts[i].frame;
+    ndc[i].rot = pts[i].rot;
   }
   glXMakeCurrent(g->dpy, g->win, g->ctx);
   glUseProgram(prog);
@@ -2429,7 +2435,6 @@ void xw_gl_frame_begin(XWGl *g) {
     return;
   /* video textures advance once per frame, before anything samples them */
   video_pump(g);
-  g->ffb_frame++;
 }
 
 int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex) {
@@ -2447,7 +2452,6 @@ int xw_gl_framebuffer_snapshot(XWGl *g, unsigned int *tex) {
    * layer in a frame sample the contents from before the objects drawn
    * between the two, and paint that back over them (2889253135 lost its
    * character exactly this way). */
-  g->ffb_stamp = g->ffb_frame;
   glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
   glReadBuffer(GL_BACK);
   glBindTexture(GL_TEXTURE_2D, g->ffb_tex);
@@ -2554,10 +2558,7 @@ int xw_gl_draw_we(XWGl *g, unsigned int prog, unsigned int input,
   for (i = 0; i < XW_GL_WE_SLOTS; i++) {
     unsigned int t = input;
     const float *res = input_res;
-    if (i == 0 && slots && slots[0].tex) {
-      t = slots[0].tex;
-      res = slots[0].res;
-    } else if (i > 0 && slots && slots[i].tex) {
+    if (slots && slots[i].tex) {
       t = slots[i].tex;
       res = slots[i].res;
     }
@@ -2768,11 +2769,6 @@ int xw_gl_draw_particle_quads(XWGl *g, unsigned int prog,
                 render_var1 ? render_var1[1] : 0.0f,
                 render_var1 ? render_var1[2] : 0.0f,
                 render_var1 ? render_var1[3] : 1.0f);
-  loc = glGetUniformLocation(prog, "g_Time");
-  if (loc >= 0) {
-    /* callers keep the clock in the emitter; reuse the passed constant */
-    (void)loc;
-  }
   if (g->w > 0 && g->h > 0) {
     loc = glGetUniformLocation(prog, "g_TexelSize");
     if (loc >= 0)
