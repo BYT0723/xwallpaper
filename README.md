@@ -34,7 +34,8 @@ Desktop icons and conky stay clickable: pointer events on the wallpaper window a
 | **Web** | webkit2gtk live page — one shared engine across screens |
 | **Scene** | Wallpaper Engine scene directories (`project.json` + `scene.json`/`scene.pkg`): image effects, particles, text, sound and JS-driven properties, rendered with desktop GL |
 | **Targets** | primary output, `-m <output>` by xrandr name, `--all`, or an explicit `-g WxH+X+Y --name` rectangle |
-| **Video extras** | `--rotate <0\|90\|180\|270>`, `--keybinds <input.conf>`, `--fps <n>`, `--mute --volume` |
+| **Video extras** | `--rotate <0\|90\|180\|270>`, `--keybinds <keys>`, `--fps <n>`, `--mute --volume` |
+| **Playback control** | key bindings on the focused wallpaper (video, web and scene) plus `xwallpaper volume` / `mute` for scripts and WM bindings |
 | **Window opts** | opacity, below, sticky, skip-taskbar, skip-pager, no-focus |
 | **Desktop layer** | `_NET_WM_WINDOW_TYPE_DESKTOP` attach, sticky `_NET_WM_DESKTOP`, override-redirect |
 
@@ -116,18 +117,64 @@ Target selection:
 Video options:
 
 - `--rotate <0|90|180|270>` — static rotation, e.g. portrait clips on landscape screens
-- `--keybinds <file>` — an mpv `input.conf`-style file for runtime control (pause, cycle rotation, …)
 - `--fps <number>` — re-sample playback to this frame rate (drops frames; keeps speed; lower = less CPU/GPU)
 - `--mute` / `--volume <0-100>` — audio control
 
 See `xwallpaper --help` for the full list.
+
+## Key bindings and playback control
+
+`--keybinds <file>` names an mpv `input.conf`-style file. The **daemon** parses
+it and acts on it, so it works for every backend — including web pages, which
+have no mpv to read it. Without `--keybinds` the daemon looks for
+`$XDG_CONFIG_HOME/xwallpaper/keys`, else `~/.config/xwallpaper/keys`.
+
+Keys go to the wallpaper window that has focus, so with several screens you
+control the one the pointer is on and nothing else.
+
+```
+l seek  5          # video: forward 5s (web: page media)
+h seek -5
+9 add volume -2    # every backend: -2 of 100
+0 add volume 2
+- cycle mute       # toggle
+= cycle pause      # video pauses playback, web pauses page media,
+                   # scene stops its animation
+r cycle_values video-rotate 90 180 270 0
+```
+
+The same actions are available as subcommands, which is what a window manager
+binding wants (a wallpaper window never *keeps* focus, so binding the keys in
+dwm/dwl is often the nicer choice):
+
+```sh
+xwallpaper volume +2          # relative; also -2, or an absolute 50
+xwallpaper mute               # bare = toggle; also on|off
+xwallpaper -m DP-1 volume +2  # one output; --all for every one
+```
+
+For dwm's `config.h`:
+
+```c
+{ MODKEY,            XK_0,     spawn, SHCMD("xwallpaper volume +2") },
+{ MODKEY,            XK_9,     spawn, SHCMD("xwallpaper volume -2") },
+{ MODKEY,            XK_minus, spawn, SHCMD("xwallpaper mute") },
+```
+
+For a **web** wallpaper the level is a multiplier on the page's own audio
+(`100` = exactly as the page mixes it, `0` = silent) rather than an absolute
+value, because the page has its own mixing and keeps re-applying it; for video
+and scene it is absolute. `0` silences every backend either way.
+
+An action a backend cannot do is ignored when it comes from a key press, and
+reported when it comes from the CLI (`that wallpaper does not support 'rotate'`).
 
 ## How it works
 
 - **Two binaries, thin CLI.** `xwallpaperd` owns all wallpaper windows and links the heavy backends; `xwallpaper` (the CLI) links only libc and talks to the daemon over a UNIX socket at `$XDG_RUNTIME_DIR/xwallpaper.sock`. The daemon must be started separately; the CLI never spawns it, so every CLI invocation is instant.
 - **Desktop wrapper window.** Each wallpaper is an `override_redirect` window attached under the `_NET_WM_WINDOW_TYPE_DESKTOP` layer, lowered, made sticky and below — it behaves as a proper desktop backdrop.
 - **Single event loop.** `app` runs one `poll()` over the X connection fd and the GTK main-context fds; mpv self-renders via `--wid` on its own thread.
-- **Backend interface.** `image`/`video`/`web`/`scene` implement a common `XWBackend` (`init/start/stop/destroy`, plus optional `tick`/`set_paused`/`reload`/`list_props`/`set_prop`); the app swaps backends per window in place.
+- **Backend interface.** `image`/`video`/`web`/`scene` implement a common `XWBackend` (`init/start/stop/destroy`, plus optional `tick`/`set_paused`/`reload`/`list_props`/`set_prop`/`control`); the app swaps backends per window in place.
 
 ```
 xwallpaper (cli) ──→ client ──→ daemon (xwallpaperd) ──→ app ──→ x11

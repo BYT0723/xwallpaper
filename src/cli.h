@@ -18,6 +18,7 @@ enum {
   XW_CMD_RESTORE, /* restore last wallpapers kept by clear --keep (restore) */
   XW_CMD_LIST_PROPS, /* list user properties of a scene wallpaper */
   XW_CMD_SET_PROP,   /* override a user property on a live scene wallpaper */
+  XW_CMD_CONTROL,    /* runtime control of a live wallpaper (volume/mute) */
 };
 
 /* Which windows a command targets */
@@ -46,6 +47,8 @@ typedef struct XWConfig {
   int backend_explicit; /* -1 = auto, else XW_BACKEND_* */
   char path[1024];
   char prop[512];     /* --set-property name=value */
+  char ctl_name[16];  /* XW_CMD_CONTROL: volume | mute */
+  char ctl_value[64]; /* XW_CMD_CONTROL argument: "+2" / "50" / "toggle" */
   int scale_mode;     /* XW_SCALE_* for image */
   int mute;           /* video */
   double volume;      /* video, 0..100, default 100 */

@@ -915,10 +915,42 @@ void xw_app_tick_backends(XWApp *app) {
       app->backends[i]->tick(app->backends[i]);
 }
 
+/* Feed a key press to the focused wallpaper's bindings: the key is
+ * normalised the same way the file spells it, looked up, and turned into the
+ * backend control action it names. Returns 1 when a binding consumed it.
+ * An action this backend cannot do is silently ignored — a keypress must
+ * never surface an error. */
+static int dispatch_key(XWWindow *win, XWBackend *b, XEvent *ev) {
+  char key[XW_BIND_KEY_MAX], name[32], value[64];
+  const XWBind *bind;
+  const char *sym;
+  KeySym ks = NoSymbol;
+  XComposeStatus cs;
+  if (!win || win->nbinds <= 0)
+    return 0;
+  memset(&cs, 0, sizeof(cs));
+  XLookupString(&ev->xkey, NULL, 0, &ks, &cs);
+  sym = ks != NoSymbol ? XKeysymToString(ks) : NULL;
+  if (!sym || xw_keybinds_norm_key(sym, key, sizeof(key)) != 0)
+    return 0;
+  bind = xw_keybinds_find(win->binds, win->nbinds, key);
+  if (!bind ||
+      xw_keybinds_to_action(bind, name, sizeof(name), value, sizeof(value)) != 0)
+    return 0;
+  if (b && b->control) {
+    XWError err;
+    memset(&err, 0, sizeof(err));
+    (void)b->control(b, name, value, &err);
+  }
+  return 1;
+}
+
 int xw_app_handle_event(XWApp *app, XEvent *ev) {
   for (int i = 0; i < app->nwins; i++) {
     XWWindow *win = app->wins[i];
     if (win && ev->xany.window == win->win) {
+      if (ev->type == KeyPress)
+        dispatch_key(win, app->backends[i], ev);
       xw_x11_handle_event(win, ev);
       if (app->backends[i] && app->backends[i]->on_event)
         app->backends[i]->on_event(app->backends[i], ev);
@@ -983,6 +1015,55 @@ int xw_app_set_prop(XWApp *app, const XWConfig *cfg, const char *name,
     return -1;
   }
   return b->set_prop(b, name, value, err);
+}
+
+int xw_app_control(XWApp *app, const XWConfig *cfg, const char *name,
+                   const char *value, XWError *err) {
+  int idx;
+  XWBackend *b;
+  if (!app || !cfg || !name || !name[0]) {
+    XW_ERROR_SET(err, 1, "invalid args");
+    return -1;
+  }
+  if (cfg->target == XW_TARGET_ALL) {
+    XWError first;
+    int i, hit = 0, ok = 0;
+    memset(&first, 0, sizeof(first));
+    for (i = 0; i < app->nwins; i++) {
+      XWError e;
+      memset(&e, 0, sizeof(e));
+      b = app->backends[i];
+      if (!b)
+        continue;
+      hit++;
+      if (b->control && b->control(b, name, value, &e) == 0) {
+        ok++;
+      } else if (!first.msg[0]) {
+        first = e;
+      }
+    }
+    if (ok > 0)
+      return 0;
+    if (!hit)
+      XW_ERROR_SET(err, 1, "no wallpapers to control");
+    else if (first.msg[0])
+      XW_ERROR_SET(err, 1, "%s", first.msg);
+    else
+      XW_ERROR_SET(err, 1, "no wallpaper supports '%s'", name);
+    return -1;
+  }
+  idx = props_backend(app, cfg, err);
+  if (idx < 0) {
+    if (err && !err->code)
+      XW_ERROR_SET(err, 1, "no wallpaper on that output");
+    return -1;
+  }
+  b = app->backends[idx];
+  if (!b || !b->control) {
+    XW_ERROR_SET(err, 1, "that wallpaper does not support '%s'", name);
+    return -1;
+  }
+  return b->control(b, name, value, err);
 }
 
 #define DPMS_POLL_INTERVAL_MS 500

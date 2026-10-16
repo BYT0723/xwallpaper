@@ -112,6 +112,12 @@ int xw_app_list_props(XWApp *app, const XWConfig *cfg, char *out, size_t n,
 int xw_app_set_prop(XWApp *app, const XWConfig *cfg, const char *name,
                     const char *value, XWError *err);
 
+/* Runtime control of the live window addressed by cfg (volume/mute/pause/
+ * seek/rotate). XW_TARGET_ALL applies to every window and succeeds when at
+ * least one backend accepted the action. */
+int xw_app_control(XWApp *app, const XWConfig *cfg, const char *name,
+                   const char *value, XWError *err);
+
 /* Poll the X DPMS power state (throttled internally, ~500ms) and pause or
  * resume rendering backends when the display enters/exits a powered-off
  * state. Rendering backends keep presenting frames while DPMS is off, which

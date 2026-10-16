@@ -100,6 +100,74 @@ static void test_video_fps_override(void) {
   TEST_CHECK_EQ_INT(run_with_opts(&opt), 0);
 }
 
+/* Runtime control: mpv owns volume/mute/pause/rotate, so a live instance is
+ * what proves the wiring. Unsupported actions must fail loudly instead of
+ * pretending to work. */
+static void test_video_control(void) {
+  XWError err;
+  Display *dpy;
+  XWConfig cfg;
+  XWWindow *win;
+  XWBackendOpt opt;
+  XWBackend backend;
+  int x, y;
+  unsigned int w, h;
+
+  TEST_BEGIN("video control drives mpv properties, rejects the unknown");
+  memset(&err, 0, sizeof(err));
+  dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_PRIMARY;
+  if (xw_x11_resolve_geometry(dpy, &cfg, &x, &y, &w, &h, NULL) != 0) {
+    TEST_FAIL("cannot resolve geometry");
+    xw_x11_close_display(dpy);
+    return;
+  }
+  win = xw_x11_create_window(dpy, &cfg, x, y, w, h, &err);
+  TEST_CHECK(win != NULL);
+  if (!win) {
+    xw_x11_close_display(dpy);
+    return;
+  }
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_VIDEO;
+  opt.path = "tests/data/bounce.mp4";
+  opt.mute = 1;
+  opt.volume = 50.0;
+  backend = *xw_video_backend_new();
+  if (backend.init(&backend, win, &opt, &err) != 0 || !backend.control) {
+    TEST_FAIL("video init: %s", err.msg);
+  } else if (backend.start(&backend) != 0) {
+    TEST_FAIL("video start failed");
+  } else {
+    /* seek needs a loaded file, so let mpv get that far first */
+    usleep(300000);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "toggle", &err), 0);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "off", &err), 0);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "on", &err), 0);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "volume", "+2", &err), 0);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "volume", "-2", &err), 0);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "volume", "50", &err), 0);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "pause", "toggle", &err), 0);
+    /* Under Xvfb mpv often never gets a loaded file, so seek can report a
+     * runtime failure; either way it must have reached mpv rather than been
+     * rejected as an unsupported action. */
+    if (backend.control(&backend, "seek", "5", &err) != 0)
+      TEST_CHECK(strstr(err.msg, "seek failed") != NULL);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "rotate", "cycle", &err), 0);
+    /* bad input and unknown actions must not look like success */
+    TEST_CHECK_EQ_INT(backend.control(&backend, "volume", "abc", &err), -1);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "bogus", &err), -1);
+    TEST_CHECK_EQ_INT(backend.control(&backend, "wobble", "", &err), -1);
+  }
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+  xw_x11_close_display(dpy);
+}
+
 static void test_video_audio_client_name(void) {
   TEST_BEGIN("video init with custom audio client name");
   XWBackendOpt opt;
@@ -230,6 +298,7 @@ int main(void) {
   test_video_default_opts();
   test_video_fps_override();
   test_video_audio_client_name();
+  test_video_control();
   test_video_retry_antipileup();
   /* keep last: the only GTK user here, and it pins the process locale */
   test_video_after_web_gtk_init();

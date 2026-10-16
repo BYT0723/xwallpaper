@@ -12,6 +12,7 @@
 
 #include "backend.h"
 #include "backends.h"
+#include "keybinds.h"
 #include "scene.h"
 #include "scene_gl.h"
 #include "scene_image.h"
@@ -726,6 +727,61 @@ static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   }
 }
 
+/* Re-apply the master level to every live sound object; a muted scene
+ * drives them to zero rather than stopping them, so unmuting resumes the
+ * same playback. */
+static void scene_set_paused(XWBackend *b, int paused);
+
+static void apply_sound_volumes(XWSceneCtx *c) {
+  int i;
+  double g;
+  if (!c || !c->sounds)
+    return;
+  g = c->mute ? 0.0 : c->volume;
+  for (i = 0; i < c->scene.n_objects; i++)
+    if (c->sounds[i])
+      xw_sound_set_volumes(c->sounds[i], c->scene.objects[i].sound.volume, g);
+}
+
+/* Runtime control shared by the key bindings and the volume/mute
+ * subcommands. Scene wallpapers have sound objects, so volume/mute drive
+ * those and pause also stops the animation, as a paused wallpaper should. */
+static int scene_control(XWBackend *b, const char *name, const char *value,
+                         XWError *err) {
+  XWSceneCtx *c = (b && b->priv) ? (XWSceneCtx *)b->priv : NULL;
+  int want, v;
+  if (!c || !name) {
+    XW_ERROR_SET(err, 1, "scene: not running");
+    return -1;
+  }
+  if (strcmp(name, "volume") == 0) {
+    if (xw_audio_apply((int)(c->volume + 0.5), value, &v) != 0) {
+      XW_ERROR_SET(err, 1, XW_VOLUME_HINT);
+      return -1;
+    }
+    c->volume = v;
+    c->mute = 0;
+    apply_sound_volumes(c);
+    return 0;
+  }
+  if (strcmp(name, "mute") == 0 || strcmp(name, "pause") == 0) {
+    int is_mute = strcmp(name, "mute") == 0;
+    if (xw_ctl_toggle(is_mute ? c->mute : c->paused, value, &want) != 0) {
+      XW_ERROR_SET(err, 1, "%s takes on, off or toggle", name);
+      return -1;
+    }
+    if (is_mute) {
+      c->mute = want;
+      apply_sound_volumes(c);
+    } else {
+      scene_set_paused(b, want);
+    }
+    return 0;
+  }
+  XW_ERROR_SET(err, 1, "scene does not support '%s'", name);
+  return -1;
+}
+
 static void scene_set_paused(XWBackend *b, int paused) {
   XWSceneCtx *c = b ? (XWSceneCtx *)b->priv : NULL;
   if (!c)
@@ -756,6 +812,7 @@ XWBackend *xw_scene_backend_new(void) {
     .stop = scene_stop,
     .destroy = scene_destroy,
     .on_event = scene_on_event,
+    .control = scene_control,
     .reload = scene_reload,
     .init_wl = NULL,
     .reload_wl = NULL,

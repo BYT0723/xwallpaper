@@ -310,7 +310,8 @@ XWWindow *xw_x11_create_window(Display *dpy, const XWConfig *cfg,
   attrs.override_redirect = True;
   attrs.background_pixel = BlackPixel(dpy, screen);
   attrs.event_mask = StructureNotifyMask | ExposureMask |
-                     EnterWindowMask | LeaveWindowMask | PointerMotionMask;
+                     EnterWindowMask | LeaveWindowMask | PointerMotionMask |
+                     KeyPressMask;
 
   unsigned long mask = CWOverrideRedirect | CWBackPixel | CWEventMask;
 
@@ -326,6 +327,21 @@ XWWindow *xw_x11_create_window(Display *dpy, const XWConfig *cfg,
   Atom wt = ATOM(_NET_WM_WINDOW_TYPE_DESKTOP);
   XChangeProperty(dpy, win->win, ATOM(_NET_WM_WINDOW_TYPE), XA_ATOM, 32,
                   PropModeReplace, (unsigned char *)&wt, 1);
+
+  /* Key bindings: the file named by --keybinds, else the default location.
+   * They are dispatched by the daemon while this window has focus, so the
+   * wallpaper never needs keyboard focus for mpv's input-conf to matter. */
+  {
+    char def[1024];
+    const char *kb = cfg->keybinds[0] ? cfg->keybinds : NULL;
+    if (!kb && xw_keybinds_default_path(def, sizeof(def)) == 0)
+      kb = def;
+    if (kb) {
+      int nb = xw_keybinds_load(kb, win->binds, XW_KEYBINDS_MAX);
+      if (nb > 0)
+        win->nbinds = nb;
+    }
+  }
 
   if (cfg->below) {
     append_atom_prop(dpy, win->win, ATOM(_NET_WM_STATE), ATOM(_NET_WM_STATE_BELOW));

@@ -91,6 +91,13 @@ struct XWBackend {
   int (*list_props)(XWBackend *b, char *out, size_t n);
   int (*set_prop)(XWBackend *b, const char *name, const char *value,
                   XWError *err);
+  /* optional: runtime control of a live wallpaper, shared by the key
+   * bindings and the volume/mute subcommands. name is one of "volume",
+   * "mute", "pause", "seek", "rotate"; value carries its argument (which
+   * may be empty, e.g. a mute toggle). Returns 0, or -1 when this backend
+   * does not support that action. May be NULL (image has no audio). */
+  int (*control)(XWBackend *b, const char *name, const char *value,
+                 XWError *err);
   /* optional: pause/resume rendering when the X display is in DPMS
    * power-off (standby/suspend/off). Rendering backends (e.g. mpv) keep
    * presenting frames while DPMS is off, which wakes the display back up.

@@ -329,6 +329,32 @@ static void test_encode_set_video_extras(void) {
   TEST_CHECK(has_field(msg, n, "keybinds=/tmp/keys.conf"));
 }
 
+static void test_encode_control(void) {
+  TEST_BEGIN("control encodes target, name and value");
+  reset();
+  cfg.command = XW_CMD_CONTROL;
+  cfg.target = XW_TARGET_PRIMARY;
+  snprintf(cfg.ctl_name, sizeof(cfg.ctl_name), "volume");
+  snprintf(cfg.ctl_value, sizeof(cfg.ctl_value), "+2");
+
+  char msg[XW_MSG_MAX];
+  int n = xw_proto_encode_control(&cfg, msg, sizeof(msg));
+  TEST_CHECK(n > 0);
+  TEST_CHECK(memcmp(msg, "control", 8) == 0);
+  TEST_CHECK(has_field(msg, n, "primary"));
+  TEST_CHECK(has_field(msg, n, "volume=+2"));
+
+  /* an empty value is how a mute toggle travels, so it must survive */
+  reset();
+  cfg.command = XW_CMD_CONTROL;
+  cfg.target = XW_TARGET_ALL;
+  snprintf(cfg.ctl_name, sizeof(cfg.ctl_name), "mute");
+  snprintf(cfg.ctl_value, sizeof(cfg.ctl_value), "toggle");
+  n = xw_proto_encode_control(&cfg, msg, sizeof(msg));
+  TEST_CHECK(n > 0);
+  TEST_CHECK(has_field(msg, n, "mute=toggle"));
+}
+
 static void test_encode_set_rotate_default_omitted(void) {
   TEST_BEGIN("default rotate (0) is omitted from the wire");
   reset();
@@ -435,6 +461,7 @@ int main(void) {
   test_encode_restore();
   test_encode_list_exit();
   test_encode_set_video_extras();
+  test_encode_control();
   test_encode_set_rotate_default_omitted();
   test_encode_set_video_fps();
   test_encode_set_audio_client_name();

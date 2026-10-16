@@ -648,6 +648,37 @@ int xw_daemon_main(void) {
                   reply_n = reply_error(reply, sizeof(reply), aerr.msg);
               }
             }
+          } else if (VERB_IS("control")) {
+            XWConfig cfg;
+            Decoded d;
+            memset(&cfg, 0, sizeof(cfg));
+            split_fields(msg, (size_t)r, &d);
+            if (d.nfields < 3) {
+              reply_n = reply_error(reply, sizeof(reply), "malformed control");
+            } else {
+              char *eq = strchr(d.fields[2], '=');
+              if (!eq || eq == d.fields[2]) {
+                reply_n = reply_error(reply, sizeof(reply),
+                                      "control needs name=value");
+              } else {
+                XWError aerr;
+                *eq = '\0';
+                memset(&aerr, 0, sizeof(aerr));
+                if (strcmp(d.fields[1], "all") == 0)
+                  cfg.target = XW_TARGET_ALL;
+                else if (strcmp(d.fields[1], "primary") == 0 ||
+                         !d.fields[1][0])
+                  cfg.target = XW_TARGET_PRIMARY;
+                else {
+                  cfg.target = XW_TARGET_OUTPUT;
+                  snprintf(cfg.output, sizeof(cfg.output), "%s", d.fields[1]);
+                }
+                if (xw_app_control(cur, &cfg, d.fields[2], eq + 1, &aerr) == 0)
+                  reply_n = snprintf(reply, sizeof(reply), "ok\n");
+                else
+                  reply_n = reply_error(reply, sizeof(reply), aerr.msg);
+              }
+            }
           } else if (VERB_IS("exit")) {
             reply_n = snprintf(reply, sizeof(reply), "ok\n");
             do_exit = 1;
