@@ -1,0 +1,1 @@
+{"general": {"properties": {"bg": {"type": "color", "value": "0 0 0"}, "zoom": {"type": "slider", "value": 50}, "note": {"type": "text", "value": "second"}}}}

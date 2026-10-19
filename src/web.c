@@ -324,13 +324,21 @@ static void web_free_parsed(WebCtx *ctx) {
   ctx->n_props = 0;
 }
 
+/* Drop every runtime override (wallpaper switch: old values must not leak
+ * into the new wallpaper even when a property name collides). */
+static void web_clear_overrides(WebCtx *ctx) {
+  if (!ctx)
+    return;
+  free(ctx->over);
+  ctx->over = NULL;
+  ctx->n_over = 0;
+}
+
 static void web_free_props(WebCtx *ctx) {
   if (!ctx)
     return;
   web_free_parsed(ctx);
-  free(ctx->over);
-  ctx->over = NULL;
-  ctx->n_over = 0;
+  web_clear_overrides(ctx);
 }
 
 static void web_load_props(WebCtx *ctx) {
@@ -344,7 +352,8 @@ static void web_load_props(WebCtx *ctx) {
 
   if (!ctx)
     return;
-  /* Reload re-reads the defaults from disk but keeps runtime overrides. */
+  /* Re-read the defaults from disk but keep runtime overrides; the caller
+   * (web_reload) drops/prunes them on a wallpaper switch. */
   web_free_parsed(ctx);
   if (!ctx->root_dir[0])
     return;
@@ -391,6 +400,26 @@ static XWWebProp *web_find_prop(XWWebProp *arr, int n, const char *name) {
     if (strcmp(arr[i].name, name) == 0)
       return &arr[i];
   return NULL;
+}
+
+/* Drop overrides with no matching parsed property (project.json edited, or
+ * the same wallpaper re-read with fewer properties). */
+static void web_prune_overrides(WebCtx *ctx) {
+  int i;
+  if (!ctx || !ctx->over || ctx->n_over <= 0)
+    return;
+  for (i = 0; i < ctx->n_over;) {
+    if (web_find_prop(ctx->props, ctx->n_props, ctx->over[i].name))
+      i++;
+    else {
+      ctx->over[i] = ctx->over[ctx->n_over - 1];
+      ctx->n_over--;
+    }
+  }
+  if (ctx->n_over == 0) {
+    free(ctx->over);
+    ctx->over = NULL;
+  }
 }
 
 static int web_list_props(XWBackend *b, char *out, size_t n) {
@@ -793,6 +822,8 @@ static int web_store_input(WebCtx *ctx, const char *path, XWError *err) {
   int mode = web_classify(path, root, sizeof(root), entry, sizeof(entry), err);
   if (mode == 0)
     return 0;
+  if (mode != 2)
+    web_free_parsed(ctx);
   ctx->root_dir[0] = '\0';
   ctx->entry[0] = '\0';
   if (mode == 2) {
@@ -941,13 +972,30 @@ static void web_stop(XWBackend *b) {
     webkit_web_view_stop_loading(WEBKIT_WEB_VIEW(ctx->view));
 }
 
-/* 同类型复用: 换 URL/页面后重新加载 webkit 视图。 */
+/* 同类型复用: 换 URL/页面后重新加载 webkit 视图。
+ * 换壁纸时丢弃旧 overrides (同名 property 不互通), 同一壁纸重载则保留
+ * 仍存在的 overrides 并剪掉已消失的。 */
 static int web_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   WebCtx *ctx = (WebCtx *)b->priv;
+  char old_root[sizeof(ctx->root_dir)];
+  const char *old_path;
+  int same;
   if (!ctx)
     return -1;
+  snprintf(old_root, sizeof(old_root), "%s", ctx->root_dir);
+  old_path = ctx->path;
   if (web_store_input(ctx, opt->path, err) == 0)
     return -1;
+  if (old_root[0] || ctx->root_dir[0])
+    same = strcmp(old_root, ctx->root_dir) == 0;
+  else if (old_path && opt->path)
+    same = strcmp(old_path, opt->path) == 0;
+  else
+    same = 0;
+  if (!same)
+    web_clear_overrides(ctx);
+  else
+    web_prune_overrides(ctx);
   free(ctx->path);
   ctx->path = strdup(opt->path);
   if (!ctx->path)

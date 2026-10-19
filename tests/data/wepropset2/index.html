@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head><title>wepropset2</title></head>
+<body>
+<script>
+/* Echo every applyUserProperties call into the title so the test can
+ * observe what the daemon delivered (defaults, set-prop, reload replay). */
+window.__seen = [];
+window.wallpaperPropertyListener = {
+  applyUserProperties: function (p) {
+    try {
+      window.__seen.push(JSON.stringify(p));
+      document.title = 'GOT:' + JSON.stringify(p);
+    } catch (e) {
+      document.title = 'ERR:' + e;
+    }
+  }
+};
+</script>
+</body>
+</html>
