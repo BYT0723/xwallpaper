@@ -10,6 +10,18 @@ ifeq ($(filter -j%,$(MAKEFLAGS)),)
 MAKEFLAGS += -j$(shell nproc 2>/dev/null || echo 2)
 endif
 
+# `make clean install` (any clean+build combo) races under -j: make runs
+# command-line goals concurrently, so clean's rm can unlink freshly linked
+# binaries while install stats them (ENOENT on a different binary each run;
+# the retry then succeeds because everything rebuilds from scratch).
+# Serialize the whole run when clean is combined with other goals: goals
+# then execute in command-line order (clean first, then a genuine rebuild).
+ifneq ($(filter clean,$(MAKECMDGOALS)),)
+ifneq ($(words $(MAKECMDGOALS)),1)
+.NOTPARALLEL:
+endif
+endif
+
 # install locations (override: PREFIX= PREFIX=/usr, or DESTDIR=... for staging)
 PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
