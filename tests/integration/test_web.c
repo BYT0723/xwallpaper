@@ -687,6 +687,98 @@ static void test_we_props_list_set(void) {
   xw_x11_destroy_window(win);
 }
 
+/* Switching wallpapers must not leak overrides: a same-named property on
+ * the new wallpaper starts from its own default, not the old value. */
+/* Reload to path and expect list_props to show want (one "name\ttype\tvalue"
+ * line). */
+static void reload_expect(XWBackend *b, const char *path, const char *want) {
+  XWBackendOpt opt;
+  XWError err;
+  char lines[4096];
+  memset(&err, 0, sizeof(err));
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = path;
+  TEST_CHECK(b->reload != NULL);
+  TEST_CHECK_EQ_INT(b->reload(b, &opt, &err), 0);
+  memset(lines, 0, sizeof(lines));
+  TEST_CHECK_EQ_INT(b->list_props(b, lines, sizeof(lines)), 3);
+  TEST_CHECK(strstr(lines, want) != NULL);
+}
+
+static void test_we_props_switch_isolation(void) {
+  TEST_BEGIN("switching web wallpaper drops stale property overrides");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wepropswitch");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wepropset";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+
+  XWError serr;
+  char lines[4096];
+
+  /* override zoom on the first wallpaper */
+  memset(&serr, 0, sizeof(serr));
+  TEST_CHECK_EQ_INT(backend.set_prop(&backend, "zoom", "200", &serr), 0);
+  memset(lines, 0, sizeof(lines));
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK(strstr(lines, "zoom\tslider\t200") != NULL);
+
+  /* same-wallpaper reload keeps the override */
+  reload_expect(&backend, "tests/data/wepropset", "zoom\tslider\t200");
+
+  /* switch to a different wallpaper with a same-named prop (default 50):
+   * the stale 200 must not leak through */
+  reload_expect(&backend, "tests/data/wepropset2", "zoom\tslider\t50");
+
+  /* overrides work on the new wallpaper too ... */
+  memset(&serr, 0, sizeof(serr));
+  TEST_CHECK_EQ_INT(backend.set_prop(&backend, "zoom", "300", &serr), 0);
+  memset(lines, 0, sizeof(lines));
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK(strstr(lines, "zoom\tslider\t300") != NULL);
+
+  /* ... but switching back resets to that wallpaper's own default */
+  reload_expect(&backend, "tests/data/wepropset", "zoom\tslider\t100");
+
+  /* switching to a wallpaper without properties clears everything */
+  memset(&serr, 0, sizeof(serr));
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/webdir";
+  TEST_CHECK_EQ_INT(backend.reload(&backend, &opt, &serr), 0);
+  memset(lines, 0, sizeof(lines));
+  TEST_CHECK(backend.list_props(&backend, lines, sizeof(lines)) <= 0);
+  memset(&serr, 0, sizeof(serr));
+  TEST_CHECK_EQ_INT(backend.set_prop(&backend, "zoom", "1", &serr), -1);
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_paints();
@@ -695,6 +787,7 @@ int main(void) {
   test_storage_persistent();
   test_we_properties_delivered();
   test_we_props_list_set();
+  test_we_props_switch_isolation();
   test_audio_control();
   test_keys_not_swallowed();
   TEST_SUMMARY();
