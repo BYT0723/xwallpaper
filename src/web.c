@@ -425,6 +425,7 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
   const XWWebProp *known;
   XWWebProp *slot = NULL;
   char js[XW_WEB_PROP_JS_MAX + 128];
+  char norm[1024];
 
   if (!ctx || !name || !name[0] || !value) {
     XW_ERROR_SET(err, 1, "invalid args");
@@ -435,6 +436,13 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
     XW_ERROR_SET(err, 1, "unknown property '%.64s'", name);
     return -1;
   }
+  /* color props also take #rrggbb/#rgb; garbage fails here instead of
+   * being silently ignored by the page. */
+  if (xw_web_props_normalize(known->type, value, norm, sizeof(norm)) != 0) {
+    XW_ERROR_SET(err, 1, "invalid value for '%.64s'", name);
+    return -1;
+  }
+  value = norm;
   slot = web_find_prop(ctx->over, ctx->n_over, name);
   if (!slot) {
     XWWebProp *grown;

@@ -671,6 +671,18 @@ static void test_we_props_list_set(void) {
   title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
   TEST_CHECK(title != NULL && strstr(title, "\"zoom\":{\"value\":\"200\"}") != NULL);
 
+  /* hex colors normalize to the WE triple the page parses ... */
+  memset(&serr, 0, sizeof(serr));
+  TEST_CHECK_EQ_INT(backend.set_prop(&backend, "bg", "#00ff00", &serr), 0);
+  pump_gtk(dpy, 3);
+  title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+  TEST_CHECK(title != NULL &&
+             strstr(title, "\"bg\":{\"value\":\"0.000000 1.000000 0.000000\"}") != NULL);
+
+  /* ... and garbage fails loudly instead of being silently ignored */
+  memset(&serr, 0, sizeof(serr));
+  TEST_CHECK_EQ_INT(backend.set_prop(&backend, "bg", "green", &serr), -1);
+
   backend.destroy(&backend);
   xw_x11_destroy_window(win);
 }

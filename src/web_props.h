@@ -27,6 +27,14 @@ int xw_web_props_parse(const char *json, size_t len,
 int xw_web_props_apply_js(const XWWebProp *props, int n,
                            char *out, size_t m);
 
+/* Normalize a user-supplied value to WE form. color props accept the native
+ * "r g b" triple (passed through) and #rrggbb/#rgb (converted); anything
+ * else is rejected so bad input fails loudly instead of being silently
+ * ignored by the page. Other types pass through untouched.
+ * Returns 0 with the result in out, or -1 on bad input. */
+int xw_web_props_normalize(const char *type, const char *value,
+                            char *out, size_t m);
+
 /* Build just the properties object literal: {"name":{"value":"..."},...}.
  * Used to sequence overrides after the page's own project.json fetch.
  * Returns 0, or -1 on bad input or a too-small buffer. */

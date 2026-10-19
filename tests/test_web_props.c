@@ -79,11 +79,41 @@ static void test_object_js(void) {
   TEST_CHECK_EQ_INT(xw_web_props_object_js(NULL, 0, js, sizeof(js)), -1);
 }
 
+static void test_normalize_color(void) {
+  TEST_BEGIN("color values normalize to WE triple");
+  char out[1024];
+  /* native triple passes through */
+  TEST_CHECK_EQ_INT(
+      xw_web_props_normalize("color", "1.000000 1.000000 1.000000",
+                              out, sizeof(out)), 0);
+  TEST_CHECK_EQ_STR(out, "1.000000 1.000000 1.000000");
+  /* hex forms convert */
+  TEST_CHECK_EQ_INT(
+      xw_web_props_normalize("color", "#00ff00", out, sizeof(out)), 0);
+  TEST_CHECK_EQ_STR(out, "0.000000 1.000000 0.000000");
+  TEST_CHECK_EQ_INT(
+      xw_web_props_normalize("color", "#0F0", out, sizeof(out)), 0);
+  TEST_CHECK_EQ_STR(out, "0.000000 1.000000 0.000000");
+  /* garbage is rejected, not silently ignored */
+  TEST_CHECK_EQ_INT(
+      xw_web_props_normalize("color", "green", out, sizeof(out)), -1);
+  TEST_CHECK_EQ_INT(xw_web_props_normalize("color", "#12", out, sizeof(out)), -1);
+  TEST_CHECK_EQ_INT(xw_web_props_normalize("color", "", out, sizeof(out)), -1);
+  /* non-color types pass through untouched */
+  TEST_CHECK_EQ_INT(
+      xw_web_props_normalize("slider", "200", out, sizeof(out)), 0);
+  TEST_CHECK_EQ_STR(out, "200");
+  TEST_CHECK_EQ_INT(xw_web_props_normalize(NULL, "x", out, sizeof(out)), -1);
+  TEST_CHECK_EQ_INT(
+      xw_web_props_normalize("color", "#00ff00", NULL, 0), -1);
+}
+
 int main(void) {
   TEST_SUITE("web_props");
   test_parse_ok();
   test_parse_bad();
   test_apply_js();
   test_object_js();
+  test_normalize_color();
   TEST_SUMMARY();
 }

@@ -71,7 +71,9 @@ int xw_web_props_apply_js(const XWWebProp *props, int n,
 /* 命名 xw_<module>_<action>；错误沿用 XWError；daemon 侧 WebCtx 持有缓存 */
 ```
 
-- set 语义：name 必须存在于 project.json（未知名 → `unknown property`），value
+- set 语义：name 必须存在于 project.json（未知名 → `unknown property`），color
+  类型额外接受 `#rrggbb`/`#rgb`（归一化为 WE 三元组；非法值 → `invalid value`
+  大声失败，不被页面静默吞掉），其余类型 value
   原串透传（页面端 `fb()` 负责按 type 解析：slider→Number，color→三元组，
   file→路径；与 WE 行为一致）。
 - list 输出与 scene 同格式：`name\ttype\tvalue\n`，value 为覆盖后的当前值；

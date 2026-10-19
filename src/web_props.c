@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <json-c/json.h>
@@ -97,6 +98,74 @@ static int esc_append(char *out, size_t m, size_t *off, const char *s) {
     memcpy(out + *off, esc, (size_t)w);
     *off += (size_t)w;
   }
+  return 0;
+}
+
+int xw_web_props_normalize(const char *type, const char *value,
+                            char *out, size_t m) {
+  unsigned r = 0, g = 0, b = 0;
+  int w;
+
+  if (!type || !value || !out || m == 0)
+    return -1;
+  if (strcmp(type, "color") != 0) {
+    if (snprintf(out, m, "%s", value) >= (int)m)
+      return -1;
+    return 0;
+  }
+  if (value[0] == '#') {
+    size_t n = strlen(value + 1);
+    char hex[7];
+    if (n != 3 && n != 6)
+      return -1;
+    if (n == 3) {
+      hex[0] = value[1]; hex[1] = value[1];
+      hex[2] = value[2]; hex[3] = value[2];
+      hex[4] = value[3]; hex[5] = value[3];
+    } else {
+      memcpy(hex, value + 1, 6);
+    }
+    hex[6] = '\0';
+    for (int i = 0; i < 6; i++) {
+      if (!((hex[i] >= '0' && hex[i] <= '9') ||
+            (hex[i] >= 'a' && hex[i] <= 'f') ||
+            (hex[i] >= 'A' && hex[i] <= 'F')))
+        return -1;
+    }
+    unsigned v = (unsigned)strtoul(hex, NULL, 16);
+    r = v >> 16 & 0xff;
+    g = v >> 8 & 0xff;
+    b = v & 0xff;
+  } else {
+    /* native WE triple: three floats, passed through verbatim */
+    int n = 0;
+    const char *s = value;
+    if (!*s)
+      return -1;
+    while (*s == ' ' || *s == '\t')
+      s++;
+    for (n = 0; n < 3; n++) {
+      char *end;
+      float f;
+      if (*s == '\0')
+        return -1;
+      f = strtof(s, &end);
+      (void)f;
+      if (end == s)
+        return -1;
+      s = end;
+      while (*s == ' ' || *s == '\t')
+        s++;
+    }
+    if (*s != '\0')
+      return -1;
+    if (snprintf(out, m, "%s", value) >= (int)m)
+      return -1;
+    return 0;
+  }
+  w = snprintf(out, m, "%f %f %f", r / 255.0, g / 255.0, b / 255.0);
+  if (w < 0 || (size_t)w >= m)
+    return -1;
   return 0;
 }
 
