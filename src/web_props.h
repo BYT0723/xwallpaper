@@ -10,6 +10,10 @@ typedef struct {
   char value[1024];
 } XWWebProp;
 
+/* Worst-case JS for one property: 127B name + 1024B value fully
+ * \uXXXX-escaped (~7kB). Sizes every object_js/apply_js buffer. */
+#define XW_WEB_PROP_JS_MAX 8192
+
 /* Parse project.json text, extract general.properties entries.
  * Returns the number stored in out (cap limited), or -1 on bad input
  * or when more entries exist than cap. */

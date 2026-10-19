@@ -37,10 +37,10 @@ static void test_parse_ok(void) {
 static void test_parse_bad(void) {
   TEST_BEGIN("parse rejects malformed input");
   XWWebProp out[8];
-  TEST_CHECK_EQ_INT(xw_web_props_parse("not json", 8, out, 8), -1);
-  TEST_CHECK_EQ_INT(xw_web_props_parse("{}", 2, out, 8), -1);
+  TEST_CHECK_EQ_INT(xw_web_props_parse("not json", strlen("not json"), out, 8), -1);
+  TEST_CHECK_EQ_INT(xw_web_props_parse("{}", strlen("{}"), out, 8), -1);
   TEST_CHECK_EQ_INT(
-      xw_web_props_parse("{\"general\":{}}", 13, out, 8), -1);
+      xw_web_props_parse("{\"general\":{}}", strlen("{\"general\":{}}"), out, 8), -1);
   TEST_CHECK_EQ_INT(xw_web_props_parse(NULL, 0, out, 8), -1);
   TEST_CHECK_EQ_INT(xw_web_props_parse(kProps, strlen(kProps), NULL, 8), -1);
   TEST_CHECK_EQ_INT(xw_web_props_parse(kProps, strlen(kProps), out, 0), -1);

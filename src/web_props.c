@@ -39,17 +39,16 @@ int xw_web_props_parse(const char *json, size_t len,
     }
     if (json_object_get_type(val) == json_type_object) {
       if (json_object_object_get_ex(val, "type", &t) && t &&
-          json_object_get_type(t) == json_type_string && json_object_get_string(t))
-        ts = json_object_get_string(t);
+          json_object_get_type(t) == json_type_string) {
+        const char *s = json_object_get_string(t);
+        if (s)
+          ts = s;
+      }
+      /* numbers/bools land as their JSON text form ("100", "true") */
       if (json_object_object_get_ex(val, "value", &v) && v) {
-        if (json_object_get_type(v) == json_type_string) {
-          if (json_object_get_string(v))
-            vs = json_object_get_string(v);
-        } else {
-          /* numbers/bools: JSON text form ("100", "true") */
-          if (json_object_get_string(v))
-            vs = json_object_get_string(v);
-        }
+        const char *s = json_object_get_string(v);
+        if (s)
+          vs = s;
       }
     }
     snprintf(out[n].name, sizeof(out[n].name), "%s", key);
@@ -138,7 +137,7 @@ int xw_web_props_object_js(const XWWebProp *props, int n,
 
 int xw_web_props_apply_js(const XWWebProp *props, int n,
                            char *out, size_t m) {
-  char obj[8192];
+  char obj[XW_WEB_PROP_JS_MAX];
   size_t off = 0;
   if (!props || n <= 0 || !out || m == 0)
     return -1;

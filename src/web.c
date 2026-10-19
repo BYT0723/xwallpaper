@@ -316,12 +316,18 @@ static void web_push_audio_ctl(WebCtx *ctx) {
  * shadow the parsed values for list and are replayed after every load. */
 #define XW_WEB_PROPS_CAP 256
 
-static void web_free_props(WebCtx *ctx) {
+static void web_free_parsed(WebCtx *ctx) {
   if (!ctx)
     return;
   free(ctx->props);
   ctx->props = NULL;
   ctx->n_props = 0;
+}
+
+static void web_free_props(WebCtx *ctx) {
+  if (!ctx)
+    return;
+  web_free_parsed(ctx);
   free(ctx->over);
   ctx->over = NULL;
   ctx->n_over = 0;
@@ -334,20 +340,12 @@ static void web_load_props(WebCtx *ctx) {
   char *buf;
   size_t nr;
   XWWebProp *tmp;
-  XWWebProp *keep;
-  int nkeep;
   int n;
 
   if (!ctx)
     return;
   /* Reload re-reads the defaults from disk but keeps runtime overrides. */
-  keep = ctx->over;
-  nkeep = ctx->n_over;
-  ctx->over = NULL;
-  ctx->n_over = 0;
-  web_free_props(ctx);
-  ctx->over = keep;
-  ctx->n_over = nkeep;
+  web_free_parsed(ctx);
   if (!ctx->root_dir[0])
     return;
   snprintf(path, sizeof(path), "%s/project.json", ctx->root_dir);
@@ -387,8 +385,7 @@ static void web_load_props(WebCtx *ctx) {
   ctx->n_props = n;
 }
 
-static const XWWebProp *web_find_prop(const XWWebProp *arr, int n,
-                                      const char *name) {
+static XWWebProp *web_find_prop(XWWebProp *arr, int n, const char *name) {
   int i;
   for (i = 0; i < n; i++)
     if (strcmp(arr[i].name, name) == 0)
@@ -427,9 +424,7 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
   WebCtx *ctx = (b && b->priv) ? (WebCtx *)b->priv : NULL;
   const XWWebProp *known;
   XWWebProp *slot = NULL;
-  int i;
-  XWWebProp one;
-  char js[9200];
+  char js[XW_WEB_PROP_JS_MAX + 128];
 
   if (!ctx || !name || !name[0] || !value) {
     XW_ERROR_SET(err, 1, "invalid args");
@@ -440,12 +435,7 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
     XW_ERROR_SET(err, 1, "unknown property '%.64s'", name);
     return -1;
   }
-  for (i = 0; i < ctx->n_over; i++) {
-    if (strcmp(ctx->over[i].name, name) == 0) {
-      slot = &ctx->over[i];
-      break;
-    }
-  }
+  slot = web_find_prop(ctx->over, ctx->n_over, name);
   if (!slot) {
     XWWebProp *grown;
     if (ctx->n_over >= XW_WEB_PROPS_CAP) {
@@ -465,8 +455,7 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
   snprintf(slot->value, sizeof(slot->value), "%s", value);
   /* Best effort: a page that has not finished loading (or navigated away)
    * misses this push, but the cached override is replayed on LOAD_FINISHED. */
-  one = *slot;
-  if (xw_web_props_apply_js(&one, 1, js, sizeof(js)) == 0)
+  if (xw_web_props_apply_js(slot, 1, js, sizeof(js)) == 0)
     web_eval(ctx, js);
   return 0;
 }
@@ -628,8 +617,7 @@ static void web_deliver_we_properties(WebKitWebView *view, WebCtx *ctx) {
   char *script;
 
   if (ctx && ctx->n_over > 0) {
-    /* worst case per prop: 1024B value fully \uXXXX-escaped, ~8kB */
-    size_t need = (size_t)ctx->n_over * 8192 + 64;
+    size_t need = (size_t)ctx->n_over * XW_WEB_PROP_JS_MAX + 64;
     over = malloc(need);
     if (over &&
         xw_web_props_object_js(ctx->over, ctx->n_over, over, need) != 0) {
