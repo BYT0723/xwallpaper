@@ -67,10 +67,23 @@ static void test_apply_js(void) {
   TEST_CHECK_EQ_INT(xw_web_props_apply_js(ps, 0, js, sizeof(js)), -1);
 }
 
+static void test_object_js(void) {
+  TEST_BEGIN("object literal for sequenced delivery");
+  XWWebProp ps[1];
+  snprintf(ps[0].name, sizeof(ps[0].name), "roleScale");
+  snprintf(ps[0].type, sizeof(ps[0].type), "slider");
+  snprintf(ps[0].value, sizeof(ps[0].value), "200");
+  char js[512];
+  TEST_CHECK_EQ_INT(xw_web_props_object_js(ps, 1, js, sizeof(js)), 0);
+  TEST_CHECK_EQ_STR(js, "{\"roleScale\":{\"value\":\"200\"}}");
+  TEST_CHECK_EQ_INT(xw_web_props_object_js(NULL, 0, js, sizeof(js)), -1);
+}
+
 int main(void) {
   TEST_SUITE("web_props");
   test_parse_ok();
   test_parse_bad();
   test_apply_js();
+  test_object_js();
   TEST_SUMMARY();
 }

@@ -85,9 +85,9 @@ struct XWBackend {
    * calls it from the daemon loop with fps throttling owned by the backend.
    * May be NULL (static image/video/web need no tick: video self-renders). */
   void (*tick)(XWBackend *b);
-  /* optional: user-property listing/override (scene). list_props appends
+  /* optional: user-property listing/override (scene, web). list_props appends
    * "name\ttype\tvalue\n" lines, returns the count or -1. May be NULL
-   * (image/video/web have no user properties). */
+   * (image/video have no user properties). */
   int (*list_props)(XWBackend *b, char *out, size_t n);
   int (*set_prop)(XWBackend *b, const char *name, const char *value,
                   XWError *err);

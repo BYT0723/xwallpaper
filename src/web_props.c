@@ -110,15 +110,13 @@ static int lit_append(char *out, size_t m, size_t *off, const char *s) {
   return 0;
 }
 
-int xw_web_props_apply_js(const XWWebProp *props, int n,
-                           char *out, size_t m) {
+int xw_web_props_object_js(const XWWebProp *props, int n,
+                            char *out, size_t m) {
   size_t off = 0;
   int i;
   if (!props || n <= 0 || !out || m == 0)
     return -1;
-  if (lit_append(out, m, &off,
-                 "window.wallpaperPropertyListener&&"
-                 "window.wallpaperPropertyListener.applyUserProperties({") != 0)
+  if (lit_append(out, m, &off, "{") != 0)
     return -1;
   for (i = 0; i < n; i++) {
     if (i > 0 && lit_append(out, m, &off, ",") != 0)
@@ -130,7 +128,27 @@ int xw_web_props_apply_js(const XWWebProp *props, int n,
         lit_append(out, m, &off, "\"}") != 0)
       return -1;
   }
-  if (lit_append(out, m, &off, "});") != 0)
+  if (lit_append(out, m, &off, "}") != 0)
+    return -1;
+  if (off >= m)
+    return -1;
+  out[off] = '\0';
+  return 0;
+}
+
+int xw_web_props_apply_js(const XWWebProp *props, int n,
+                           char *out, size_t m) {
+  char obj[8192];
+  size_t off = 0;
+  if (!props || n <= 0 || !out || m == 0)
+    return -1;
+  if (xw_web_props_object_js(props, n, obj, sizeof(obj)) != 0)
+    return -1;
+  if (lit_append(out, m, &off,
+                 "window.wallpaperPropertyListener&&"
+                 "window.wallpaperPropertyListener.applyUserProperties(") != 0 ||
+      lit_append(out, m, &off, obj) != 0 ||
+      lit_append(out, m, &off, ");") != 0)
     return -1;
   if (off >= m)
     return -1;

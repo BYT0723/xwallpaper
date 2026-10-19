@@ -23,4 +23,10 @@ int xw_web_props_parse(const char *json, size_t len,
 int xw_web_props_apply_js(const XWWebProp *props, int n,
                            char *out, size_t m);
 
+/* Build just the properties object literal: {"name":{"value":"..."},...}.
+ * Used to sequence overrides after the page's own project.json fetch.
+ * Returns 0, or -1 on bad input or a too-small buffer. */
+int xw_web_props_object_js(const XWWebProp *props, int n,
+                            char *out, size_t m);
+
 #endif

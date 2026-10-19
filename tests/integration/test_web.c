@@ -600,6 +600,81 @@ static void test_keys_not_swallowed(void) {
   xw_x11_destroy_window(win);
 }
 
+/* Web user properties: list comes from project.json general.properties,
+ * set forwards through applyUserProperties and survives reloads. */
+static void test_we_props_list_set(void) {
+  TEST_BEGIN("web list-props/set-prop bridge works and survives reload");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wepropset");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wepropset";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+
+  pump_gtk(dpy, 6);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+
+  /* list shows all three fixture properties with their default values */
+  char lines[4096];
+  memset(lines, 0, sizeof(lines));
+  TEST_CHECK(backend.list_props != NULL);
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK(strstr(lines, "bg\tcolor\t0 0 0") != NULL);
+  TEST_CHECK(strstr(lines, "zoom\tslider\t100") != NULL);
+  TEST_CHECK(strstr(lines, "note\ttext\thi") != NULL);
+
+  /* unknown names are rejected */
+  XWError serr;
+  memset(&serr, 0, sizeof(serr));
+  TEST_CHECK(backend.set_prop != NULL);
+  TEST_CHECK_EQ_INT(backend.set_prop(&backend, "nope", "1", &serr), -1);
+
+  /* set reaches the page through applyUserProperties ... */
+  memset(&serr, 0, sizeof(serr));
+  TEST_CHECK_EQ_INT(backend.set_prop(&backend, "zoom", "200", &serr), 0);
+  pump_gtk(dpy, 3);
+  const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+  TEST_CHECK(title != NULL && strstr(title, "\"zoom\":{\"value\":\"200\"}") != NULL);
+
+  /* ... and shadows the default in list */
+  memset(lines, 0, sizeof(lines));
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK(strstr(lines, "zoom\tslider\t200") != NULL);
+
+  /* reload replays the override after the defaults */
+  webkit_web_view_reload(WEBKIT_WEB_VIEW(view));
+  pump_gtk(dpy, 8);
+  title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+  TEST_CHECK(title != NULL && strstr(title, "\"zoom\":{\"value\":\"200\"}") != NULL);
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_paints();
@@ -607,6 +682,7 @@ int main(void) {
   test_wallpaper_noninteractive();
   test_storage_persistent();
   test_we_properties_delivered();
+  test_we_props_list_set();
   test_audio_control();
   test_keys_not_swallowed();
   TEST_SUMMARY();

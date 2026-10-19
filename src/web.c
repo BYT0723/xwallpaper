@@ -18,6 +18,7 @@
 #include "we_pulse.h"
 #include "web.h"
 #include "web_dir.h"
+#include "web_props.h"
 #include "x11.h"
 
 typedef struct {
@@ -37,6 +38,12 @@ typedef struct {
   int ctl_muted;
   int ctl_paused;
   int ctl_started;     /* 0 = leave the page's own mixing alone */
+  /* WE user properties from <root>/project.json (dir mode only) plus
+   * runtime overrides set via --set-property (replayed after each load). */
+  XWWebProp *props;
+  int n_props;
+  XWWebProp *over;
+  int n_over;
 } WebCtx;
 
 /* Process-wide registry of live web wallpapers (main thread only:
@@ -304,6 +311,166 @@ static void web_push_audio_ctl(WebCtx *ctx) {
     web_eval(ctx, "window.__xwCtlMedia&&window.__xwCtlMedia('pause');");
 }
 
+/* Wallpaper Engine user properties: <root>/project.json general.properties
+ * parsed once per wallpaper (dir mode only). Overrides from --set-property
+ * shadow the parsed values for list and are replayed after every load. */
+#define XW_WEB_PROPS_CAP 256
+
+static void web_free_props(WebCtx *ctx) {
+  if (!ctx)
+    return;
+  free(ctx->props);
+  ctx->props = NULL;
+  ctx->n_props = 0;
+  free(ctx->over);
+  ctx->over = NULL;
+  ctx->n_over = 0;
+}
+
+static void web_load_props(WebCtx *ctx) {
+  char path[2048];
+  FILE *f;
+  long sz;
+  char *buf;
+  size_t nr;
+  XWWebProp *tmp;
+  XWWebProp *keep;
+  int nkeep;
+  int n;
+
+  if (!ctx)
+    return;
+  /* Reload re-reads the defaults from disk but keeps runtime overrides. */
+  keep = ctx->over;
+  nkeep = ctx->n_over;
+  ctx->over = NULL;
+  ctx->n_over = 0;
+  web_free_props(ctx);
+  ctx->over = keep;
+  ctx->n_over = nkeep;
+  if (!ctx->root_dir[0])
+    return;
+  snprintf(path, sizeof(path), "%s/project.json", ctx->root_dir);
+  f = fopen(path, "rb");
+  if (!f)
+    return;
+  fseek(f, 0, SEEK_END);
+  sz = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (sz <= 0 || sz > (1 << 20)) {
+    fclose(f);
+    return;
+  }
+  buf = malloc((size_t)sz);
+  if (!buf) {
+    fclose(f);
+    return;
+  }
+  nr = fread(buf, 1, (size_t)sz, f);
+  fclose(f);
+  if (nr != (size_t)sz) {
+    free(buf);
+    return;
+  }
+  tmp = malloc(sizeof(*tmp) * XW_WEB_PROPS_CAP);
+  if (!tmp) {
+    free(buf);
+    return;
+  }
+  n = xw_web_props_parse(buf, nr, tmp, XW_WEB_PROPS_CAP);
+  free(buf);
+  if (n <= 0) {
+    free(tmp);
+    return;
+  }
+  ctx->props = tmp;
+  ctx->n_props = n;
+}
+
+static const XWWebProp *web_find_prop(const XWWebProp *arr, int n,
+                                      const char *name) {
+  int i;
+  for (i = 0; i < n; i++)
+    if (strcmp(arr[i].name, name) == 0)
+      return &arr[i];
+  return NULL;
+}
+
+static int web_list_props(XWBackend *b, char *out, size_t n) {
+  WebCtx *ctx = (b && b->priv) ? (WebCtx *)b->priv : NULL;
+  size_t off = 0;
+  int i, count = 0;
+
+  if (!ctx || !out || n == 0 || ctx->n_props <= 0)
+    return -1;
+  for (i = 0; i < ctx->n_props; i++) {
+    const XWWebProp *p = &ctx->props[i];
+    const XWWebProp *o = web_find_prop(ctx->over, ctx->n_over, p->name);
+    int w;
+    if (o)
+      p = o;
+    if (strchr(p->name, '\t') || strchr(p->name, '\n') ||
+        strchr(p->value, '\n'))
+      continue;
+    w = snprintf(out + off, n - off, "%s\t%s\t%s\n", p->name, p->type,
+                 p->value);
+    if (w < 0 || (size_t)w >= n - off)
+      return -1;
+    off += (size_t)w;
+    count++;
+  }
+  return count;
+}
+
+static int web_set_prop(XWBackend *b, const char *name, const char *value,
+                        XWError *err) {
+  WebCtx *ctx = (b && b->priv) ? (WebCtx *)b->priv : NULL;
+  const XWWebProp *known;
+  XWWebProp *slot = NULL;
+  int i;
+  XWWebProp one;
+  char js[9200];
+
+  if (!ctx || !name || !name[0] || !value) {
+    XW_ERROR_SET(err, 1, "invalid args");
+    return -1;
+  }
+  known = web_find_prop(ctx->props, ctx->n_props, name);
+  if (!known) {
+    XW_ERROR_SET(err, 1, "unknown property '%.64s'", name);
+    return -1;
+  }
+  for (i = 0; i < ctx->n_over; i++) {
+    if (strcmp(ctx->over[i].name, name) == 0) {
+      slot = &ctx->over[i];
+      break;
+    }
+  }
+  if (!slot) {
+    XWWebProp *grown;
+    if (ctx->n_over >= XW_WEB_PROPS_CAP) {
+      XW_ERROR_SET(err, 1, "too many property overrides");
+      return -1;
+    }
+    grown = realloc(ctx->over, sizeof(*grown) * (size_t)(ctx->n_over + 1));
+    if (!grown) {
+      XW_ERROR_SET(err, 1, "out of memory");
+      return -1;
+    }
+    ctx->over = grown;
+    slot = &ctx->over[ctx->n_over++];
+    snprintf(slot->name, sizeof(slot->name), "%s", name);
+    snprintf(slot->type, sizeof(slot->type), "%s", known->type);
+  }
+  snprintf(slot->value, sizeof(slot->value), "%s", value);
+  /* Best effort: a page that has not finished loading (or navigated away)
+   * misses this push, but the cached override is replayed on LOAD_FINISHED. */
+  one = *slot;
+  if (xw_web_props_apply_js(&one, 1, js, sizeof(js)) == 0)
+    web_eval(ctx, js);
+  return 0;
+}
+
 static int web_control(XWBackend *b, const char *name, const char *value,
                        XWError *err) {
   WebCtx *ctx = (b && b->priv) ? (WebCtx *)b->priv : NULL;
@@ -433,10 +600,13 @@ static WebKitWebsiteDataManager *web_new_data_manager(WebCtx *ctx) {
  * (background, sizes, colors) inside that callback. Without it such pages
  * render with transparent/missing backgrounds. After load, fetch the
  * sibling project.json (dir mode only) and deliver general.properties,
- * retrying briefly while the page script is still defining the listener. */
-static void web_deliver_we_properties(WebKitWebView *view) {
-  static const char *kScript =
+ * retrying briefly while the page script is still defining the listener.
+ * Cached --set-property overrides are applied right after the defaults so
+ * they survive reloads and page navigations. */
+static void web_deliver_we_properties(WebKitWebView *view, WebCtx *ctx) {
+  static const char *kTpl =
       "(function(){"
+      "var O=%s;"
       "var tries=0;"
       "function attempt(){"
       "tries++;"
@@ -446,14 +616,34 @@ static void web_deliver_we_properties(WebKitWebView *view) {
       "return;}"
       "fetch('project.json').then(function(r){return r.json();})"
       ".then(function(p){"
-      "if(!p||!p.general||!p.general.properties)return;"
-      "try{L.applyUserProperties(p.general.properties);}catch(e){}"
-      "}).catch(function(){});"
+      "if(p&&p.general&&p.general.properties){"
+      "try{L.applyUserProperties(p.general.properties);}catch(e){}}"
+      "if(O){try{L.applyUserProperties(O);}catch(e){}}"
+      "}).catch(function(){"
+      "if(O){try{L.applyUserProperties(O);}catch(e){}}});"
       "}"
       "attempt();"
       "})();";
-  webkit_web_view_evaluate_javascript(view, kScript, -1, NULL, NULL, NULL,
+  char *over = NULL;
+  char *script;
+
+  if (ctx && ctx->n_over > 0) {
+    /* worst case per prop: 1024B value fully \uXXXX-escaped, ~8kB */
+    size_t need = (size_t)ctx->n_over * 8192 + 64;
+    over = malloc(need);
+    if (over &&
+        xw_web_props_object_js(ctx->over, ctx->n_over, over, need) != 0) {
+      free(over);
+      over = NULL;
+    }
+  }
+  script = g_strdup_printf(kTpl, over ? over : "null");
+  free(over);
+  if (!script)
+    return;
+  webkit_web_view_evaluate_javascript(view, script, -1, NULL, NULL, NULL,
                                        NULL, NULL);
+  g_free(script);
 }
 
 static void web_load_changed_cb(WebKitWebView *view,
@@ -465,7 +655,7 @@ static void web_load_changed_cb(WebKitWebView *view,
   web_push_audio_ctl(ctx);
   if (!ctx->root_dir[0])
     return; /* only local dirs have a sibling project.json */
-  web_deliver_we_properties(view);
+  web_deliver_we_properties(view, ctx);
 }
 
 static uint64_t web_now_ms(void) {
@@ -612,6 +802,7 @@ static int web_store_input(WebCtx *ctx, const char *path, XWError *err) {
   if (mode == 2) {
     snprintf(ctx->root_dir, sizeof(ctx->root_dir), "%s", root);
     snprintf(ctx->entry, sizeof(ctx->entry), "%s", entry);
+    web_load_props(ctx);
   }
   return mode;
 }
@@ -780,6 +971,7 @@ static void web_destroy(XWBackend *b) {
     gtk_widget_destroy(ctx->window);
   ctx->window = NULL;
   ctx->view = NULL;
+  web_free_props(ctx);
   /* Let the destroy finalize promptly so the reparented X child and the
    * WebView release their GPU/DMA-BUF handles without waiting for the
    * next daemon poll tick. */
@@ -806,6 +998,8 @@ XWBackend *xw_web_backend_new(void) {
     .destroy = web_destroy,
     .on_event = NULL,
     .control = web_control,
+    .list_props = web_list_props,
+    .set_prop = web_set_prop,
     .reload = web_reload,
 #if defined(XW_HAVE_WAYLAND) && defined(XW_HAVE_GTK_LAYER_SHELL)
     /* start/stop/destroy/reload are pure WebKit/GTK ops on the isolated
