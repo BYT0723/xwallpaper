@@ -138,19 +138,16 @@ int xw_web_props_normalize(const char *type, const char *value,
     b = v & 0xff;
   } else {
     /* native WE triple: three floats, passed through verbatim */
-    int n = 0;
     const char *s = value;
     if (!*s)
       return -1;
     while (*s == ' ' || *s == '\t')
       s++;
-    for (n = 0; n < 3; n++) {
+    for (int i = 0; i < 3; i++) {
       char *end;
-      float f;
       if (*s == '\0')
         return -1;
-      f = strtof(s, &end);
-      (void)f;
+      (void)strtof(s, &end);
       if (end == s)
         return -1;
       s = end;

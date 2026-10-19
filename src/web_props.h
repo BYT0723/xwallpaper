@@ -4,10 +4,11 @@
 #include <stddef.h>
 
 /* One Wallpaper Engine user property from project.json general.properties. */
+#define XW_WEB_PROP_VALUE_MAX 1024
 typedef struct {
   char name[128];
   char type[32];
-  char value[1024];
+  char value[XW_WEB_PROP_VALUE_MAX];
 } XWWebProp;
 
 /* Worst-case JS for one property: 127B name + 1024B value fully

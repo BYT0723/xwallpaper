@@ -425,7 +425,7 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
   const XWWebProp *known;
   XWWebProp *slot = NULL;
   char js[XW_WEB_PROP_JS_MAX + 128];
-  char norm[1024];
+  char norm[XW_WEB_PROP_VALUE_MAX];
 
   if (!ctx || !name || !name[0] || !value) {
     XW_ERROR_SET(err, 1, "invalid args");
