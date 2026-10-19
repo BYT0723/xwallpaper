@@ -24,6 +24,7 @@ xwallpaperd
 /tests/integration/test_image
 /tests/integration/test_video
 /tests/integration/test_web
+/tests/integration/test_web_dpms
 /tests/integration/test_web_audio
 /tests/integration/test_app_geom
 /tests/integration/test_app_all

@@ -38,6 +38,7 @@ typedef struct {
   int ctl_muted;
   int ctl_paused;
   int ctl_started;     /* 0 = leave the page's own mixing alone */
+  int dpms_paused;     /* DPMS power-off freeze, independent of ctl_paused */
   /* WE user properties from <root>/project.json (dir mode only) plus
    * runtime overrides set via --set-property (replayed after each load). */
   XWWebProp *props;
@@ -86,7 +87,8 @@ void xw_web_we_push(const float bins[128]) {
   if (!js)
     return;
   for (int i = 0; i < g_nviews; i++) {
-    if (g_views[i]->want_audio && g_views[i]->view)
+    if (g_views[i]->want_audio && g_views[i]->view &&
+        !g_views[i]->dpms_paused)
       webkit_web_view_evaluate_javascript(WEBKIT_WEB_VIEW(g_views[i]->view),
                                            js, -1, NULL, NULL, NULL, NULL, NULL);
   }
@@ -528,7 +530,9 @@ static int web_control(XWBackend *b, const char *name, const char *value,
     if (strcmp(name, "mute") == 0) {
       ctx->ctl_started = 1;
       web_push_audio_ctl(ctx);
-    } else {
+    } else if (!ctx->dpms_paused) {
+      /* DPMS-frozen pages stay paused regardless; a play here only clears
+       * the user flag and is replayed on DPMS resume. */
       snprintf(js, sizeof(js),
                "window.__xwCtlMedia&&window.__xwCtlMedia('%s');",
                want ? "pause" : "play");
@@ -972,6 +976,27 @@ static void web_stop(XWBackend *b) {
     webkit_web_view_stop_loading(WEBKIT_WEB_VIEW(ctx->view));
 }
 
+/* DPMS power-off freeze: stop presenting (so the display stays off),
+ * hard-mute the view and pause page media. Mirrors the video/scene
+ * set_paused hook; dpms_paused is independent of the user's ctl_paused
+ * so a DPMS cycle never clears a manual pause. */
+static void web_set_paused(XWBackend *b, int paused) {
+  WebCtx *ctx = (WebCtx *)b->priv;
+  if (!ctx || !ctx->view || !ctx->window)
+    return;
+  ctx->dpms_paused = paused ? 1 : 0;
+  if (paused) {
+    webkit_web_view_set_is_muted(WEBKIT_WEB_VIEW(ctx->view), TRUE);
+    web_eval(ctx, "window.__xwCtlMedia&&window.__xwCtlMedia('pause');");
+    gtk_widget_hide(ctx->window);
+  } else {
+    gtk_widget_show(ctx->window);
+    webkit_web_view_set_is_muted(WEBKIT_WEB_VIEW(ctx->view), FALSE);
+    if (!ctx->ctl_paused)
+      web_eval(ctx, "window.__xwCtlMedia&&window.__xwCtlMedia('play');");
+  }
+}
+
 /* 同类型复用: 换 URL/页面后重新加载 webkit 视图。
  * 换壁纸时丢弃旧 overrides (同名 property 不互通), 同一壁纸重载则保留
  * 仍存在的 overrides 并剪掉已消失的。 */
@@ -1042,6 +1067,7 @@ XWBackend *xw_web_backend_new(void) {
     .destroy = web_destroy,
     .on_event = NULL,
     .control = web_control,
+    .set_paused = web_set_paused,
     .list_props = web_list_props,
     .set_prop = web_set_prop,
     .reload = web_reload,
