@@ -194,6 +194,18 @@ int xw_proto_encode_set_prop(const XWConfig *cfg, char *msg, size_t n) {
   return finish(msg, n, &off);
 }
 
+int xw_proto_encode_clear_props(const XWConfig *cfg, char *msg, size_t n) {
+  const char *t = (cfg->target == XW_TARGET_OUTPUT && cfg->output[0])
+                      ? cfg->output
+                      : "primary";
+  size_t off = 0;
+  if (append_field(msg, n, &off, "clear-props") < 0)
+    return -1;
+  if (append_field(msg, n, &off, t) < 0)
+    return -1;
+  return finish(msg, n, &off);
+}
+
 int xw_proto_encode_control(const XWConfig *cfg, char *msg, size_t n) {
   const char *t;
   char kv[96];

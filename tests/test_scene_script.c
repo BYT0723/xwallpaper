@@ -548,6 +548,26 @@ static void test_engine_api(void) {
   xw_script_destroy(s);
 }
 
+static void test_override_list_clear(void) {
+  TEST_BEGIN("overrides list and clear for persistence");
+  XWScript *s = make_engine();
+  TEST_CHECK(s != NULL);
+  if (!s)
+    return;
+  XWUserProp out[8];
+  int n = 0;
+  TEST_CHECK_EQ_INT(xw_script_set_user_prop(s, "a", "1"), 0);
+  TEST_CHECK_EQ_INT(xw_script_set_user_prop(s, "b", "2"), 0);
+  TEST_CHECK_EQ_INT(xw_script_list_overrides(s, out, 8, &n), 0);
+  TEST_CHECK_EQ_INT(n, 2);
+  TEST_CHECK_EQ_INT(xw_script_clear_user_prop(s, "a"), 0);
+  TEST_CHECK_EQ_INT(xw_script_list_overrides(s, out, 8, &n), 0);
+  TEST_CHECK_EQ_INT(n, 1);
+  TEST_CHECK_EQ_STR(out[0].name, "b");
+  TEST_CHECK_EQ_INT(xw_script_clear_user_prop(s, "missing"), -1);
+  xw_script_destroy(s);
+}
+
 int main(void) {
   TEST_SUITE("scene_script");
   test_eval_arithmetic();
@@ -557,6 +577,7 @@ int main(void) {
   test_time_and_error_isolation();
   test_bindings_rw();
   test_props_and_resolve();
+  test_override_list_clear();
   test_mouse_and_no_scene();
   test_text_layer();
   test_prop_scripts();

@@ -110,6 +110,15 @@ static void test_encode_props(void) {
   TEST_CHECK(strncmp(msg, "set-prop\0", 9) == 0);
   TEST_CHECK(has_field(msg, n, "DP-1"));
   TEST_CHECK(has_field(msg, n, "rain=0"));
+
+  reset();
+  cfg.command = XW_CMD_CLEAR_PROPS;
+  cfg.target = XW_TARGET_OUTPUT;
+  snprintf(cfg.output, sizeof(cfg.output), "DP-1");
+  n = xw_proto_encode_clear_props(&cfg, msg, sizeof(msg));
+  TEST_CHECK(n > 0);
+  TEST_CHECK(strncmp(msg, "clear-props\0", 12) == 0);
+  TEST_CHECK(has_field(msg, n, "DP-1"));
 }
 
 static void test_encode_set_video_fps(void) {

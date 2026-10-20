@@ -18,6 +18,7 @@ enum {
   XW_CMD_RESTORE, /* restore last wallpapers kept by clear --keep (restore) */
   XW_CMD_LIST_PROPS, /* list user properties of a scene wallpaper */
   XW_CMD_SET_PROP,   /* override a user property on a live scene wallpaper */
+  XW_CMD_CLEAR_PROPS, /* drop overrides for a wallpaper (back to defaults) */
   XW_CMD_CONTROL,    /* runtime control of a live wallpaper (volume/mute) */
 };
 

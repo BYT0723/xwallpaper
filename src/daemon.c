@@ -648,6 +648,27 @@ int xw_daemon_main(void) {
                   reply_n = reply_error(reply, sizeof(reply), aerr.msg);
               }
             }
+          } else if (VERB_IS("clear-props")) {
+            XWConfig cfg;
+            Decoded d;
+            memset(&cfg, 0, sizeof(cfg));
+            split_fields(msg, (size_t)r, &d);
+            if (d.nfields < 2) {
+              reply_n = reply_error(reply, sizeof(reply), "malformed clear-props");
+            } else {
+              XWError aerr;
+              memset(&aerr, 0, sizeof(aerr));
+              if (strcmp(d.fields[1], "primary") == 0) {
+                cfg.target = XW_TARGET_PRIMARY;
+              } else {
+                cfg.target = XW_TARGET_OUTPUT;
+                snprintf(cfg.output, sizeof(cfg.output), "%s", d.fields[1]);
+              }
+              if (xw_app_clear_props(cur, &cfg, &aerr) == 0)
+                reply_n = snprintf(reply, sizeof(reply), "ok\n");
+              else
+                reply_n = reply_error(reply, sizeof(reply), aerr.msg);
+            }
           } else if (VERB_IS("control")) {
             XWConfig cfg;
             Decoded d;

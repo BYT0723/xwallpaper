@@ -37,6 +37,7 @@ int main(int argc, char **argv) {
   case XW_CMD_STATE:   n = xw_proto_encode_list(msg, sizeof(msg)); break;
   case XW_CMD_LIST_PROPS: n = xw_proto_encode_list_props(&cfg, msg, sizeof(msg)); break;
   case XW_CMD_SET_PROP:   n = xw_proto_encode_set_prop(&cfg, msg, sizeof(msg)); break;
+  case XW_CMD_CLEAR_PROPS: n = xw_proto_encode_clear_props(&cfg, msg, sizeof(msg)); break;
   case XW_CMD_CONTROL:    n = xw_proto_encode_control(&cfg, msg, sizeof(msg)); break;
   case XW_CMD_RESTORE: n = xw_proto_encode_restore(msg, sizeof(msg)); break;
   case XW_CMD_EXIT:    n = xw_proto_encode_exit(msg, sizeof(msg)); break;

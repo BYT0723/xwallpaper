@@ -128,6 +128,7 @@ void xw_cli_usage(FILE *f) {
     "  xwallpaper --state\n"
     "  xwallpaper --list-properties [-m <output>]\n"
     "  xwallpaper --set-property <name=value> [-m <output>]\n"
+    "  xwallpaper --clear-properties [-m <output>]\n"
     "  xwallpaper volume [-m <output>|--all] <+N|-N|N>\n"
     "  xwallpaper mute [-m <output>|--all] [on|off|toggle]\n"
     "  xwallpaper exit\n"
@@ -215,9 +216,11 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
   }
 
   if (strcmp(cmd, "--list-properties") == 0 ||
-      strcmp(cmd, "--set-property") == 0) {
+      strcmp(cmd, "--set-property") == 0 ||
+      strcmp(cmd, "--clear-properties") == 0) {
     cfg->command = (strcmp(cmd, "--list-properties") == 0) ? XW_CMD_LIST_PROPS
-                                                          : XW_CMD_SET_PROP;
+                 : (strcmp(cmd, "--clear-properties") == 0) ? XW_CMD_CLEAR_PROPS
+                                                           : XW_CMD_SET_PROP;
     cfg->target = XW_TARGET_PRIMARY;
     for (; i < argc; i++) {
       const char *a = argv[i];
