@@ -9,6 +9,8 @@ xwallpaperd
 /tests/test_state
 /tests/test_we_audio
 /tests/test_web_dir
+/tests/test_web_props
+/tests/test_props_store
 /tests/test_wl
 /tests/test_scene_pkg
 /tests/test_scene_tex
