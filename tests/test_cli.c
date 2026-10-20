@@ -165,6 +165,12 @@ static void test_props_commands(void) {
   reset();
   char *a6[] = {"xwallpaper", "--list-properties", "--all"};
   TEST_CHECK_EQ_INT(parse(a6, 3), -1);
+  reset();
+  char *a7[] = {"xwallpaper", "--clear-properties", "-m", "DP-1"};
+  TEST_CHECK_EQ_INT(parse(a7, 4), 0);
+  TEST_CHECK_EQ_INT(cfg.command, XW_CMD_CLEAR_PROPS);
+  TEST_CHECK_EQ_INT(cfg.target, XW_TARGET_OUTPUT);
+  TEST_CHECK_EQ_STR(cfg.output, "DP-1");
 }
 
 static void test_set_geometry(void) {

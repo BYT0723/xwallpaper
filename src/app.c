@@ -1017,6 +1017,22 @@ int xw_app_set_prop(XWApp *app, const XWConfig *cfg, const char *name,
   return b->set_prop(b, name, value, err);
 }
 
+int xw_app_clear_props(XWApp *app, const XWConfig *cfg, XWError *err) {
+  int idx = props_backend(app, cfg, err);
+  XWBackend *b;
+  if (idx < 0) {
+    if (err && !err->code)
+      XW_ERROR_SET(err, 1, "no wallpaper on that output");
+    return -1;
+  }
+  b = app->backends[idx];
+  if (!b || !b->clear_props) {
+    XW_ERROR_SET(err, 1, "that wallpaper has no user properties");
+    return -1;
+  }
+  return b->clear_props(b, err);
+}
+
 int xw_app_control(XWApp *app, const XWConfig *cfg, const char *name,
                    const char *value, XWError *err) {
   int idx;

@@ -112,6 +112,9 @@ int xw_app_list_props(XWApp *app, const XWConfig *cfg, char *out, size_t n,
 int xw_app_set_prop(XWApp *app, const XWConfig *cfg, const char *name,
                     const char *value, XWError *err);
 
+/* Drop all user-property overrides on the window addressed by cfg. */
+int xw_app_clear_props(XWApp *app, const XWConfig *cfg, XWError *err);
+
 /* Runtime control of the live window addressed by cfg (volume/mute/pause/
  * seek/rotate). XW_TARGET_ALL applies to every window and succeeds when at
  * least one backend accepted the action. */

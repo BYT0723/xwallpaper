@@ -22,6 +22,7 @@
  *      (screen full-wallpaper clearing; `restore` brings them back)
  *    list-props\0<target>\n  target: primary | <output-name>
  *    set-prop\0<target>\0<name=value>\n
+ *    clear-props\0<target>\n  target: primary | <output-name>
  *    list\n
  *    restore\n              rebuild windows kept by `clear --keep`
  *    exit\n
@@ -49,6 +50,7 @@ int xw_proto_encode_clear(const XWConfig *cfg, char *msg, size_t n);
 int xw_proto_encode_list(char *msg, size_t n);
 int xw_proto_encode_list_props(const XWConfig *cfg, char *msg, size_t n);
 int xw_proto_encode_set_prop(const XWConfig *cfg, char *msg, size_t n);
+int xw_proto_encode_clear_props(const XWConfig *cfg, char *msg, size_t n);
 int xw_proto_encode_control(const XWConfig *cfg, char *msg, size_t n);
 int xw_proto_encode_restore(char *msg, size_t n);
 int xw_proto_encode_exit(char *msg, size_t n);
