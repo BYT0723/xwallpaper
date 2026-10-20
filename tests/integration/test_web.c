@@ -5,7 +5,9 @@
  * pumps the GTK context (the pattern the daemon uses), then samples a pixel. */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <glib.h>
 #include <gtk/gtk.h>
 #include <webkit2/webkit2.h>
@@ -17,9 +19,20 @@
 #include "../harness.h"
 #include "../../src/backend.h"
 #include "../../src/backends.h"
+#include "../../src/props_store.h"
 #include "../../src/web.h"
 #include "../../src/x11.h"
 #include "../../src/cli.h"
+
+static void isolate_props_state(void) {
+  static int seq = 0;
+  char dir[256], cmd[512];
+  snprintf(dir, sizeof(dir), "/tmp/opencode/xw-integ-%d-%d", (int)getpid(), seq++);
+  snprintf(cmd, sizeof(cmd), "rm -rf %s; mkdir -p %s", dir, dir);
+  (void)system(cmd);
+  setenv("XDG_STATE_HOME", dir, 1);
+  xw_web_cache_clear_for_tests();
+}
 
 static GtkWidget *find_web_view(void) {
   GList *tops = gtk_window_list_toplevels();
@@ -607,7 +620,7 @@ static void test_we_props_list_set(void) {
   TEST_BEGIN("web list-props/set-prop bridge works and survives reload");
   XWError err;
   memset(&err, 0, sizeof(err));
-  xw_web_cache_clear_for_tests();
+  isolate_props_state();
   Display *dpy = xw_x11_open_display(&err);
   TEST_CHECK(dpy != NULL);
   if (!dpy)
@@ -712,7 +725,7 @@ static void test_we_props_switch_isolation(void) {
   TEST_BEGIN("switching web wallpaper isolates but remembers per-wallpaper overrides");
   XWError err;
   memset(&err, 0, sizeof(err));
-  xw_web_cache_clear_for_tests();
+  isolate_props_state();
   Display *dpy = xw_x11_open_display(&err);
   TEST_CHECK(dpy != NULL);
   if (!dpy)
@@ -785,6 +798,80 @@ static void test_we_props_switch_isolation(void) {
   xw_x11_destroy_window(win);
 }
 
+static void test_we_props_disk_and_clear(void) {
+  TEST_BEGIN("web props survive destroy+init via disk, clear resets to default");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  isolate_props_state();
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wepropdisk");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wepropset";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+
+  XWError serr;
+  char lines[4096];
+  memset(&serr, 0, sizeof(serr));
+  TEST_CHECK_EQ_INT(backend.set_prop(&backend, "zoom", "200", &serr), 0);
+
+  /* destroy persists to disk; drop memory to prove the disk path */
+  backend.destroy(&backend);
+  xw_web_cache_clear_for_tests();
+
+  memset(&backend, 0, sizeof(backend));
+  backend = *tmpl;
+  memset(&err, 0, sizeof(err));
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  memset(lines, 0, sizeof(lines));
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK(strstr(lines, "zoom\tslider\t200") != NULL);
+
+  /* clear drops memory+disk and re-applies defaults to the live page */
+  memset(&serr, 0, sizeof(serr));
+  TEST_CHECK(backend.clear_props != NULL);
+  TEST_CHECK_EQ_INT(backend.clear_props(&backend, &serr), 0);
+  memset(lines, 0, sizeof(lines));
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK(strstr(lines, "zoom\tslider\t100") != NULL);
+
+  /* a fresh init after clear stays at the default (disk file gone) */
+  backend.destroy(&backend);
+  xw_web_cache_clear_for_tests();
+  memset(&backend, 0, sizeof(backend));
+  backend = *tmpl;
+  memset(&err, 0, sizeof(err));
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  memset(lines, 0, sizeof(lines));
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK(strstr(lines, "zoom\tslider\t100") != NULL);
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_paints();
@@ -794,6 +881,7 @@ int main(void) {
   test_we_properties_delivered();
   test_we_props_list_set();
   test_we_props_switch_isolation();
+  test_we_props_disk_and_clear();
   test_audio_control();
   test_keys_not_swallowed();
   TEST_SUMMARY();
