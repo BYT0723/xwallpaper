@@ -13,6 +13,7 @@
 #include "backend.h"
 #include "backends.h"
 #include "keybinds.h"
+#include "props_store.h"
 #include "scene.h"
 #include "scene_gl.h"
 #include "scene_image.h"
@@ -37,6 +38,7 @@ typedef struct XWSceneCtx {
   XWWindow *win;
   XWScene scene;
   char dir[1024];
+  char wallpaper_id[2048]; /* canonical opt->path (realpath), stable for .pkg tmpdir */
   int parsed;
   int paused;
   double fps;
@@ -233,6 +235,7 @@ static int render_overlays(XWSceneCtx *c, float t, const float *alphas,
 static int scene_list_props(XWBackend *b, char *out, size_t n);
 static int scene_set_prop(XWBackend *b, const char *name, const char *value,
                           XWError *err);
+static int scene_clear_props(XWBackend *b, XWError *err);
 static int scene_on_event(XWBackend *b, XEvent *ev);
 
 static int load_script(XWSceneCtx *c, XWError *err) {
@@ -323,6 +326,68 @@ static void free_tmpdir_path(char *tmpdir) {
 static void free_tmpdir(XWSceneCtx *c) {
   if (c)
     free_tmpdir_path(c->tmpdir);
+}
+
+/* Canonical wallpaper identity: realpath(opt path), fallback to raw path.
+ * .pkg scenes extract to a fresh mkdtemp each init, so the resolved dir
+ * is unstable; the opt path is the stable key. */
+static void scene_wallpaper_id(const char *optpath, char *out, size_t n) {
+  char *abs;
+  if (!out || n == 0)
+    return;
+  out[0] = '\0';
+  if (!optpath || !optpath[0])
+    return;
+  abs = realpath(optpath, NULL);
+  if (abs) {
+    snprintf(out, n, "%s", abs);
+    free(abs);
+  } else {
+    snprintf(out, n, "%s", optpath);
+  }
+}
+
+static int scene_prop_known(XWSceneCtx *c, const char *name) {
+  int i;
+  if (!c || !name)
+    return 0;
+  for (i = 0; i < c->scene.n_props; i++) {
+    if (strcmp(c->scene.props[i].name, name) == 0)
+      return 1;
+  }
+  return 0;
+}
+
+static void scene_disk_save(XWSceneCtx *c) {
+  XWUserProp over[256];
+  XWStoredProp s[256];
+  int n = 0, i;
+  if (!c || !c->wallpaper_id[0] || !c->script)
+    return;
+  if (xw_script_list_overrides(c->script, over, 256, &n) != 0 || n <= 0) {
+    xw_props_store_save(c->wallpaper_id, NULL, 0);
+    return;
+  }
+  for (i = 0; i < n; i++) {
+    snprintf(s[i].name, sizeof(s[i].name), "%s", over[i].name);
+    snprintf(s[i].type, sizeof(s[i].type), "%s", over[i].type);
+    snprintf(s[i].value, sizeof(s[i].value), "%s", over[i].value);
+  }
+  xw_props_store_save(c->wallpaper_id, s, n);
+}
+
+static void scene_disk_load(XWSceneCtx *c) {
+  XWStoredProp s[256];
+  int n = 0, i;
+  if (!c || !c->wallpaper_id[0] || !c->script)
+    return;
+  if (xw_props_store_load(c->wallpaper_id, s, 256, &n) != 0 || n <= 0)
+    return;
+  for (i = 0; i < n; i++) {
+    if (!scene_prop_known(c, s[i].name))
+      continue;
+    (void)xw_script_set_user_prop(c->script, s[i].name, s[i].value);
+  }
 }
 
 /* Copy a file byte for byte; returns -1 on any read/write/open failure. */
@@ -593,6 +658,7 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     free(c);
     return -1;
   }
+  scene_wallpaper_id(opt->path, c->wallpaper_id, sizeof(c->wallpaper_id));
   c->fps = opt->fps > 0.0 ? opt->fps : XW_SCENE_FPS_DEFAULT;
   c->mute = opt->mute ? 1 : 0;
   c->volume = opt->volume;
@@ -633,6 +699,7 @@ static int scene_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt,
     free(c);
     return -1;
   }
+  scene_disk_load(c);
   c->gc = XCreateGC(win->dpy, win->win, 0, NULL);
   if (!c->gc) {
     XW_ERROR_SET(err, 1, "cannot create scene GC");
@@ -676,6 +743,7 @@ static void scene_destroy(XWBackend *b) {
   XWSceneCtx *c;
   if (!b || !(c = (XWSceneCtx *)b->priv))
     return;
+  scene_disk_save(c);
   free_texts(c);
   if (c->gl)
     xw_gl_destroy(c->gl);
@@ -699,10 +767,32 @@ static void scene_destroy(XWBackend *b) {
 static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   XWSceneCtx *c = b ? (XWSceneCtx *)b->priv : NULL;
   XWScene next;
-  char dir[1024], tmpdir[1024];
+  char dir[1024], tmpdir[1024], new_id[2048], old_id[2048];
+  XWUserProp snap[256];
+  int nsnap = 0, same = 0, i;
   if (!c || !c->parsed || !opt || !opt->path || !opt->path[0]) {
     XW_ERROR_SET(err, 1, "scene reload needs a wallpaper directory");
     return -1;
+  }
+  snprintf(old_id, sizeof(old_id), "%s", c->wallpaper_id);
+  scene_wallpaper_id(opt->path, new_id, sizeof(new_id));
+  same = old_id[0] && new_id[0] && strcmp(old_id, new_id) == 0;
+  /* Snapshot live overrides before the script is freed; same-wallpaper
+   * reload replays them, a switch persists them for later. */
+  if (c->script)
+    (void)xw_script_list_overrides(c->script, snap, 256, &nsnap);
+  if (nsnap > 0 && old_id[0]) {
+    XWStoredProp s[256];
+    for (i = 0; i < nsnap; i++) {
+      snprintf(s[i].name, sizeof(s[i].name), "%s", snap[i].name);
+      snprintf(s[i].type, sizeof(s[i].type), "%s", snap[i].type);
+      snprintf(s[i].value, sizeof(s[i].value), "%s", snap[i].value);
+    }
+    xw_props_store_save(old_id, s, nsnap);
+  } else if (old_id[0]) {
+    /* No live overrides: keep whatever the disk already has (do not delete,
+     * the disk may hold overrides from an earlier window showing the same
+     * wallpaper while this window never customized it). */
   }
   /* Stage the replacement before touching the live scene: a bad path or a
    * parse error must keep the old wallpaper up (app.c promises exactly
@@ -723,6 +813,7 @@ static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   free_tmpdir(c);
   snprintf(c->dir, sizeof(c->dir), "%s", dir);
   snprintf(c->tmpdir, sizeof(c->tmpdir), "%s", tmpdir);
+  snprintf(c->wallpaper_id, sizeof(c->wallpaper_id), "%s", new_id);
   c->scene = next;
   c->mute = opt->mute ? 1 : 0;
   c->volume = opt->volume;
@@ -743,6 +834,16 @@ static int scene_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
    * Fresh sets fail hard in init instead so typos never land silently. */
   if (load_script(c, err) != 0)
     memset(err, 0, sizeof(*err));
+  if (same && nsnap > 0 && c->script) {
+    for (i = 0; i < nsnap; i++) {
+      if (!scene_prop_known(c, snap[i].name))
+        continue;
+      (void)xw_script_set_user_prop(c->script, snap[i].name, snap[i].value);
+    }
+    scene_disk_save(c);
+  } else if (!same) {
+    scene_disk_load(c);
+  }
   if (opt->fps > 0.0)
     c->fps = opt->fps;
   {
@@ -849,6 +950,7 @@ XWBackend *xw_scene_backend_new(void) {
     .retry = NULL,
     .list_props = scene_list_props,
     .set_prop = scene_set_prop,
+    .clear_props = scene_clear_props,
   };
   return &backend;
 }
@@ -948,5 +1050,26 @@ static int scene_set_prop(XWBackend *b, const char *name, const char *value,
     XW_ERROR_SET(err, 1, "cannot set property '%.64s'", name);
     return -1;
   }
+  scene_disk_save(c);
+  return 0;
+}
+
+static int scene_clear_props(XWBackend *b, XWError *err) {
+  XWSceneCtx *c = b ? (XWSceneCtx *)b->priv : NULL;
+  XWUserProp over[256];
+  int n = 0, i;
+  if (!c || !c->parsed) {
+    XW_ERROR_SET(err, 1, "invalid args");
+    return -1;
+  }
+  if (!c->script || c->scene.n_props <= 0) {
+    XW_ERROR_SET(err, 1, "that wallpaper has no user properties");
+    return -1;
+  }
+  if (xw_script_list_overrides(c->script, over, 256, &n) == 0) {
+    for (i = 0; i < n; i++)
+      (void)xw_script_clear_user_prop(c->script, over[i].name);
+  }
+  xw_props_store_save(c->wallpaper_id, NULL, 0);
   return 0;
 }
