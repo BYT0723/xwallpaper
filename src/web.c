@@ -336,6 +336,136 @@ static void web_clear_overrides(WebCtx *ctx) {
   ctx->n_over = 0;
 }
 
+static void web_prune_overrides(WebCtx *ctx);
+
+/* Per-wallpaper override cache (daemon lifetime, memory only): switching
+ * A -> B -> A restores A's customization instead of resetting to
+ * project.json defaults, while A/B never see each other's values.
+ * Key is the resolved root_dir (dir mode, absolute) else the input path. */
+#define XW_WEB_CACHE_MAX 32
+
+typedef struct {
+  char key[2048];
+  XWWebProp *over;
+  int n_over;
+} XWWebCacheEnt;
+
+static XWWebCacheEnt *g_cache = NULL;
+static int g_ncache = 0;
+
+static void web_cache_key(const char *root_dir, const char *path, char *out,
+                          size_t n) {
+  if (!out || n == 0)
+    return;
+  if (root_dir && root_dir[0])
+    snprintf(out, n, "%s", root_dir);
+  else if (path && path[0])
+    snprintf(out, n, "%s", path);
+  else
+    out[0] = '\0';
+}
+
+static XWWebCacheEnt *web_cache_find(const char *key) {
+  int i;
+  if (!key || !key[0])
+    return NULL;
+  for (i = 0; i < g_ncache; i++) {
+    if (strcmp(g_cache[i].key, key) == 0)
+      return &g_cache[i];
+  }
+  return NULL;
+}
+
+static void web_cache_save(const char *key, const XWWebProp *over,
+                           int n_over) {
+  XWWebCacheEnt *e;
+  if (!key || !key[0])
+    return;
+  e = web_cache_find(key);
+  if (e) {
+    free(e->over);
+    e->over = NULL;
+    e->n_over = 0;
+    if (n_over <= 0) {
+      int idx = (int)(e - g_cache);
+      memmove(&g_cache[idx], &g_cache[idx + 1],
+              sizeof(*g_cache) * (size_t)(g_ncache - idx - 1));
+      g_ncache--;
+      if (g_ncache == 0) {
+        free(g_cache);
+        g_cache = NULL;
+      }
+      return;
+    }
+    e->over = malloc(sizeof(*e->over) * (size_t)n_over);
+    if (!e->over)
+      return;
+    memcpy(e->over, over, sizeof(*e->over) * (size_t)n_over);
+    e->n_over = n_over;
+    return;
+  }
+  if (n_over <= 0 || !over)
+    return;
+  if (g_ncache >= XW_WEB_CACHE_MAX) {
+    free(g_cache[0].over);
+    memmove(&g_cache[0], &g_cache[1],
+            sizeof(*g_cache) * (size_t)(g_ncache - 1));
+    g_ncache--;
+  }
+  {
+    XWWebCacheEnt *grown =
+        realloc(g_cache, sizeof(*grown) * (size_t)(g_ncache + 1));
+    if (!grown)
+      return;
+    g_cache = grown;
+    e = &g_cache[g_ncache++];
+    snprintf(e->key, sizeof(e->key), "%s", key);
+    e->over = malloc(sizeof(*e->over) * (size_t)n_over);
+    if (!e->over) {
+      g_ncache--;
+      return;
+    }
+    memcpy(e->over, over, sizeof(*e->over) * (size_t)n_over);
+    e->n_over = n_over;
+  }
+}
+
+/* Copy the cached overrides for key into ctx (replacing any live ones),
+ * then prune entries whose property vanished from the freshly parsed
+ * project.json. No entry -> ctx keeps whatever the caller left it with. */
+static void web_cache_restore(WebCtx *ctx, const char *key) {
+  XWWebCacheEnt *e;
+  if (!ctx || !key || !key[0])
+    return;
+  e = web_cache_find(key);
+  if (!e || e->n_over <= 0 || !e->over)
+    return;
+  free(ctx->over);
+  ctx->over = NULL;
+  ctx->n_over = 0;
+  ctx->over = malloc(sizeof(*ctx->over) * (size_t)e->n_over);
+  if (!ctx->over)
+    return;
+  memcpy(ctx->over, e->over, sizeof(*ctx->over) * (size_t)e->n_over);
+  ctx->n_over = e->n_over;
+  web_prune_overrides(ctx);
+  if (ctx->n_over == 0) {
+    free(ctx->over);
+    ctx->over = NULL;
+  }
+}
+
+/* Test hook: drop the whole per-wallpaper cache so integration cases start
+ * from project.json defaults instead of a previous case's overrides. */
+void xw_web_cache_clear_for_tests(void) {
+  int i;
+  for (i = 0; i < g_ncache; i++)
+    free(g_cache[i].over);
+  free(g_cache);
+  g_cache = NULL;
+  g_ncache = 0;
+}
+
 static void web_free_props(WebCtx *ctx) {
   if (!ctx)
     return;
@@ -496,6 +626,11 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
    * misses this push, but the cached override is replayed on LOAD_FINISHED. */
   if (xw_web_props_apply_js(slot, 1, js, sizeof(js)) == 0)
     web_eval(ctx, js);
+  {
+    char key[2048];
+    web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
+    web_cache_save(key, ctx->over, ctx->n_over);
+  }
   return 0;
 }
 
@@ -901,6 +1036,11 @@ static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWErro
     free(ctx);
     return -1;
   }
+  {
+    char key[2048];
+    web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
+    web_cache_restore(ctx, key);
+  }
 
   /* A plain GtkWindow + WebKitWebView renders reliably. We then reparent the
    * window onto the wallpaper X window at the X protocol level (NOT via
@@ -998,29 +1138,37 @@ static void web_set_paused(XWBackend *b, int paused) {
 }
 
 /* 同类型复用: 换 URL/页面后重新加载 webkit 视图。
- * 换壁纸时丢弃旧 overrides (同名 property 不互通), 同一壁纸重载则保留
- * 仍存在的 overrides 并剪掉已消失的。 */
+ * 换壁纸时按壁纸身份隔离 overrides: 旧壁纸的值存入 per-wallpaper 缓存,
+ * 新壁纸从缓存恢复自己的值 (无缓存则回到 project.json 默认),
+ * 同一壁纸重载则保留仍存在的 overrides 并剪掉已消失的。 */
 static int web_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   WebCtx *ctx = (WebCtx *)b->priv;
   char old_root[sizeof(ctx->root_dir)];
   const char *old_path;
+  char old_key[2048], new_key[2048];
   int same;
   if (!ctx)
     return -1;
   snprintf(old_root, sizeof(old_root), "%s", ctx->root_dir);
   old_path = ctx->path;
+  web_cache_key(old_root, old_path, old_key, sizeof(old_key));
   if (web_store_input(ctx, opt->path, err) == 0)
     return -1;
+  web_cache_key(ctx->root_dir, opt->path, new_key, sizeof(new_key));
   if (old_root[0] || ctx->root_dir[0])
     same = strcmp(old_root, ctx->root_dir) == 0;
   else if (old_path && opt->path)
     same = strcmp(old_path, opt->path) == 0;
   else
     same = 0;
-  if (!same)
+  if (!same) {
+    web_cache_save(old_key, ctx->over, ctx->n_over);
     web_clear_overrides(ctx);
-  else
+    web_cache_restore(ctx, new_key);
+  } else {
     web_prune_overrides(ctx);
+    web_cache_save(new_key, ctx->over, ctx->n_over);
+  }
   free(ctx->path);
   ctx->path = strdup(opt->path);
   if (!ctx->path)
@@ -1040,6 +1188,11 @@ static void web_destroy(XWBackend *b) {
     gtk_widget_destroy(ctx->window);
   ctx->window = NULL;
   ctx->view = NULL;
+  {
+    char key[2048];
+    web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
+    web_cache_save(key, ctx->over, ctx->n_over);
+  }
   web_free_props(ctx);
   /* Let the destroy finalize promptly so the reparented X child and the
    * WebView release their GPU/DMA-BUF handles without waiting for the
@@ -1129,6 +1282,11 @@ static int web_init_wl(XWBackend *b, XWWlWindow *win,
     free(ctx->path);
     free(ctx);
     return -1;
+  }
+  {
+    char key[2048];
+    web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
+    web_cache_restore(ctx, key);
   }
 
   ctx->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);

@@ -255,7 +255,7 @@ xwallpaperd: $(DAEMON_OBJ)
 # here made every header edit recompile the engine (~18s for quickjs.c alone).
 HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/client.h src/state.h src/x11.h src/app.h src/backends.h \
-  src/wl.h src/daemon.h src/web_dir.h src/web_props.h src/we_audio.h src/we_pulse.h \
+  src/wl.h src/daemon.h src/web_dir.h src/web_props.h src/web.h src/we_audio.h src/we_pulse.h \
   src/keybinds.h \
   src/scene_pkg.h src/scene_tex.h src/scene_shader.h src/scene_parse.h \
   src/scene_model.h src/scene_core.h src/scene_gl.h src/scene_image.h \

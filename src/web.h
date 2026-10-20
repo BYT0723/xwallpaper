@@ -13,4 +13,7 @@ int xw_web_we_want(void);
  * iteration from the GTK/main thread; never from the capture thread. */
 void xw_web_we_tick(void);
 
+/* Test hook: drop the per-wallpaper property override cache. */
+void xw_web_cache_clear_for_tests(void);
+
 #endif /* XW_WEB_H */

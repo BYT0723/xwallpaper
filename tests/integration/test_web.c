@@ -17,6 +17,7 @@
 #include "../harness.h"
 #include "../../src/backend.h"
 #include "../../src/backends.h"
+#include "../../src/web.h"
 #include "../../src/x11.h"
 #include "../../src/cli.h"
 
@@ -606,6 +607,7 @@ static void test_we_props_list_set(void) {
   TEST_BEGIN("web list-props/set-prop bridge works and survives reload");
   XWError err;
   memset(&err, 0, sizeof(err));
+  xw_web_cache_clear_for_tests();
   Display *dpy = xw_x11_open_display(&err);
   TEST_CHECK(dpy != NULL);
   if (!dpy)
@@ -687,8 +689,8 @@ static void test_we_props_list_set(void) {
   xw_x11_destroy_window(win);
 }
 
-/* Switching wallpapers must not leak overrides: a same-named property on
- * the new wallpaper starts from its own default, not the old value. */
+/* Switching wallpapers must not leak overrides, but each wallpaper keeps
+ * its own customization: A -> B shows B's default, B -> A restores A's. */
 /* Reload to path and expect list_props to show want (one "name\ttype\tvalue"
  * line). */
 static void reload_expect(XWBackend *b, const char *path, const char *want) {
@@ -707,9 +709,10 @@ static void reload_expect(XWBackend *b, const char *path, const char *want) {
 }
 
 static void test_we_props_switch_isolation(void) {
-  TEST_BEGIN("switching web wallpaper drops stale property overrides");
+  TEST_BEGIN("switching web wallpaper isolates but remembers per-wallpaper overrides");
   XWError err;
   memset(&err, 0, sizeof(err));
+  xw_web_cache_clear_for_tests();
   Display *dpy = xw_x11_open_display(&err);
   TEST_CHECK(dpy != NULL);
   if (!dpy)
@@ -761,8 +764,11 @@ static void test_we_props_switch_isolation(void) {
   TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
   TEST_CHECK(strstr(lines, "zoom\tslider\t300") != NULL);
 
-  /* ... but switching back resets to that wallpaper's own default */
-  reload_expect(&backend, "tests/data/wepropset", "zoom\tslider\t100");
+  /* ... but switching back restores that wallpaper's own override */
+  reload_expect(&backend, "tests/data/wepropset", "zoom\tslider\t200");
+
+  /* ... and switching forward again restores the other wallpaper's value */
+  reload_expect(&backend, "tests/data/wepropset2", "zoom\tslider\t300");
 
   /* switching to a wallpaper without properties clears everything */
   memset(&serr, 0, sizeof(serr));
