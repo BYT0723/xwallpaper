@@ -91,6 +91,9 @@ struct XWBackend {
   int (*list_props)(XWBackend *b, char *out, size_t n);
   int (*set_prop)(XWBackend *b, const char *name, const char *value,
                   XWError *err);
+  /* optional: drop all user-property overrides (memory + disk) and re-apply
+   * project.json defaults to the live page. May be NULL. */
+  int (*clear_props)(XWBackend *b, XWError *err);
   /* optional: runtime control of a live wallpaper, shared by the key
    * bindings and the volume/mute subcommands. name is one of "volume",
    * "mute", "pause", "seek", "rotate"; value carries its argument (which

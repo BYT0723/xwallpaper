@@ -14,6 +14,7 @@
 
 #include "backend.h"
 #include "keybinds.h"
+#include "props_store.h"
 #include "we_audio.h"
 #include "we_pulse.h"
 #include "web.h"
@@ -466,6 +467,60 @@ void xw_web_cache_clear_for_tests(void) {
   g_ncache = 0;
 }
 
+/* Disk write-through: mirror live overrides to the per-wallpaper sidecar.
+ * n_over==0 deletes the sidecar (back to defaults). */
+static void web_disk_save(WebCtx *ctx, const char *key) {
+  XWStoredProp *s = NULL;
+  int i;
+  if (!ctx || !key || !key[0] || !ctx->root_dir[0])
+    return;
+  if (ctx->n_over <= 0 || !ctx->over) {
+    xw_props_store_save(key, NULL, 0);
+    return;
+  }
+  s = malloc(sizeof(*s) * (size_t)ctx->n_over);
+  if (!s)
+    return;
+  for (i = 0; i < ctx->n_over; i++) {
+    snprintf(s[i].name, sizeof(s[i].name), "%s", ctx->over[i].name);
+    snprintf(s[i].type, sizeof(s[i].type), "%s", ctx->over[i].type);
+    snprintf(s[i].value, sizeof(s[i].value), "%s", ctx->over[i].value);
+  }
+  xw_props_store_save(key, s, ctx->n_over);
+  free(s);
+}
+
+/* Disk restore: load sidecar into live overrides (replacing them), then
+ * prune against freshly parsed project.json. Missing/corrupt file is a
+ * no-op (caller keeps memory state). */
+static void web_disk_load(WebCtx *ctx, const char *key) {
+  XWStoredProp s[XW_WEB_PROPS_CAP];
+  int n = 0, i;
+  if (!ctx || !key || !key[0] || !ctx->root_dir[0])
+    return;
+  if (xw_props_store_load(key, s, XW_WEB_PROPS_CAP, &n) != 0 || n <= 0)
+    return;
+  free(ctx->over);
+  ctx->over = NULL;
+  ctx->n_over = 0;
+  ctx->over = malloc(sizeof(*ctx->over) * (size_t)n);
+  if (!ctx->over)
+    return;
+  for (i = 0; i < n; i++) {
+    snprintf(ctx->over[i].name, sizeof(ctx->over[i].name), "%s", s[i].name);
+    snprintf(ctx->over[i].type, sizeof(ctx->over[i].type), "%s", s[i].type);
+    snprintf(ctx->over[i].value, sizeof(ctx->over[i].value), "%s", s[i].value);
+  }
+  ctx->n_over = n;
+  web_prune_overrides(ctx);
+  if (ctx->n_over == 0) {
+    free(ctx->over);
+    ctx->over = NULL;
+  } else {
+    web_cache_save(key, ctx->over, ctx->n_over);
+  }
+}
+
 static void web_free_props(WebCtx *ctx) {
   if (!ctx)
     return;
@@ -630,7 +685,31 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
     char key[2048];
     web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
     web_cache_save(key, ctx->over, ctx->n_over);
+    web_disk_save(ctx, key);
   }
+  return 0;
+}
+
+static int web_clear_props(XWBackend *b, XWError *err) {
+  WebCtx *ctx = (b && b->priv) ? (WebCtx *)b->priv : NULL;
+  char key[2048];
+  char js[XW_WEB_PROP_JS_MAX + 128];
+  if (!ctx) {
+    XW_ERROR_SET(err, 1, "invalid args");
+    return -1;
+  }
+  if (ctx->n_props <= 0) {
+    XW_ERROR_SET(err, 1, "that wallpaper has no user properties");
+    return -1;
+  }
+  web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
+  web_clear_overrides(ctx);
+  web_cache_save(key, NULL, 0);
+  web_disk_save(ctx, key);
+  /* Re-apply project.json defaults to the live page (best effort). */
+  if (ctx->n_props > 0 &&
+      xw_web_props_apply_js(ctx->props, ctx->n_props, js, sizeof(js)) == 0)
+    web_eval(ctx, js);
   return 0;
 }
 
@@ -1040,6 +1119,8 @@ static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWErro
     char key[2048];
     web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
     web_cache_restore(ctx, key);
+    if (ctx->n_over == 0)
+      web_disk_load(ctx, key);
   }
 
   /* A plain GtkWindow + WebKitWebView renders reliably. We then reparent the
@@ -1163,11 +1244,15 @@ static int web_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
     same = 0;
   if (!same) {
     web_cache_save(old_key, ctx->over, ctx->n_over);
+    web_disk_save(ctx, old_key);
     web_clear_overrides(ctx);
     web_cache_restore(ctx, new_key);
+    if (ctx->n_over == 0)
+      web_disk_load(ctx, new_key);
   } else {
     web_prune_overrides(ctx);
     web_cache_save(new_key, ctx->over, ctx->n_over);
+    web_disk_save(ctx, new_key);
   }
   free(ctx->path);
   ctx->path = strdup(opt->path);
@@ -1192,6 +1277,7 @@ static void web_destroy(XWBackend *b) {
     char key[2048];
     web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
     web_cache_save(key, ctx->over, ctx->n_over);
+    web_disk_save(ctx, key);
   }
   web_free_props(ctx);
   /* Let the destroy finalize promptly so the reparented X child and the
@@ -1223,6 +1309,7 @@ XWBackend *xw_web_backend_new(void) {
     .set_paused = web_set_paused,
     .list_props = web_list_props,
     .set_prop = web_set_prop,
+    .clear_props = web_clear_props,
     .reload = web_reload,
 #if defined(XW_HAVE_WAYLAND) && defined(XW_HAVE_GTK_LAYER_SHELL)
     /* start/stop/destroy/reload are pure WebKit/GTK ops on the isolated
@@ -1287,6 +1374,8 @@ static int web_init_wl(XWBackend *b, XWWlWindow *win,
     char key[2048];
     web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
     web_cache_restore(ctx, key);
+    if (ctx->n_over == 0)
+      web_disk_load(ctx, key);
   }
 
   ctx->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
