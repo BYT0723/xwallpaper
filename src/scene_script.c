@@ -709,6 +709,44 @@ int xw_script_set_user_prop(XWScript *s, const char *name, const char *value) {
   return set_override(s, name, value);
 }
 
+int xw_script_clear_user_prop(XWScript *s, const char *name) {
+  int i;
+  if (!s || !name || !name[0])
+    return -1;
+  for (i = 0; i < s->noverrides; i++) {
+    if (strcmp(s->overrides[i].name, name) == 0) {
+      s->overrides[i] = s->overrides[s->noverrides - 1];
+      s->noverrides--;
+      return 0;
+    }
+  }
+  return -1;
+}
+
+int xw_script_list_overrides(XWScript *s, XWUserProp *out, int cap, int *n) {
+  int i;
+  if (n)
+    *n = 0;
+  if (!s || !out || cap <= 0 || !n)
+    return -1;
+  if (s->noverrides > cap)
+    return -1;
+  for (i = 0; i < s->noverrides; i++) {
+    const char *type = "";
+    for (int k = 0; k < s->n_props; k++) {
+      if (strcmp(s->props[k].name, s->overrides[i].name) == 0) {
+        type = s->props[k].type;
+        break;
+      }
+    }
+    snprintf(out[i].name, sizeof(out[i].name), "%s", s->overrides[i].name);
+    snprintf(out[i].type, sizeof(out[i].type), "%s", type);
+    snprintf(out[i].value, sizeof(out[i].value), "%s", s->overrides[i].value);
+  }
+  *n = s->noverrides;
+  return 0;
+}
+
 int xw_script_get_user_prop(XWScript *s, const char *name, char *value,
                             size_t n) {
   const char *v;

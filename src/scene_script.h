@@ -47,6 +47,11 @@ void xw_script_set_mouse(XWScript *s, float x, float y);
 int xw_script_set_user_prop(XWScript *s, const char *name, const char *value);
 int xw_script_get_user_prop(XWScript *s, const char *name, char *value,
                             size_t n);
+/* Drop one override (0 ok, -1 when missing). Used by clear-props. */
+int xw_script_clear_user_prop(XWScript *s, const char *name);
+/* Snapshot all overrides with their parsed type (for disk persistence).
+ * Returns 0 with *n set, -1 on bad input or too-small cap. */
+int xw_script_list_overrides(XWScript *s, XWUserProp *out, int cap, int *n);
 
 /* Resolve an object's alpha: USER refs read props/overrides (fallback to
  * the parsed constant), EXPRESSION is a constant until Task 14. */
