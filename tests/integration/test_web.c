@@ -459,6 +459,12 @@ static void test_audio_control(void) {
     xw_x11_destroy_window(win);
     return;
   }
+  /* Long-lived wallpapers must not retain WebKit's page/image cache: the
+   * default browser cache grew with every character visited. */
+  TEST_CHECK_EQ_INT(
+      webkit_web_context_get_cache_model(
+          webkit_web_view_get_context(WEBKIT_WEB_VIEW(view))),
+      WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER);
 
   /* Nothing is pushed before the user turns the volume: a page's own level
    * must be left exactly as it is. The detached elements are played first so

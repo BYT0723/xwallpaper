@@ -999,6 +999,13 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
     XW_ERROR_SET(err, 1, "webkit_web_context_new_with_website_data_manager failed");
     return -1;
   }
+  /* Wallpapers are one long-lived document, not a browsing session. The
+   * default WEB_BROWSER cache retains decoded images/page resources for every
+   * character visited: 90 switches grew WebProcess RSS 276->713MB with no
+   * eviction. DOCUMENT_VIEWER keeps the same rendering path but drops that
+   * cache (measured flat, ~310->343MB over the same 90 switches). */
+  webkit_web_context_set_cache_model(ctx->wctx,
+                                     WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER);
   ctx->view = webkit_web_view_new_with_context(ctx->wctx);
   if (!ctx->view) {
     XW_ERROR_SET(err, 1, "webkit_web_view_new_with_context failed");
