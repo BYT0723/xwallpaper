@@ -459,12 +459,28 @@ static void test_audio_control(void) {
     xw_x11_destroy_window(win);
     return;
   }
+  /* Long-lived wallpapers must not retain WebKit's page/image cache: the
+   * default browser cache grew with every character visited. */
+  TEST_CHECK_EQ_INT(
+      webkit_web_context_get_cache_model(
+          webkit_web_view_get_context(WEBKIT_WEB_VIEW(view))),
+      WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER);
 
   /* Nothing is pushed before the user turns the volume: a page's own level
    * must be left exactly as it is. The detached elements are played first so
    * the play() hook has seen them. */
   s = run_js_sync(view, "String(window.__xwCtl.started)");
   TEST_CHECK(s != NULL && strcmp(s, "false") == 0);
+  g_free(s);
+  /* Detached elements must be held weakly. A strong list kept every
+   * `new Audio()` alive for the whole session (one per voice line for
+   * bd2-stage), which grew memory and made web_destroy tear down hundreds
+   * of media pipelines. */
+  s = run_js_sync(
+      view,
+      "String(window.__xwCtl.els.length>0&&window.__xwCtl.els.every("
+      "function(r){return r&&typeof r.deref==='function';}))");
+  TEST_CHECK(s != NULL && strcmp(s, "true") == 0);
   g_free(s);
   g_free(run_js_sync(view, "window.detPlay();window.det2Play();0"));
   s = js_vol(view, "window.det");

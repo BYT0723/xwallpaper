@@ -210,7 +210,20 @@ static const char *kAudioCtlJS =
     "try{vd=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'volume');}"
     "catch(x){}"
     "function eff(v){return st.muted?0:v*st.master;}"
-    "function track(e){if(e&&!e.__xwT){e.__xwT=1;st.els.push(e);}}"
+    /* Detached elements are only reachable through this list, but a strong
+     * reference keeps every `new Audio()` alive forever: pages that recreate
+     * one per track/character grow without bound, and web_destroy then has to
+     * tear down hundreds of GStreamer pipelines. Track them weakly and prune
+     * dead entries whenever the list is used. */
+    "function track(e){if(!e||e.__xwT)return;e.__xwT=1;"
+    "try{st.els.push(new WeakRef(e));}catch(x){st.els.push(e);}"
+    "if(st.els.length>256)liveEls();}"
+    "function liveEls(){"
+    "var out=[];"
+    "for(var i=0;i<st.els.length;i++){"
+    "var r=st.els[i],e=r&&typeof r.deref==='function'?r.deref():r;"
+    "if(e)out.push(e);else st.els.splice(i--,1);}"
+    "return out;}"
     /* Compose rather than assign: __xwVol holds the level the page asked
      * for, so a page that keeps re-syncing its own BGM level (which is what
      * WE web wallpapers do) cannot undo the master. */
@@ -233,7 +246,8 @@ static const char *kAudioCtlJS =
     "all();"
     /* detached elements (new Audio()) are invisible to the DOM, so the
      * tracked list is the only way master reaches them at all */
-    "for(var i=0;i<st.els.length;i++)apply(st.els[i]);"
+    "var le=liveEls();"
+    "for(var i=0;i<le.length;i++)apply(le[i]);"
     "var g=st.muted?0:st.master;"
     "for(var i=0;i<st.gains.length;i++)"
     "try{st.gains[i].gain.value=g;}catch(x){}"
@@ -253,7 +267,8 @@ static const char *kAudioCtlJS =
     "}"
     "var n=document.querySelectorAll('audio,video');"
     "for(var i=0;i<n.length;i++)doit(n[i]);"
-    "for(var i=0;i<st.els.length;i++)doit(st.els[i]);"
+    "var le=liveEls();"
+    "for(var i=0;i<le.length;i++)doit(le[i]);"
     "};"
     /* Everything above only holds if the page's own writes go through it. */
     "try{"
@@ -984,6 +999,13 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
     XW_ERROR_SET(err, 1, "webkit_web_context_new_with_website_data_manager failed");
     return -1;
   }
+  /* Wallpapers are one long-lived document, not a browsing session. The
+   * default WEB_BROWSER cache retains decoded images/page resources for every
+   * character visited: 90 switches grew WebProcess RSS 276->713MB with no
+   * eviction. DOCUMENT_VIEWER keeps the same rendering path but drops that
+   * cache (measured flat, ~310->343MB over the same 90 switches). */
+  webkit_web_context_set_cache_model(ctx->wctx,
+                                     WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER);
   ctx->view = webkit_web_view_new_with_context(ctx->wctx);
   if (!ctx->view) {
     XW_ERROR_SET(err, 1, "webkit_web_view_new_with_context failed");
