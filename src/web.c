@@ -24,6 +24,8 @@
 
 typedef struct {
   XWWindow *win;
+  struct XWWlWindow *wlwin; /* Wayland host window (NULL on X11) */
+  int is_wayland;           /* 1 when created via init_wl */
   GtkWidget *window;  /* top-level GtkWindow holding the webview */
   GtkWidget *view;
   WebKitWebContext *wctx; /* per-wallpaper isolated context (ephemeral) */
@@ -987,7 +989,7 @@ static void web_pin_audio_sink(void) {
  * lingering in the shared default pool holding GPU/DMA-BUF) backed by the
  * per-wallpaper data manager above. Disk backing (unlike ephemeral) keeps
  * wallpaper settings across daemon restarts. */
-static int web_attach_view(WebCtx *ctx, XWError *err) {
+static int web_attach_context(WebCtx *ctx, XWError *err) {
   WebKitWebsiteDataManager *man = web_new_data_manager(ctx);
   if (!man) {
     XW_ERROR_SET(err, 1, "webkit_website_data_manager_new failed");
@@ -1029,6 +1031,12 @@ static int web_attach_view(WebCtx *ctx, XWError *err) {
                    G_CALLBACK(web_process_terminated_cb), ctx);
   web_pin_audio_sink();
   web_apply_wallpaper_policy(WEBKIT_WEB_VIEW(ctx->view), ctx);
+  return 0;
+}
+
+static int web_attach_view(WebCtx *ctx, XWError *err) {
+  if (web_attach_context(ctx, err) != 0)
+    return -1;
   web_reg_add(ctx);
   return 0;
 }
@@ -1107,6 +1115,62 @@ static gboolean web_view_map_cb(GtkWidget *w, GdkEvent *ev, gpointer ud) {
   return FALSE;
 }
 
+/* Tear down the live view/context so the old wallpaper's Web/Network
+ * processes die with it. The registry entry stays: it tracks the WebCtx,
+ * not the view. Props/overrides/volume state are owned by the caller. */
+static void web_detach_context(WebCtx *ctx) {
+  if (!ctx)
+    return;
+  web_terminate(ctx);
+  if (ctx->window)
+    gtk_widget_destroy(ctx->window);
+  ctx->window = NULL;
+  ctx->view = NULL;
+  for (int i = 0; i < 5; i++)
+    g_main_context_iteration(NULL, FALSE);
+  if (ctx->wctx)
+    g_object_unref(ctx->wctx);
+  ctx->wctx = NULL;
+  ctx->want_audio = 0;
+  ctx->crash_count = 0;
+  ctx->crash_first_ms = 0;
+}
+
+#if defined(XW_HAVE_WAYLAND) && defined(XW_HAVE_GTK_LAYER_SHELL)
+static void web_show_wl(WebCtx *ctx);
+#endif
+
+static void web_show_x11(WebCtx *ctx) {
+  ctx->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  gtk_window_set_default_size(GTK_WINDOW(ctx->window), ctx->win->width,
+                              ctx->win->height);
+  gtk_window_set_decorated(GTK_WINDOW(ctx->window), FALSE);
+  gtk_container_add(GTK_CONTAINER(ctx->window), ctx->view);
+
+  gtk_widget_realize(ctx->window);
+  for (int i = 0; i < 50; i++) {
+    g_main_context_iteration(NULL, FALSE);
+    if (gtk_widget_get_window(ctx->window))
+      break;
+    g_usleep(10000);
+  }
+
+  GdkWindow *gw = gtk_widget_get_window(ctx->window);
+  if (gw) {
+    Display *dpy = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
+    Window child = GDK_WINDOW_XID(gw);
+    XReparentWindow(dpy, child, ctx->win->win, 0, 0);
+    XMoveResizeWindow(dpy, child, 0, 0, ctx->win->width, ctx->win->height);
+    XSync(dpy, False);
+  }
+  gtk_widget_show_all(ctx->window);
+  web_drop_key_mask(ctx->window);
+  web_drop_key_mask(ctx->view);
+  g_signal_connect(ctx->view, "map-event", G_CALLBACK(web_view_map_cb), ctx);
+  if (ctx->dpms_paused)
+    gtk_widget_hide(ctx->window);
+}
+
 static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWError *err) {
   if (web_gtk_ensure(err) != 0)
     return -1;
@@ -1117,6 +1181,8 @@ static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWErro
     return -1;
   }
   ctx->win = win;
+  ctx->wlwin = NULL;
+  ctx->is_wayland = 0;
   /* the master level starts at the set-time volume so a relative step has a
    * sensible origin, but nothing is pushed to the page until the user
    * actually changes it (ctl_started) */
@@ -1154,34 +1220,7 @@ static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWErro
    * gdk_window_reparent, which breaks GDK's frame clock and freezes webkit
    * animation/rAF). XReparentWindow keeps GDK's structure intact so the
    * frame clock keeps ticking. */
-  ctx->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-  gtk_window_set_default_size(GTK_WINDOW(ctx->window), win->width, win->height);
-  gtk_window_set_decorated(GTK_WINDOW(ctx->window), FALSE);
-  gtk_container_add(GTK_CONTAINER(ctx->window), ctx->view);
-
-  /* Realize the window WITHOUT showing it, so we can reparent it onto the
-   * wallpaper window before it ever appears as a top-level popup. Then pump
-   * GTK until the GdkWindow exists. */
-  gtk_widget_realize(ctx->window);
-  for (int i = 0; i < 50; i++) {
-    g_main_context_iteration(NULL, FALSE);
-    if (gtk_widget_get_window(ctx->window))
-      break;
-    g_usleep(10000);
-  }
-
-  GdkWindow *gw = gtk_widget_get_window(ctx->window);
-  if (gw) {
-    Display *dpy = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
-    Window child = GDK_WINDOW_XID(gw);
-    XReparentWindow(dpy, child, win->win, 0, 0);
-    XMoveResizeWindow(dpy, child, 0, 0, win->width, win->height);
-    XSync(dpy, False);
-  }
-  gtk_widget_show_all(ctx->window);
-  web_drop_key_mask(ctx->window);
-  web_drop_key_mask(ctx->view);
-  g_signal_connect(ctx->view, "map-event", G_CALLBACK(web_view_map_cb), ctx);
+  web_show_x11(ctx);
 
   b->priv = ctx;
   return 0;
@@ -1244,10 +1283,9 @@ static void web_set_paused(XWBackend *b, int paused) {
   }
 }
 
-/* 同类型复用: 换 URL/页面后重新加载 webkit 视图。
- * 换壁纸时按壁纸身份隔离 overrides: 旧壁纸的值存入 per-wallpaper 缓存,
- * 新壁纸从缓存恢复自己的值 (无缓存则回到 project.json 默认),
- * 同一壁纸重载则保留仍存在的 overrides 并剪掉已消失的。 */
+/* 同类型复用: 同一壁纸只换 URL 重新加载; 换到不同壁纸则重建整个
+ * WebKit 上下文 (新 Web/Network 进程), 否则旧页面的解码器/JS 堆/GPU
+ * 缓存留在同一个 WebProcess 里, 切到低内存壁纸后 RSS 也下不来。 */
 static int web_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   WebCtx *ctx = (WebCtx *)b->priv;
   char old_root[sizeof(ctx->root_dir)];
@@ -1284,6 +1322,29 @@ static int web_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   ctx->path = strdup(opt->path);
   if (!ctx->path)
     return -1;
+  if (same)
+    return web_start(b);
+  web_detach_context(ctx);
+  if (web_attach_context(ctx, err) != 0)
+    return -1;
+  if (ctx->is_wayland) {
+#if defined(XW_HAVE_WAYLAND) && defined(XW_HAVE_GTK_LAYER_SHELL)
+    if (!ctx->wlwin) {
+      XW_ERROR_SET(err, 1, "web: wayland host window lost");
+      return -1;
+    }
+    web_show_wl(ctx);
+#else
+    XW_ERROR_SET(err, 1, "web: wayland not supported in this build");
+    return -1;
+#endif
+  } else {
+    if (!ctx->win) {
+      XW_ERROR_SET(err, 1, "web: x11 host window lost");
+      return -1;
+    }
+    web_show_x11(ctx);
+  }
   return web_start(b);
 }
 
@@ -1365,45 +1426,8 @@ XWBackend *xw_web_backend_new(void) {
  * the resolved rect; -g rects that match nothing stay on the default
  * monitor. WebKit rendering/frame clock work natively on the Wayland
  * GDK backend. */
-static int web_init_wl(XWBackend *b, XWWlWindow *win,
-                       const XWBackendOpt *opt, XWError *err) {
-  if (web_gtk_ensure(err) != 0)
-    return -1;
-
-  WebCtx *ctx = calloc(1, sizeof(*ctx));
-  if (!ctx) {
-    XW_ERROR_SET(err, 1, "out of memory");
-    return -1;
-  }
-  ctx->ctl_volume = opt->volume > 0.0 ? opt->volume : 100.0;
-  ctx->ctl_muted = opt->mute ? 1 : 0;
-  ctx->ctl_started = (opt->mute || (opt->volume > 0.0 && opt->volume != 100.0))
-                         ? 1
-                         : 0;
-  ctx->path = strdup(opt->path);
-  if (!ctx->path) {
-    XW_ERROR_SET(err, 1, "out of memory");
-    free(ctx);
-    return -1;
-  }
-  if (web_store_input(ctx, ctx->path, err) == 0) {
-    free(ctx->path);
-    free(ctx);
-    return -1;
-  }
-  if (web_attach_view(ctx, err) != 0) {
-    free(ctx->path);
-    free(ctx);
-    return -1;
-  }
-  {
-    char key[2048];
-    web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
-    web_cache_restore(ctx, key);
-    if (ctx->n_over == 0)
-      web_disk_load(ctx, key);
-  }
-
+static void web_show_wl(WebCtx *ctx) {
+  struct XWWlWindow *win = ctx->wlwin;
   ctx->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
   gtk_window_set_default_size(GTK_WINDOW(ctx->window),
                               (int)win->width, (int)win->height);
@@ -1444,6 +1468,53 @@ static int web_init_wl(XWBackend *b, XWWlWindow *win,
   }
 
   gtk_widget_show_all(ctx->window);
+  if (ctx->dpms_paused)
+    gtk_widget_hide(ctx->window);
+}
+
+static int web_init_wl(XWBackend *b, XWWlWindow *win,
+                       const XWBackendOpt *opt, XWError *err) {
+  if (web_gtk_ensure(err) != 0)
+    return -1;
+
+  WebCtx *ctx = calloc(1, sizeof(*ctx));
+  if (!ctx) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
+  ctx->win = NULL;
+  ctx->wlwin = win;
+  ctx->is_wayland = 1;
+  ctx->ctl_volume = opt->volume > 0.0 ? opt->volume : 100.0;
+  ctx->ctl_muted = opt->mute ? 1 : 0;
+  ctx->ctl_started = (opt->mute || (opt->volume > 0.0 && opt->volume != 100.0))
+                         ? 1
+                         : 0;
+  ctx->path = strdup(opt->path);
+  if (!ctx->path) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    free(ctx);
+    return -1;
+  }
+  if (web_store_input(ctx, ctx->path, err) == 0) {
+    free(ctx->path);
+    free(ctx);
+    return -1;
+  }
+  if (web_attach_view(ctx, err) != 0) {
+    free(ctx->path);
+    free(ctx);
+    return -1;
+  }
+  {
+    char key[2048];
+    web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
+    web_cache_restore(ctx, key);
+    if (ctx->n_over == 0)
+      web_disk_load(ctx, key);
+  }
+
+  web_show_wl(ctx);
   b->priv = ctx;
   return 0;
 }

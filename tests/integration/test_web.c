@@ -814,6 +814,87 @@ static void test_we_props_switch_isolation(void) {
   xw_x11_destroy_window(win);
 }
 
+static void test_web_reload_isolates_context(void) {
+  TEST_BEGIN("web reload rebuilds WebContext on wallpaper switch, reuses on same");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  isolate_props_state();
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wectxswitch");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wepropset";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 2);
+
+  GtkWidget *v0 = find_web_view();
+  TEST_CHECK(v0 != NULL);
+  WebKitWebContext *c0 = v0 ? webkit_web_view_get_context(WEBKIT_WEB_VIEW(v0)) : NULL;
+  char d0[1024] = {0};
+  if (v0) {
+    WebKitWebsiteDataManager *m =
+        webkit_web_context_get_website_data_manager(
+            webkit_web_view_get_context(WEBKIT_WEB_VIEW(v0)));
+    const char *dd = m ? webkit_website_data_manager_get_base_data_directory(m) : NULL;
+    if (dd)
+      snprintf(d0, sizeof(d0), "%s", dd);
+  }
+
+  /* same-wallpaper reload reuses the view/context (cheap, keeps state) */
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wepropset";
+  memset(&err, 0, sizeof(err));
+  TEST_CHECK_EQ_INT(backend.reload(&backend, &opt, &err), 0);
+  pump_gtk(dpy, 2);
+  GtkWidget *v1 = find_web_view();
+  TEST_CHECK(v1 != NULL);
+  WebKitWebContext *c1 = v1 ? webkit_web_view_get_context(WEBKIT_WEB_VIEW(v1)) : NULL;
+  TEST_CHECK(v1 == v0);
+  TEST_CHECK(c1 == c0);
+
+  /* different wallpaper gets a fresh view on a fresh context with its own
+   * data dir, so the old page's media/JS-heap/GPU state dies with it */
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wepropset2";
+  memset(&err, 0, sizeof(err));
+  TEST_CHECK_EQ_INT(backend.reload(&backend, &opt, &err), 0);
+  pump_gtk(dpy, 2);
+  GtkWidget *v2 = find_web_view();
+  TEST_CHECK(v2 != NULL);
+  if (v2) {
+    WebKitWebsiteDataManager *m =
+        webkit_web_context_get_website_data_manager(
+            webkit_web_view_get_context(WEBKIT_WEB_VIEW(v2)));
+    const char *dd = m ? webkit_website_data_manager_get_base_data_directory(m) : NULL;
+    TEST_CHECK(dd != NULL && d0[0] && strcmp(dd, d0) != 0);
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 static void test_we_props_disk_and_clear(void) {
   TEST_BEGIN("web props survive destroy+init via disk, clear resets to default");
   XWError err;
@@ -897,6 +978,7 @@ int main(void) {
   test_we_properties_delivered();
   test_we_props_list_set();
   test_we_props_switch_isolation();
+  test_web_reload_isolates_context();
   test_we_props_disk_and_clear();
   test_audio_control();
   test_keys_not_swallowed();
