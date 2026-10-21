@@ -133,6 +133,10 @@ static int parse_line(const char *line, size_t len, XWBind *b) {
     b->kind = XW_ACT_ROTATE;
     return 0;
   }
+  if (ntok >= 1 && strcmp(tok[0], "reload") == 0) {
+    b->kind = XW_ACT_RELOAD;
+    return 0;
+  }
   return -1;
 }
 
@@ -329,6 +333,10 @@ int xw_keybinds_to_action(const XWBind *b, char *name, size_t n, char *value,
      * the shipped key files name (90 180 270 0) */
     snprintf(name, n, "rotate");
     snprintf(value, m, "cycle");
+    break;
+  case XW_ACT_RELOAD:
+    snprintf(name, n, "reload");
+    value[0] = '\0';
     break;
   default:
     return -1;

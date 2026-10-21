@@ -141,6 +141,7 @@ h seek -5
 = cycle pause      # video pauses playback, web pauses page media,
                    # scene stops its animation
 r cycle_values video-rotate 90 180 270 0
+Ctrl+r reload      # web: refresh the page, like a browser (other backends ignore)
 ```
 
 The same actions are available as subcommands, which is what a window manager

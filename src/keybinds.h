@@ -12,7 +12,8 @@ typedef enum {
   XW_ACT_VOLUME, /* add volume <delta>          */
   XW_ACT_MUTE,   /* cycle mute                  */
   XW_ACT_PAUSE,  /* cycle pause                 */
-  XW_ACT_ROTATE  /* cycle_values video-rotate v */
+  XW_ACT_ROTATE, /* cycle_values video-rotate v */
+  XW_ACT_RELOAD  /* reload (web page refresh)   */
 } XWActKind;
 
 #define XW_BIND_KEY_MAX 32

@@ -96,8 +96,8 @@ struct XWBackend {
   int (*clear_props)(XWBackend *b, XWError *err);
   /* optional: runtime control of a live wallpaper, shared by the key
    * bindings and the volume/mute subcommands. name is one of "volume",
-   * "mute", "pause", "seek", "rotate"; value carries its argument (which
-   * may be empty, e.g. a mute toggle). Returns 0, or -1 when this backend
+   * "mute", "pause", "seek", "rotate", "reload"; value carries its argument (which
+   * may be empty, e.g. a mute toggle or a reload). Returns 0, or -1 when this backend
    * does not support that action. May be NULL (image has no audio). */
   int (*control)(XWBackend *b, const char *name, const char *value,
                  XWError *err);

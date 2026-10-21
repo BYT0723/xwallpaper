@@ -248,6 +248,35 @@ static void test_to_action(void) {
                     -1);
 }
 
+static void test_reload(void) {
+  XWBind b[XW_KEYBINDS_MAX];
+  char name[32], value[64];
+  int n;
+  TEST_BEGIN("Ctrl+r reload parses and maps to the reload action");
+  n = xw_keybinds_parse("Ctrl+r reload\n", b, XW_KEYBINDS_MAX);
+  TEST_CHECK_EQ_INT(n, 1);
+  if (n != 1)
+    return;
+  TEST_CHECK_EQ_STR(b[0].key, "Ctrl+r");
+  TEST_CHECK_EQ_INT(b[0].kind, XW_ACT_RELOAD);
+  TEST_CHECK_EQ_INT(xw_keybinds_to_action(&b[0], name, sizeof(name), value,
+                                          sizeof(value)),
+                    0);
+  TEST_CHECK_EQ_STR(name, "reload");
+  n = xw_keybinds_parse("r cycle_values video-rotate 90 180 270 0\n"
+                        "Ctrl+r reload\n",
+                        b, XW_KEYBINDS_MAX);
+  TEST_CHECK_EQ_INT(n, 2);
+  if (n == 2) {
+    TEST_CHECK_EQ_STR(b[0].key, "r");
+    TEST_CHECK_EQ_INT(b[0].kind, XW_ACT_ROTATE);
+    TEST_CHECK_EQ_STR(b[1].key, "Ctrl+r");
+    TEST_CHECK_EQ_INT(b[1].kind, XW_ACT_RELOAD);
+    TEST_CHECK(xw_keybinds_find(b, n, "Ctrl+r") == &b[1]);
+    TEST_CHECK(xw_keybinds_find(b, n, "r") == &b[0]);
+  }
+}
+
 static void test_load_and_default_path(void) {
   static const char *path = "/tmp/xw_test_keys_load.keys";
   XWBind b[XW_KEYBINDS_MAX];
@@ -289,6 +318,7 @@ int main(void) {
   test_ctl_toggle();
   test_values_cycle();
   test_to_action();
+  test_reload();
   test_load_and_default_path();
   TEST_SUMMARY();
 }

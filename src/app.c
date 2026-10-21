@@ -921,7 +921,7 @@ void xw_app_tick_backends(XWApp *app) {
  * An action this backend cannot do is silently ignored — a keypress must
  * never surface an error. */
 static int dispatch_key(XWWindow *win, XWBackend *b, XEvent *ev) {
-  char key[XW_BIND_KEY_MAX], name[32], value[64];
+  char base[XW_BIND_KEY_MAX], key[XW_BIND_KEY_MAX], name[32], value[64];
   const XWBind *bind;
   const char *sym;
   KeySym ks = NoSymbol;
@@ -931,9 +931,17 @@ static int dispatch_key(XWWindow *win, XWBackend *b, XEvent *ev) {
   memset(&cs, 0, sizeof(cs));
   XLookupString(&ev->xkey, NULL, 0, &ks, &cs);
   sym = ks != NoSymbol ? XKeysymToString(ks) : NULL;
-  if (!sym || xw_keybinds_norm_key(sym, key, sizeof(key)) != 0)
+  if (!sym || xw_keybinds_norm_key(sym, base, sizeof(base)) != 0)
     return 0;
-  bind = xw_keybinds_find(win->binds, win->nbinds, key);
+  if (ev->xkey.state & ControlMask) {
+    if (snprintf(key, sizeof(key), "Ctrl+%s", base) >= (int)sizeof(key))
+      return 0;
+    bind = xw_keybinds_find(win->binds, win->nbinds, key);
+    if (!bind)
+      return 0;
+  } else {
+    bind = xw_keybinds_find(win->binds, win->nbinds, base);
+  }
   if (!bind ||
       xw_keybinds_to_action(bind, name, sizeof(name), value, sizeof(value)) != 0)
     return 0;

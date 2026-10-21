@@ -765,6 +765,10 @@ static int web_control(XWBackend *b, const char *name, const char *value,
     web_eval(ctx, js);
     return 0;
   }
+  if (strcmp(name, "reload") == 0) {
+    webkit_web_view_reload(WEBKIT_WEB_VIEW(ctx->view));
+    return 0;
+  }
   XW_ERROR_SET(err, 1, "web does not support '%s'", name);
   return -1;
 }
