@@ -8,7 +8,9 @@
 
 /* Map time-domain stereo samples to 128 WE-style bins
  * (0-63 left, 64-127 right, bass first). n must be a power of two >= 256.
- * Silence yields all zeros. Returns 0 on success, -1 on bad args. */
+ * Level per band follows linux-wallpaperengine (0.35*log10(power) with the
+ * per-band gain), clamped 0..1. Silence yields all zeros.
+ * Returns 0 on success, -1 on bad args. */
 int xw_we_audio_map(const float *l, const float *r, int n, float out[128]);
 
 /* Format 128 bins as a JSON array "[v,v,...]" for JS injection.

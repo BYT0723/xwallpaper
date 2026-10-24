@@ -53,21 +53,22 @@ static void fft(double *re, double *im, int n) {
 static void channel_bins(const float *in, int n, float *bands) {
   static double re[WE_FFT_MAX], im[WE_FFT_MAX];
   for (int i = 0; i < n; i++) {
-    double w = 0.5 * (1.0 - cos(2.0 * M_PI * i / n));
-    re[i] = in[i] * w;
+    re[i] = in[i];
     im[i] = 0.0;
   }
   fft(re, im, n);
 
-  /* magnitudes of bins 1..n/2 (skip DC) */
-  static double mag[WE_FFT_MAX / 2 + 1];
+  /* power of bins 1..n/2 (skip DC) */
+  static double pw[WE_FFT_MAX / 2 + 1];
   int half = n / 2;
   for (int k = 1; k <= half; k++)
-    mag[k] = sqrt(re[k] * re[k] + im[k] * im[k]);
+    pw[k] = re[k] * re[k] + im[k] * im[k];
 
-  /* 64 log-spaced bands from ~30Hz to Nyquist */
+  /* 64 log-spaced bands from ~30Hz to Nyquist. Level follows the
+   * linux-wallpaperengine PulseAudioPlaybackRecorder curve -
+   * 0.35*log10(power) with the (2-e^...) per-band gain, clamped 0..1 -
+   * so quiet passages stay visible instead of collapsing to zero. */
   const double fmin = 30.0, fmax = XW_WE_AUDIO_RATE / 2.0;
-  const double norm = (double)n / 4.0; /* Hann coherent gain: full-scale sine -> 1.0 */
   for (int b = 0; b < 64; b++) {
     double f0 = fmin * pow(fmax / fmin, (double)b / 64.0);
     double f1 = fmin * pow(fmax / fmin, (double)(b + 1) / 64.0);
@@ -81,8 +82,14 @@ static void channel_bins(const float *in, int n, float *bands) {
       k1 = half;
     double sum = 0.0;
     for (int k = k0; k < k1; k++)
-      sum += mag[k];
-    double v = sum / (k1 - k0) / norm;
+      sum += pw[k];
+    double v = 0.0;
+    double mean = sum / (k1 - k0);
+    if (mean > 0.0) {
+      double f = 0.35 * log10(mean);
+      double g = 2.0 - exp((1.0 - (double)b / 63.0) - 0.5);
+      v = f * g;
+    }
     if (v < 0.0)
       v = 0.0;
     if (v > 1.0)

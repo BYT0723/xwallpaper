@@ -69,6 +69,34 @@ static void test_fullscale_clamped(void) {
     TEST_CHECK(out[i] >= 0.0f && out[i] <= 1.0f);
 }
 
+static void test_quiet_broadband_stays_visible(void) {
+  TEST_BEGIN("quiet broadband mix stays visible (log compression)");
+  /* 4 sines across the spectrum at low level: linear mapping collapses
+   * this to all zeros (max ~0.03), the engine-style log curve keeps ~half
+   * the bands alive. Same signal the perf comparison measured. */
+  double freqs[] = {100.0, 500.0, 2000.0, 8000.0};
+  for (int i = 0; i < N; i++) {
+    double s = 0;
+    for (int k = 0; k < 4; k++)
+      s += 0.03 * sin(2.0 * M_PI * freqs[k] * i / 48000.0);
+    L[i] = R[i] = (float)s;
+  }
+  float out[128];
+  TEST_CHECK_EQ_INT(xw_we_audio_map(L, R, N, out), 0);
+  double mx = 0, sum = 0;
+  int alive = 0;
+  for (int i = 0; i < 64; i++) {
+    sum += out[i];
+    if (out[i] > mx)
+      mx = out[i];
+    if (out[i] > 0.05)
+      alive++;
+  }
+  TEST_CHECK(mx > 0.3);
+  TEST_CHECK(sum / 64 > 0.05);
+  TEST_CHECK(alive >= 10);
+}
+
 static void test_format_128(void) {
   TEST_BEGIN("format emits 128-number JSON array");
   float in[128];
@@ -162,6 +190,7 @@ int main(void) {
   test_bass_sine_peaks_low_bins();
   test_stereo_separation();
   test_fullscale_clamped();
+  test_quiet_broadband_stays_visible();
   test_format_128();
   test_bad_args();
   test_spectrum_arrays();
