@@ -228,7 +228,8 @@ INTEG_BIN := tests/integration/test_x11 tests/integration/test_image \
              tests/integration/test_scene_scripted \
              tests/integration/test_scene_props \
              tests/integration/test_app_geom tests/integration/test_app_all \
-             tests/integration/test_fill tests/integration/test_restore
+             tests/integration/test_fill tests/integration/test_restore \
+             tests/integration/test_reconfigure
 
 ifdef DEBUG
 SANITIZE  := -fsanitize=address,undefined

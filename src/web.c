@@ -1383,6 +1383,28 @@ static int web_init_wl(XWBackend *b, XWWlWindow *win,
                        const XWBackendOpt *opt, XWError *err);
 #endif
 
+static int web_on_event(XWBackend *b, XEvent *ev) {
+  WebCtx *ctx = (WebCtx *)(b ? b->priv : NULL);
+  if (!ctx || !ctx->win || !ev)
+    return 0;
+  if (ev->type == ConfigureNotify) {
+    ctx->win->width = (unsigned int)ev->xconfigure.width;
+    ctx->win->height = (unsigned int)ev->xconfigure.height;
+    if (ctx->window) {
+      GdkWindow *gw = gtk_widget_get_window(ctx->window);
+      if (gw) {
+        Window child = GDK_WINDOW_XID(gw);
+        XMoveResizeWindow(ctx->win->dpy, child, 0, 0,
+                          (unsigned int)ev->xconfigure.width,
+                          (unsigned int)ev->xconfigure.height);
+        XFlush(ctx->win->dpy);
+      }
+    }
+    return 1;
+  }
+  return 0;
+}
+
 XWBackend *xw_web_backend_new(void) {
   static XWBackend backend = {
     .name = "web",
@@ -1391,7 +1413,7 @@ XWBackend *xw_web_backend_new(void) {
     .start = web_start,
     .stop = web_stop,
     .destroy = web_destroy,
-    .on_event = NULL,
+    .on_event = web_on_event,
     .control = web_control,
     .set_paused = web_set_paused,
     .list_props = web_list_props,

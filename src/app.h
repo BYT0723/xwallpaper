@@ -28,6 +28,14 @@ int xw_app_clear(XWApp *app, const XWConfig *cfg, XWError *err);
 /* Remove all windows. Returns 0. */
 int xw_app_clear_all(XWApp *app);
 
+/* Re-apply the current XRandR layout to live windows:
+ *   - output windows that moved/resized follow the new rect; outputs that
+ *     vanished are removed.
+ *   - -g windows follow by name: output names track the new rect, "Screen"
+ *     re-fits the full-screen bbox, "grp_*" stay put, stale names are removed.
+ * New outputs never gain windows here. Saves state. Returns 0 or -1. */
+int xw_app_reconfigure(XWApp *app, XWError *err);
+
 /* Run the event loop until stop is requested. */
 int xw_app_run(XWApp *app);
 

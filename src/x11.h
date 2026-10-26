@@ -83,6 +83,29 @@ void xw_x11_close_display(Display *dpy);
  * Used by --list and error messages. */
 void xw_x11_list_outputs(Display *dpy, FILE *out);
 
+/* Subscribe the root window to RandR layout notifications.
+ * Returns 0 on success, -1 when RandR is unavailable. */
+int xw_x11_select_randr_input(Display *dpy);
+
+/* RandR event base for this display (-1 when unavailable).
+ * daemon adds it to RRScreenChangeNotify / RRNotify to detect layout change. */
+int xw_x11_randr_event_base(Display *dpy);
+
+/* Re-resolve one connected output by name. Returns 0 with rect on success,
+ * -1 when disconnected/unknown. Used by reconfigure to follow moves. */
+int xw_x11_resolve_output(Display *dpy, const char *name,
+                           int *x, int *y, unsigned int *w, unsigned int *h);
+
+/* Bounding box over all connected outputs. Returns 0 on success,
+ * -1 when no outputs. Used to re-fit the full-screen "Screen" window. */
+int xw_x11_screen_bbox(Display *dpy,
+                       int *x, int *y, unsigned int *w, unsigned int *h);
+
+/* List connected output names. Returns the total count (only the first
+ * max names are stored). Used to spot newly-appeared outputs. */
+int xw_x11_connected_outputs(Display *dpy, char names[][XW_OUTPUT_NAME_LEN],
+                              int max);
+
 /* Handle an X event for this window. Returns 1 if the event was consumed. */
 int xw_x11_handle_event(XWWindow *win, XEvent *ev);
 

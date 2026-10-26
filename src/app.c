@@ -409,6 +409,7 @@ XWApp *xw_app_create(XWError *err) {
   app->dpy = dpy;
   app->dpms_power_level = -1;
   the_app = app;
+  xw_x11_select_randr_input(dpy);
   return app;
 }
 
@@ -765,6 +766,109 @@ int xw_app_clear_all(XWApp *app) {
   while (app->nwins > 0)
     remove_window(app, 0);
   return 0;
+}
+
+/* Rebuild one state entry as a live window (defined below, reused by
+ * reconfigure to restore keep=1 lasts on newly-appeared outputs). */
+static int restore_entry(XWApp *app, const XWStateEntry *e);
+
+/* Platform state path (defined below with the other state helpers). */
+static int app_state_path(XWApp *app, char *out, size_t n);
+
+/* Move/resize a window to the given rect, no-op when already there. */
+static void move_window_if_changed(XWApp *app, XWWindow *win,
+                                   int x, int y, unsigned int w,
+                                   unsigned int h) {
+  if (x != win->x || y != win->y || w != win->width || h != win->height) {
+    XMoveResizeWindow(app->dpy, win->win, x, y, w, h);
+    win->x = x;
+    win->y = y;
+    win->width = w;
+    win->height = h;
+  }
+}
+
+int xw_app_reconfigure(XWApp *app, XWError *err) {
+  (void)err;
+  if (!app)
+    return -1;
+#ifdef XW_HAVE_WAYLAND
+  if (app->use_wayland)
+    return 0;
+#endif
+  if (!app->dpy)
+    return -1;
+  for (int i = app->nwins - 1; i >= 0; i--) {
+    XWWindow *win = app->wins[i];
+    if (!win) {
+      remove_window(app, i);
+      continue;
+    }
+    if (win->is_geometry) {
+      /* -g 窗口按名跟随: 输出同名贴新几何, Screen 贴全屏包围盒,
+       * grp_* 保持不动 (多屏并集, daemon 无法推导), 其余视为过期删除。 */
+      if (strcmp(win->output, "Screen") == 0) {
+        int sx = 0, sy = 0;
+        unsigned int sw = 0, sh = 0;
+        if (xw_x11_screen_bbox(app->dpy, &sx, &sy, &sw, &sh) != 0) {
+          remove_window(app, i);
+          continue;
+        }
+        move_window_if_changed(app, win, sx, sy, sw, sh);
+      } else if (strncmp(win->output, "grp_", 4) == 0) {
+        continue;
+      } else if (win->output[0]) {
+        int gx = 0, gy = 0;
+        unsigned int gw = 0, gh = 0;
+        if (xw_x11_resolve_output(app->dpy, win->output, &gx, &gy, &gw,
+                                  &gh) != 0) {
+          remove_window(app, i);
+          continue;
+        }
+        move_window_if_changed(app, win, gx, gy, gw, gh);
+      } else {
+        remove_window(app, i);
+      }
+      continue;
+    }
+    if (!win->output[0]) {
+      remove_window(app, i);
+      continue;
+    }
+    int x = 0, y = 0;
+    unsigned int w = 0, h = 0;
+    if (xw_x11_resolve_output(app->dpy, win->output, &x, &y, &w, &h) != 0) {
+      remove_window(app, i);
+      continue;
+    }
+    move_window_if_changed(app, win, x, y, w, h);
+  }
+  /* 新出现的输出 (已连接但无活跃窗口): 有 keep=1 last 记忆则自动恢复
+   * (clear --keep 留下的); 无记忆保持空白, 不自动建窗口。 */
+  {
+    char conn[32][XW_OUTPUT_NAME_LEN];
+    int nconn = xw_x11_connected_outputs(app->dpy, conn, 32);
+    if (nconn > 32)
+      nconn = 32;
+    char path[1024];
+    XWStateEntry entries[XW_STATE_MAX_ENTRIES];
+    int count = 0;
+    if (app_state_path(app, path, sizeof(path)) == 0 &&
+        xw_state_load(path, entries, XW_STATE_MAX_ENTRIES, &count) == 0) {
+      for (int j = 0; j < nconn; j++) {
+        if (find_window_by_key(app, conn[j]) >= 0)
+          continue;
+        for (int k = 0; k < count; k++) {
+          if (entries[k].keep == 1 && strcmp(entries[k].name, conn[j]) == 0) {
+            restore_entry(app, &entries[k]);
+            break;
+          }
+        }
+      }
+    }
+  }
+  XFlush(app->dpy);
+  return xw_app_save_state(app);
 }
 
 void xw_app_stop(XWApp *app) {

@@ -986,6 +986,11 @@ static int scene_on_event(XWBackend *b, XEvent *ev) {
   XWSceneCtx *c = b ? (XWSceneCtx *)b->priv : NULL;
   if (!c || !ev)
     return 0;
+  if (ev->type == ConfigureNotify && c->win) {
+    c->win->width = (unsigned int)ev->xconfigure.width;
+    c->win->height = (unsigned int)ev->xconfigure.height;
+    return 0;
+  }
   /* Feed pointer position to scripts; never consume: x11 still forwards
    * the event to the root window so icons stay clickable. Coordinates
    * are root (screen) pixels, stable across wallpaper windows. */

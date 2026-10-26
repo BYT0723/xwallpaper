@@ -171,6 +171,110 @@ void xw_x11_list_outputs(Display *dpy, FILE *out) {
   XRRFreeScreenResources(res);
 }
 
+/* ---- randr layout-change subscription ---- */
+
+static int rr_event_base = -1;
+static int rr_error_base = 0;
+static int rr_queried = 0;
+
+int xw_x11_randr_event_base(Display *dpy) {
+  if (!rr_queried) {
+    rr_queried = 1;
+    if (!XRRQueryExtension(dpy, &rr_event_base, &rr_error_base))
+      rr_event_base = -1;
+  }
+  return rr_event_base;
+}
+
+int xw_x11_select_randr_input(Display *dpy) {
+  if (xw_x11_randr_event_base(dpy) < 0)
+    return -1;
+  Window root = RootWindow(dpy, DefaultScreen(dpy));
+  XRRSelectInput(dpy, root,
+                 RRScreenChangeNotifyMask | RRCrtcChangeNotifyMask |
+                     RROutputChangeNotifyMask);
+  return 0;
+}
+
+int xw_x11_resolve_output(Display *dpy, const char *name,
+                           int *x, int *y, unsigned int *w, unsigned int *h) {
+  if (!dpy || !name || !name[0])
+    return -1;
+  Window root = RootWindow(dpy, DefaultScreen(dpy));
+  return xrandr_lookup(dpy, root, name, x, y, w, h);
+}
+
+int xw_x11_screen_bbox(Display *dpy,
+                       int *x, int *y, unsigned int *w, unsigned int *h) {
+  if (!dpy)
+    return -1;
+  Window root = RootWindow(dpy, DefaultScreen(dpy));
+  XRRScreenResources *res = XRRGetScreenResourcesCurrent(dpy, root);
+  if (!res)
+    return -1;
+  int x0 = 0, y0 = 0, x1 = 0, y1 = 0, found = 0;
+  for (int i = 0; i < res->noutput; i++) {
+    XRROutputInfo *oi = XRRGetOutputInfo(dpy, res, res->outputs[i]);
+    if (!oi)
+      continue;
+    if (oi->crtc && oi->connection == RR_Connected) {
+      XRRCrtcInfo *ci = XRRGetCrtcInfo(dpy, res, oi->crtc);
+      if (ci) {
+        if (!found) {
+          x0 = ci->x;
+          y0 = ci->y;
+          x1 = ci->x + (int)ci->width;
+          y1 = ci->y + (int)ci->height;
+          found = 1;
+        } else {
+          if (ci->x < x0)
+            x0 = ci->x;
+          if (ci->y < y0)
+            y0 = ci->y;
+          if (ci->x + (int)ci->width > x1)
+            x1 = ci->x + (int)ci->width;
+          if (ci->y + (int)ci->height > y1)
+            y1 = ci->y + (int)ci->height;
+        }
+        XRRFreeCrtcInfo(ci);
+      }
+    }
+    XRRFreeOutputInfo(oi);
+  }
+  XRRFreeScreenResources(res);
+  if (!found)
+    return -1;
+  *x = x0;
+  *y = y0;
+  *w = (unsigned int)(x1 - x0);
+  *h = (unsigned int)(y1 - y0);
+  return 0;
+}
+
+int xw_x11_connected_outputs(Display *dpy, char names[][XW_OUTPUT_NAME_LEN],
+                              int max) {
+  if (!dpy || !names || max <= 0)
+    return 0;
+  Window root = RootWindow(dpy, DefaultScreen(dpy));
+  XRRScreenResources *res = XRRGetScreenResourcesCurrent(dpy, root);
+  if (!res)
+    return 0;
+  int n = 0;
+  for (int i = 0; i < res->noutput; i++) {
+    XRROutputInfo *oi = XRRGetOutputInfo(dpy, res, res->outputs[i]);
+    if (!oi)
+      continue;
+    if (oi->crtc && oi->connection == RR_Connected) {
+      if (n < max)
+        snprintf(names[n], XW_OUTPUT_NAME_LEN, "%s", oi->name);
+      n++;
+    }
+    XRRFreeOutputInfo(oi);
+  }
+  XRRFreeScreenResources(res);
+  return n;
+}
+
 /* ---- desktop layer discovery ---- */
 
 static Window find_desktop_layer(Display *dpy, Window root) {

@@ -325,6 +325,12 @@ int xw_daemon_main(void) {
   int64_t startup_ms = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
   int64_t last_selfheal_ms = startup_ms;
 
+  int rr_base = -1;
+  int layout_pending = 0;
+  int64_t layout_fire_ms = 0;
+  if (!xw_app_use_wayland(app))
+    rr_base = xw_x11_randr_event_base(xw_app_display(app));
+
   while (xw_app_get() && !xw_app_stopped(xw_app_get())) {
     XWApp *cur = xw_app_get();
     if (!cur || xw_app_stopped(cur))
@@ -382,6 +388,11 @@ int xw_daemon_main(void) {
       if (timeout < 0 || timeout > 500)
         timeout = 500;
     }
+    if (layout_pending) {
+      int64_t remain = (layout_fire_ms > now_ms) ? layout_fire_ms - now_ms : 0;
+      if (timeout < 0 || timeout > remain)
+        timeout = (int)remain;
+    }
     int r = poll(fds, nfds, timeout);
     if (r < 0) {
       if (errno == EINTR)
@@ -435,7 +446,33 @@ int xw_daemon_main(void) {
       while (dpy && XPending(dpy) > 0) {
         XEvent ev;
         XNextEvent(dpy, &ev);
+        if (rr_base >= 0 &&
+            (ev.type == rr_base || ev.type == rr_base + 1)) {
+          if (getenv("XW_DEBUG_DAEMON"))
+            fprintf(stderr, "xwallpaperd: randr event (type=%d), debounce\n",
+                    ev.type);
+          layout_pending = 1;
+          layout_fire_ms = now_ms + 500;
+          continue;
+        }
         xw_app_handle_event(cur, &ev);
+      }
+    }
+
+    if (layout_pending) {
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      int64_t fire_now =
+          (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+      if (fire_now >= layout_fire_ms) {
+        layout_pending = 0;
+        XWError rerr;
+        memset(&rerr, 0, sizeof(rerr));
+        if (xw_app_reconfigure(cur, &rerr) != 0 && getenv("XW_DEBUG_DAEMON"))
+          fprintf(stderr, "xwallpaperd: reconfigure failed: %s\n",
+                  rerr.msg[0] ? rerr.msg : "?");
+        else if (getenv("XW_DEBUG_DAEMON"))
+          fprintf(stderr, "xwallpaperd: reconfigured (%d windows)\n",
+                  xw_app_window_count(cur));
       }
     }
 
