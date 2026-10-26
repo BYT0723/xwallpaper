@@ -202,6 +202,62 @@ static void test_web_dpms_freeze(void) {
   top = find_web_toplevel();
   TEST_CHECK(top != NULL && gtk_widget_get_visible(top));
   TEST_CHECK_EQ_INT(play_count(view), n0);
+  TEST_CHECK_EQ_INT(backend.control(&backend, "pause", "off", &ctl), 0);
+  pump_gtk(dpy, 1);
+
+  /* switching wallpapers mid-freeze: the fresh view must stay frozen
+   * (muted + hidden) instead of playing unmuted behind the lock screen.
+   * No volume/mute touched yet (ctl_started==0), so without a dpms-aware
+   * LOAD_FINISHED push the new page would play audibly while hidden. */
+  backend.set_paused(&backend, 1);
+  pump_gtk(dpy, 1);
+  {
+    XWBackendOpt opt2;
+    memset(&opt2, 0, sizeof(opt2));
+    opt2.type = XW_BACKEND_WEB;
+    opt2.path = "tests/data/wepropset";
+    TEST_CHECK_EQ_INT(backend.reload(&backend, &opt2, &err), 0);
+  }
+  pump_gtk(dpy, 4);
+  view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    top = find_web_toplevel();
+    TEST_CHECK(top != NULL && !gtk_widget_get_visible(top));
+    TEST_CHECK(webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
+  }
+  backend.set_paused(&backend, 0);
+  pump_gtk(dpy, 1);
+
+  /* a manual user mute survives a DPMS cycle: thaw must restore the
+   * view mute flag to ctl_muted (and keep the JS level muted) */
+  TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "on", &ctl), 0);
+  pump_gtk(dpy, 1);
+  backend.set_paused(&backend, 1);
+  pump_gtk(dpy, 1);
+  top = find_web_toplevel();
+  TEST_CHECK(top != NULL && !gtk_widget_get_visible(top));
+  view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view)
+    TEST_CHECK(webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
+  backend.set_paused(&backend, 0);
+  pump_gtk(dpy, 1);
+  top = find_web_toplevel();
+  TEST_CHECK(top != NULL && gtk_widget_get_visible(top));
+  view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    TEST_CHECK(webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
+    {
+      char *m = run_js_sync(
+          view, "String(window.__xwCtl&&window.__xwCtl.muted)");
+      TEST_CHECK(m != NULL && strcmp(m, "true") == 0);
+      g_free(m);
+    }
+  }
+  TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "off", &ctl), 0);
+  pump_gtk(dpy, 1);
 
   backend.destroy(&backend);
   xw_x11_destroy_window(win);

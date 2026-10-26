@@ -321,14 +321,20 @@ static void web_eval(WebCtx *ctx, const char *js) {
  * again after every navigation). */
 static void web_push_audio_ctl(WebCtx *ctx) {
   char js[192];
-  if (!ctx || !ctx->view || !ctx->ctl_started)
+  if (!ctx || !ctx->view)
     return;
-  snprintf(js, sizeof(js),
-           "window.__xwCtlApply&&window.__xwCtlApply(%g,%d);",
-           ctx->ctl_volume / 100.0, ctx->ctl_muted ? 1 : 0);
-  web_eval(ctx, js);
-  if (ctx->ctl_paused)
+  if (ctx->ctl_started) {
+    snprintf(js, sizeof(js),
+             "window.__xwCtlApply&&window.__xwCtlApply(%g,%d);",
+             ctx->ctl_volume / 100.0, ctx->ctl_muted ? 1 : 0);
+    web_eval(ctx, js);
+    if (ctx->ctl_paused)
+      web_eval(ctx, "window.__xwCtlMedia&&window.__xwCtlMedia('pause');");
+  }
+  if (ctx->dpms_paused) {
+    webkit_web_view_set_is_muted(WEBKIT_WEB_VIEW(ctx->view), TRUE);
     web_eval(ctx, "window.__xwCtlMedia&&window.__xwCtlMedia('pause');");
+  }
 }
 
 /* Wallpaper Engine user properties: <root>/project.json general.properties
@@ -1277,7 +1283,8 @@ static void web_set_paused(XWBackend *b, int paused) {
     gtk_widget_hide(ctx->window);
   } else {
     gtk_widget_show(ctx->window);
-    webkit_web_view_set_is_muted(WEBKIT_WEB_VIEW(ctx->view), FALSE);
+    webkit_web_view_set_is_muted(WEBKIT_WEB_VIEW(ctx->view),
+                                 ctx->ctl_muted ? TRUE : FALSE);
     if (!ctx->ctl_paused)
       web_eval(ctx, "window.__xwCtlMedia&&window.__xwCtlMedia('play');");
   }
