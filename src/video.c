@@ -7,6 +7,7 @@
 
 #include "backend.h"
 #include "keybinds.h"
+#include "osd.h"
 #include "x11.h"
 
 typedef struct {
@@ -69,7 +70,19 @@ static int video_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWEr
   mpv_set_option_string(ctx->base.mpv, "input-default-bindings", "no");
   mpv_set_option_string(ctx->base.mpv, "input-vo-keyboard", "no");
   mpv_set_option_string(ctx->base.mpv, "osc", "no");
-  mpv_set_option_string(ctx->base.mpv, "osd-level", "0");
+  mpv_set_option_string(ctx->base.mpv, "osd-level", "1");
+  /* match the shared OSD look (see osd.h): bottom-right box, ~20px */
+  mpv_set_option_string(ctx->base.mpv, "osd-align-x", "right");
+  mpv_set_option_string(ctx->base.mpv, "osd-align-y", "bottom");
+  mpv_set_option_string(ctx->base.mpv, "osd-margin-x", "16");
+  mpv_set_option_string(ctx->base.mpv, "osd-margin-y", "48");
+  mpv_set_option_string(ctx->base.mpv, "osd-border-style", "background-box");
+  /* box explicitly 65%% like the web/scene toast; no outline: the box
+   * already guarantees contrast and an opaque outline on a translucent
+   * box is what makes mpv look harsher than the other backends */
+  mpv_set_option_string(ctx->base.mpv, "osd-back-color", "#A6000000");
+  mpv_set_option_string(ctx->base.mpv, "osd-outline-size", "0");
+  mpv_set_option_string(ctx->base.mpv, "osd-font-size", "20");
   /* identify the audio stream (PulseAudio/PipeWire/ALSA) with a friendly name */
   if (opt->audio_client_name && opt->audio_client_name[0])
     mpv_set_option_string(ctx->base.mpv, "audio-client-name", opt->audio_client_name);
@@ -212,6 +225,16 @@ static int video_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   return 0;
 }
 
+static void video_osd(VideoBase *m, const char *name, const char *value, int cur) {
+  char msg[XW_OSD_MAX];
+  if (!m || !m->mpv)
+    return;
+  if (xw_osd_format(name, value, cur, msg, sizeof(msg)) != 0)
+    return;
+  const char *args[] = {"show-text", msg, "1500", NULL};
+  mpv_command(m->mpv, args);
+}
+
 /* Runtime control for the key bindings and the volume/mute subcommands.
  * mpv owns the values, so every relative step reads the live property first
  * instead of trusting a cached copy. */
@@ -240,6 +263,7 @@ static int video_control(XWBackend *b, const char *name, const char *value,
       m->mute = 0;
     }
     m->volume = next;
+    video_osd(m, "volume", value, cur);
     return 0;
   }
   if (strcmp(name, "mute") == 0 || strcmp(name, "pause") == 0) {
@@ -253,6 +277,7 @@ static int video_control(XWBackend *b, const char *name, const char *value,
       return -1;
     if (strcmp(name, "mute") == 0)
       m->mute = want;
+    video_osd(m, name, value, want);
     return 0;
   }
   if (strcmp(name, "seek") == 0) {
@@ -271,6 +296,7 @@ static int video_control(XWBackend *b, const char *name, const char *value,
       XW_ERROR_SET(err, 1, "seek failed");
       return -1;
     }
+    video_osd(m, "seek", value, 0);
     return 0;
   }
   if (strcmp(name, "rotate") == 0) {
@@ -287,6 +313,7 @@ static int video_control(XWBackend *b, const char *name, const char *value,
     }
     if (mpv_set_property(m->mpv, "video-rotate", MPV_FORMAT_INT64, &next) < 0)
       return -1;
+    video_osd(m, "rotate", value, (int)next);
     return 0;
   }
   XW_ERROR_SET(err, 1, "video does not support '%s'", name);
@@ -693,7 +720,15 @@ static int video_init_wl(XWBackend *b, XWWlWindow *win,
   mpv_set_option_string(mpv, "input-default-bindings", "no");
   mpv_set_option_string(mpv, "input-vo-keyboard", "no");
   mpv_set_option_string(mpv, "osc", "no");
-  mpv_set_option_string(mpv, "osd-level", "0");
+  mpv_set_option_string(mpv, "osd-level", "1");
+  mpv_set_option_string(mpv, "osd-align-x", "right");
+  mpv_set_option_string(mpv, "osd-align-y", "bottom");
+  mpv_set_option_string(mpv, "osd-margin-x", "16");
+  mpv_set_option_string(mpv, "osd-margin-y", "48");
+  mpv_set_option_string(mpv, "osd-border-style", "background-box");
+  mpv_set_option_string(mpv, "osd-back-color", "#A6000000");
+  mpv_set_option_string(mpv, "osd-outline-size", "0");
+  mpv_set_option_string(mpv, "osd-font-size", "20");
   if (opt->audio_client_name && opt->audio_client_name[0])
     mpv_set_option_string(mpv, "audio-client-name", opt->audio_client_name);
   if (opt->fps > 0.0) {

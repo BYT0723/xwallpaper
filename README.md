@@ -170,6 +170,10 @@ and scene it is absolute. `0` silences every backend either way.
 An action a backend cannot do is ignored when it comes from a key press, and
 reported when it comes from the CLI (`that wallpaper does not support 'rotate'`).
 
+Every successful key/CLI action also shows a short OSD line in the wallpaper
+window (`Volume: 62%`, `Mute: on`, `Paused`/`Playing`, `Seek +5s`, …), which
+fades after ~1.5s; unsupported actions show nothing.
+
 ## How it works
 
 - **Two binaries, thin CLI.** `xwallpaperd` owns all wallpaper windows and links the heavy backends; `xwallpaper` (the CLI) links only libc and talks to the daemon over a UNIX socket at `$XDG_RUNTIME_DIR/xwallpaper.sock`. The daemon must be started separately; the CLI never spawns it, so every CLI invocation is instant.

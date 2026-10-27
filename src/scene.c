@@ -13,6 +13,7 @@
 #include "backend.h"
 #include "backends.h"
 #include "keybinds.h"
+#include "osd.h"
 #include "props_store.h"
 #include "scene.h"
 #include "scene_gl.h"
@@ -65,6 +66,10 @@ typedef struct XWSceneCtx {
   int order_n;
   /* 1 while this context holds a reference to the shared Pulse monitor */
   int pulse_ref;
+  char osd_text[XW_OSD_MAX];
+  uint64_t osd_until_ms;
+  XWTextItem osd_item;
+  char osd_font[256];
 } XWSceneCtx;
 
 static void free_order(XWSceneCtx *c) {
@@ -230,6 +235,8 @@ static uint64_t now_ms(void) {
 }
 
 static int paint_fill(XWSceneCtx *c);
+static void scene_osd_draw_gl(XWSceneCtx *c);
+static void scene_osd_draw_fill(XWSceneCtx *c);
 static int render_overlays(XWSceneCtx *c, float t, const float *alphas,
                            XWError *rerr);
 static int scene_list_props(XWBackend *b, char *out, size_t n);
@@ -600,6 +607,7 @@ static int render_overlays(XWSceneCtx *c, float t, const float *alphas,
         return -1;
     }
   }
+  scene_osd_draw_gl(c);
   return 0;
 }
 
@@ -623,6 +631,7 @@ static int paint_fill(XWSceneCtx *c) {
     return -1;
   XSetForeground(win->dpy, c->gc, xc.pixel);
   XFillRectangle(win->dpy, win->win, c->gc, 0, 0, win->width, win->height);
+  scene_osd_draw_fill(c);
   XFlush(win->dpy);
   c->frames++;
   c->last_ms = now_ms();
@@ -744,6 +753,8 @@ static void scene_destroy(XWBackend *b) {
   if (!b || !(c = (XWSceneCtx *)b->priv))
     return;
   scene_disk_save(c);
+  if (c->osd_item.valid && c->gl)
+    xw_text_item_free(c->gl, &c->osd_item);
   free_texts(c);
   if (c->gl)
     xw_gl_destroy(c->gl);
@@ -870,6 +881,131 @@ static void apply_sound_volumes(XWSceneCtx *c) {
       xw_sound_set_volumes(c->sounds[i], c->scene.objects[i].sound.volume, g);
 }
 
+static const char *scene_osd_font(XWSceneCtx *c) {
+  static const char *paths[] = {
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    NULL,
+  };
+  int i;
+  if (c->osd_font[0])
+    return c->osd_font;
+  for (i = 0; paths[i]; i++)
+    if (access(paths[i], R_OK) == 0) {
+      snprintf(c->osd_font, sizeof(c->osd_font), "%s", paths[i]);
+      return c->osd_font;
+    }
+  return "";
+}
+
+static void scene_osd_draw_gl(XWSceneCtx *c) {
+  const char *font;
+  unsigned char *px = NULL;
+  int w = 0, h = 0, ww = 0, wh = 0;
+  unsigned int prog = 0;
+  XWError err = {0};
+  if (!c->osd_text[0] || now_ms() >= c->osd_until_ms) {
+    if (c->osd_item.valid && c->gl)
+      xw_text_item_free(c->gl, &c->osd_item);
+    return;
+  }
+  if (!c->gl)
+    return;
+  font = scene_osd_font(c);
+  if (!font[0])
+    return;
+  if (!c->osd_item.valid || strcmp(c->osd_item.content, c->osd_text) != 0) {
+    /* white glyphs over a dark translucent box, baked into one texture so
+     * the OSD matches the web toast without new GL primitives */
+    static const int pad = 10, bg_a = 166;
+    unsigned char *bg;
+    int bw, bh, x, y;
+    xw_text_item_free(c->gl, &c->osd_item);
+    if (xw_text_rasterize(font, c->osd_text, (float)XW_OSD_TEXT_PX, &px, &w,
+                           &h, &err) != 0)
+      return;
+    bw = w + pad * 2;
+    bh = h + pad * 2;
+    bg = malloc((size_t)bw * (size_t)bh * 4);
+    if (!bg) {
+      free(px);
+      return;
+    }
+    for (y = 0; y < bh; y++)
+      for (x = 0; x < bw; x++) {
+        int gx = x - pad, gy = y - pad;
+        unsigned sa = (gx >= 0 && gy >= 0 && gx < w && gy < h)
+                          ? px[((size_t)gy * (size_t)w + (size_t)gx) * 4 + 3]
+                          : 0;
+        unsigned oa = sa + (unsigned)bg_a * (255 - sa) / 255;
+        unsigned char *d = bg + ((size_t)y * (size_t)bw + (size_t)x) * 4;
+        unsigned v = oa ? 255 * sa * (255 - (unsigned)bg_a) / 255 / oa : 0;
+        d[0] = d[1] = d[2] = (unsigned char)(v > 255 ? 255 : v);
+        d[3] = (unsigned char)oa;
+      }
+    free(px);
+    if (xw_gl_upload_rgba(c->gl, bg, bw, bh, &c->osd_item.tex, &err) != 0) {
+      free(bg);
+      return;
+    }
+    free(bg);
+    snprintf(c->osd_item.font, sizeof(c->osd_item.font), "%s", font);
+    snprintf(c->osd_item.content, sizeof(c->osd_item.content), "%s",
+             c->osd_text);
+    c->osd_item.size = (float)XW_OSD_TEXT_PX;
+    c->osd_item.w = bw;
+    c->osd_item.h = bh;
+    c->osd_item.valid = 1;
+  }
+  if (xw_gl_target_size(c->gl, &ww, &wh) != 0)
+    return;
+  if (xw_gl_program_composite(c->gl, &prog, &err) != 0)
+    return;
+  if (xw_gl_blend_begin(c->gl, XW_BLEND_TRANSLUCENT) != 0)
+    return;
+  xw_gl_draw_rect_alpha(c->gl, prog, c->osd_item.tex, 0.0f, 1.0f,
+                        ww - XW_OSD_MARGIN_X_PX - c->osd_item.w,
+                        wh - XW_OSD_MARGIN_BOTTOM_PX - c->osd_item.h,
+                        c->osd_item.w, c->osd_item.h);
+  xw_gl_blend_end(c->gl);
+}
+
+static void scene_osd_draw_fill(XWSceneCtx *c) {
+  XFontStruct *fs;
+  int dir, ascent, descent;
+  XCharStruct overall;
+  int sw, x, y;
+  if (!c->osd_text[0] || now_ms() >= c->osd_until_ms)
+    return;
+  fs = XLoadQueryFont(c->win->dpy, "fixed");
+  if (!fs)
+    return;
+  XTextExtents(fs, c->osd_text, (int)strlen(c->osd_text), &dir, &ascent,
+               &descent, &overall);
+  sw = overall.rbearing - overall.lbearing;
+  x = (int)c->win->width - XW_OSD_MARGIN_X_PX - sw;
+  y = (int)c->win->height - XW_OSD_MARGIN_BOTTOM_PX;
+  XSetForeground(c->win->dpy, c->gc, BlackPixel(c->win->dpy, c->win->screen));
+  XFillRectangle(c->win->dpy, c->win->win, c->gc, x - 4, y - ascent - 4,
+                 (unsigned int)(sw + 8), (unsigned int)(ascent + descent + 8));
+  XSetFont(c->win->dpy, c->gc, fs->fid);
+  XSetForeground(c->win->dpy, c->gc, WhitePixel(c->win->dpy, c->win->screen));
+  XDrawString(c->win->dpy, c->win->win, c->gc, x, y, c->osd_text,
+              (int)strlen(c->osd_text));
+  XFreeFont(c->win->dpy, fs);
+}
+
+static void scene_osd(XWSceneCtx *c, const char *name, const char *value,
+                       int cur) {
+  char msg[XW_OSD_MAX];
+  if (xw_osd_format(name, value, cur, msg, sizeof(msg)) != 0)
+    return;
+  snprintf(c->osd_text, sizeof(c->osd_text), "%s", msg);
+  c->osd_until_ms = now_ms() + (uint64_t)XW_OSD_MS;
+  paint(c);
+}
+
 /* Runtime control shared by the key bindings and the volume/mute
  * subcommands. Scene wallpapers have sound objects, so volume/mute drive
  * those and pause also stops the animation, as a paused wallpaper should. */
@@ -889,6 +1025,7 @@ static int scene_control(XWBackend *b, const char *name, const char *value,
     c->volume = v;
     c->mute = 0;
     apply_sound_volumes(c);
+    scene_osd(c, "volume", value, v);
     return 0;
   }
   if (strcmp(name, "mute") == 0 || strcmp(name, "pause") == 0) {
@@ -903,6 +1040,7 @@ static int scene_control(XWBackend *b, const char *name, const char *value,
     } else {
       scene_set_paused(b, want);
     }
+    scene_osd(c, name, value, want);
     return 0;
   }
   XW_ERROR_SET(err, 1, "scene does not support '%s'", name);

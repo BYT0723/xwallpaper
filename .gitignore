@@ -49,3 +49,4 @@ src/proto/*-protocol.c
 # task docs (local only)
 tasks/
 /tests/test_scene_glsl
+/tests/test_osd

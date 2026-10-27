@@ -14,6 +14,7 @@
 
 #include "backend.h"
 #include "keybinds.h"
+#include "osd.h"
 #include "props_store.h"
 #include "we_audio.h"
 #include "we_pulse.h"
@@ -316,6 +317,38 @@ static void web_eval(WebCtx *ctx, const char *js) {
   webkit_web_view_evaluate_javascript(WEBKIT_WEB_VIEW(ctx->view), js, -1, NULL,
                                       NULL, NULL, NULL, NULL);
 }
+
+static void web_osd(WebCtx *ctx, const char *name, const char *value, int cur) {
+  char msg[XW_OSD_MAX];
+  char esc[XW_OSD_MAX * 2];
+  char js[768];
+  size_t j = 0;
+  if (!ctx || !ctx->view)
+    return;
+  if (xw_osd_format(name, value, cur, msg, sizeof(msg)) != 0)
+    return;
+  for (size_t i = 0; msg[i] && j + 2 < sizeof(esc); i++) {
+    if (msg[i] == '\'' || msg[i] == '\\')
+      esc[j++] = '\\';
+    esc[j++] = msg[i];
+  }
+  esc[j] = '\0';
+  snprintf(js, sizeof(js),
+           "(function(){try{var t='%s';" "var d=document.getElementById('__xwOSD');"
+           "if(!d){if(!document.body)return;d=document.createElement('div');"
+           "d.id='__xwOSD';"
+           "d.style.cssText='position:fixed;right:16px;bottom:48px;padding:8px 12px;'"
+           "+'background:rgba(0,0,0,0.65);color:#fff;font:20px sans-serif;'"
+           "+'border-radius:4px;z-index:2147483647;pointer-events:none;'"
+           "+'transition:opacity 0.3s;';document.body.appendChild(d);}"
+           "d.textContent=t;d.style.opacity='1';"
+           "clearTimeout(window.__xwOsdT);"
+           "window.__xwOsdT=setTimeout(function(){d.style.opacity='0';},%d);}"
+           "catch(e){}})();",
+           esc, XW_OSD_MS);
+  web_eval(ctx, js);
+}
+
 
 /* Push the daemon's stored level into the page (after a control change, and
  * again after every navigation). */
@@ -754,6 +787,7 @@ static int web_control(XWBackend *b, const char *name, const char *value,
     ctx->ctl_muted = 0;
     ctx->ctl_started = 1;
     web_push_audio_ctl(ctx);
+    web_osd(ctx, "volume", value, v);
     return 0;
   }
   if (strcmp(name, "mute") == 0 || strcmp(name, "pause") == 0) {
@@ -775,6 +809,7 @@ static int web_control(XWBackend *b, const char *name, const char *value,
                want ? "pause" : "play");
       web_eval(ctx, js);
     }
+    web_osd(ctx, name, value, want);
     return 0;
   }
   if (strcmp(name, "seek") == 0) {
@@ -786,10 +821,12 @@ static int web_control(XWBackend *b, const char *name, const char *value,
              "window.__xwCtlMedia&&window.__xwCtlMedia('seek',%g);",
              atof(value));
     web_eval(ctx, js);
+    web_osd(ctx, "seek", value, 0);
     return 0;
   }
   if (strcmp(name, "reload") == 0) {
     webkit_web_view_reload(WEBKIT_WEB_VIEW(ctx->view));
+    web_osd(ctx, "reload", NULL, 0);
     return 0;
   }
   XW_ERROR_SET(err, 1, "web does not support '%s'", name);
