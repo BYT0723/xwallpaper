@@ -969,9 +969,284 @@ static void test_we_props_disk_and_clear(void) {
   xw_x11_destroy_window(win);
 }
 
+/* Unity WebGL wallpapers fetch their .wasm/.data over HTTP and need real
+ * response headers (Content-Type: application/wasm for streaming compile,
+ * Content-Length for progress). file:// answers with empty headers and
+ * Unity aborts with "both async and sync fetching of the wasm failed", so
+ * dir mode must be served over the embedded localhost HTTP server. */
+static void test_web_unity_wasm_headers(void) {
+  TEST_BEGIN("dir wallpaper serves .wasm over http with proper headers");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "webunity");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/webunity";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+
+  pump_gtk(dpy, 6);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    const char *uri = webkit_web_view_get_uri(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(uri != NULL && strncmp(uri, "http://127.0.0.1/", 16) == 0);
+    const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK_EQ_STR(title ? title : "(null)",
+                      "WASM:ct=application/wasm;len=8;bytes=8");
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
+/* WE file properties carry local paths. An http-origin page cannot fetch
+ * file:// or absolute-path values at all, so the daemon rewrites those to
+ * localhost alias URLs on delivery while storage keeps the user's value.
+ * The fixture default is relative (resolves against the document URL);
+ * the override points outside the root (tests/data/red.png, 174 bytes vs
+ * the 100-byte default pic.png). */
+static void test_web_file_prop_aliased(void) {
+  TEST_BEGIN("file property picks outside root load via alias URL");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  isolate_props_state();
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wefile");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wefileprops";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+
+  pump_gtk(dpy, 6);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(title != NULL && strstr(title, "FILE:ok:100:pic.png") != NULL);
+  }
+
+  {
+    char *abs = realpath("tests/data/red.png", NULL);
+    XWError serr;
+    char lines[4096];
+    TEST_CHECK(abs != NULL);
+    if (abs) {
+      memset(&serr, 0, sizeof(serr));
+      TEST_CHECK_EQ_INT(backend.set_prop(&backend, "pic", abs, &serr), 0);
+      pump_gtk(dpy, 6);
+      const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+      TEST_CHECK(title != NULL && strstr(title, "FILE:ok:174:") != NULL);
+      TEST_CHECK(title != NULL && strstr(title, "/_xw/file/") != NULL);
+      /* storage keeps the user's path, not the alias URL */
+      memset(lines, 0, sizeof(lines));
+      TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 2);
+      TEST_CHECK(strstr(lines, abs) != NULL);
+      free(abs);
+    }
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
+/* Stable loopback origin: destroy + re-init of the same dir must rebind
+ * the saved port, so WebKit storage (Cache/IndexedDB/localStorage)
+ * survives daemon restarts instead of orphaning per ephemeral port. */
+static int uri_port(const char *uri) {
+  int port = -1;
+  if (uri && sscanf(uri, "http://127.0.0.1:%d/", &port) == 1)
+    return port;
+  return -1;
+}
+
+static void test_web_http_port_stable(void) {
+  TEST_BEGIN("dir wallpaper rebinds its saved port across restarts");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  isolate_props_state();
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "webport");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/webunity";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  int p1 = -1, p2 = -1;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 3);
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view)
+    p1 = uri_port(webkit_web_view_get_uri(WEBKIT_WEB_VIEW(view)));
+  TEST_CHECK(p1 > 0);
+  backend.destroy(&backend);
+
+  /* same dir re-init must come back on the same port. */
+  memset(&backend, 0, sizeof(backend));
+  backend = *tmpl;
+  memset(&err, 0, sizeof(err));
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 3);
+  view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view)
+    p2 = uri_port(webkit_web_view_get_uri(WEBKIT_WEB_VIEW(view)));
+  TEST_CHECK_EQ_INT(p2, p1);
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
+/* One-shot file:// -> http localStorage migration: file-era keys seeded
+ * over file:// must show up in the http page after start, exactly once. */
+static const char *web_title_of(GtkWidget *view) {
+  return webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+}
+
+static int web_wait_title(Display *dpy, GtkWidget *view, const char *want,
+                          int secs) {
+  for (int i = 0; i < secs; i++) {
+    pump_gtk(dpy, 1);
+    const char *t = web_title_of(view);
+    if (t && strstr(t, want) != NULL)
+      return 0;
+  }
+  return -1;
+}
+
+static void test_web_migrate_file_storage(void) {
+  TEST_BEGIN("file-era localStorage migrates to http origin once");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  isolate_props_state();
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wemig");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wemigrate";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (!view) {
+    backend.destroy(&backend);
+    xw_x11_destroy_window(win);
+    return;
+  }
+  /* plant file-origin data, then start: migration must carry it over. */
+  {
+    char *abs = realpath("tests/data/wemigrate/seed.html", NULL);
+    char *furi = NULL;
+    TEST_CHECK(abs != NULL);
+    if (abs) {
+      char full[4096];
+      snprintf(full, sizeof(full), "%s", abs);
+      furi = g_filename_to_uri(full, NULL, NULL);
+      free(abs);
+    }
+    TEST_CHECK(furi != NULL);
+    if (furi) {
+      webkit_web_view_load_uri(WEBKIT_WEB_VIEW(view), furi);
+      g_free(furi);
+    }
+  }
+  TEST_CHECK_EQ_INT(web_wait_title(dpy, view, "SEED:done", 10), 0);
+
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  TEST_CHECK_EQ_INT(web_wait_title(dpy, view, "MIG:v1", 25), 0);
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_paints();
+  test_web_unity_wasm_headers();
+  test_web_file_prop_aliased();
+  test_web_http_port_stable();
+  test_web_migrate_file_storage();
   test_context_menu_blocked();
   test_wallpaper_noninteractive();
   test_storage_persistent();

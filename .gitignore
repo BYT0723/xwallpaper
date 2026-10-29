@@ -50,3 +50,4 @@ src/proto/*-protocol.c
 tasks/
 /tests/test_scene_glsl
 /tests/test_osd
+/tests/test_web_http

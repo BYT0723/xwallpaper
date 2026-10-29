@@ -11,6 +11,7 @@
 #include <gdk/gdkx.h>
 #include <X11/Xlib.h>
 #include <webkit2/webkit2.h>
+#include <jsc/jsc.h>
 
 #include "backend.h"
 #include "keybinds.h"
@@ -20,6 +21,7 @@
 #include "we_pulse.h"
 #include "web.h"
 #include "web_dir.h"
+#include "web_http.h"
 #include "web_props.h"
 #include "x11.h"
 
@@ -33,6 +35,11 @@ typedef struct {
   char *path;
   char root_dir[1024]; /* dir mode: absolute wallpaper root ("" when unused) */
   char entry[256];     /* dir mode: entry file, always index.html */
+  XWWebHttp *http;     /* dir mode: localhost server for root_dir (NULL off) */
+  int migrating;       /* file:// -> http storage migration: 0 off,
+                        * 1 file dump pending, 2 http restore pending,
+                        * 3 post-restore reload */
+  char *mig_json;      /* dumped file-origin localStorage (stage 2) */
   int want_audio;      /* page called wallpaperRegisterAudioListener */
   int dead;            /* web_destroy in progress: ignore late signals */
   int crash_count;     /* terminations inside the current 60s window */
@@ -665,6 +672,53 @@ static void web_prune_overrides(WebCtx *ctx) {
   }
 }
 
+/* WE "file" properties carry local paths: relative defaults, absolute
+ * user picks, or file:// URLs. An http-origin page cannot touch file:// or
+ * absolute-path values at all, so rewrite those to alias URLs on this
+ * wallpaper's localhost server before delivery. Relative and http(s) values
+ * pass through: they resolve against the document URL and already work.
+ * Storage keeps the user's original value; only the delivered copy changes. */
+static int web_file_path(const char *v, char *out, size_t n) {
+  if (!v || !v[0] || !out || n == 0)
+    return -1;
+  if (strncmp(v, "file://", 7) == 0) {
+    char *p = g_filename_from_uri(v, NULL, NULL);
+    if (!p)
+      return -1;
+    snprintf(out, n, "%s", p);
+    g_free(p);
+    return 0;
+  }
+  if (v[0] == '/') {
+    if (snprintf(out, n, "%s", v) >= (int)n)
+      return -1;
+    return 0;
+  }
+  return -1;
+}
+
+static void web_translate_props(WebCtx *ctx, const XWWebProp *in, int n,
+                                XWWebProp *out) {
+  int i, port;
+  if (!ctx || !in || !out || n <= 0)
+    return;
+  port = ctx->http ? xw_web_http_port(ctx->http) : -1;
+  for (i = 0; i < n; i++) {
+    char path[4096], url[128];
+    int id;
+    out[i] = in[i];
+    if (strcmp(in[i].type, "file") != 0 || port <= 0)
+      continue;
+    if (web_file_path(in[i].value, path, sizeof(path)) != 0)
+      continue;
+    id = xw_web_http_alias(ctx->http, path);
+    if (id < 0)
+      continue;
+    snprintf(url, sizeof(url), "http://127.0.0.1:%d/_xw/file/%d", port, id);
+    snprintf(out[i].value, sizeof(out[i].value), "%s", url);
+  }
+}
+
 static int web_list_props(XWBackend *b, char *out, size_t n) {
   WebCtx *ctx = (b && b->priv) ? (WebCtx *)b->priv : NULL;
   size_t off = 0;
@@ -735,8 +789,12 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
   snprintf(slot->value, sizeof(slot->value), "%s", value);
   /* Best effort: a page that has not finished loading (or navigated away)
    * misses this push, but the cached override is replayed on LOAD_FINISHED. */
-  if (xw_web_props_apply_js(slot, 1, js, sizeof(js)) == 0)
-    web_eval(ctx, js);
+  {
+    XWWebProp one = *slot;
+    web_translate_props(ctx, slot, 1, &one);
+    if (xw_web_props_apply_js(&one, 1, js, sizeof(js)) == 0)
+      web_eval(ctx, js);
+  }
   {
     char key[2048];
     web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
@@ -763,9 +821,15 @@ static int web_clear_props(XWBackend *b, XWError *err) {
   web_cache_save(key, NULL, 0);
   web_disk_save(ctx, key);
   /* Re-apply project.json defaults to the live page (best effort). */
-  if (ctx->n_props > 0 &&
-      xw_web_props_apply_js(ctx->props, ctx->n_props, js, sizeof(js)) == 0)
-    web_eval(ctx, js);
+  if (ctx->n_props > 0) {
+    XWWebProp *tmp = malloc(sizeof(*tmp) * (size_t)ctx->n_props);
+    if (tmp) {
+      web_translate_props(ctx, ctx->props, ctx->n_props, tmp);
+      if (xw_web_props_apply_js(tmp, ctx->n_props, js, sizeof(js)) == 0)
+        web_eval(ctx, js);
+      free(tmp);
+    }
+  }
   return 0;
 }
 
@@ -914,7 +978,7 @@ static WebKitWebsiteDataManager *web_new_data_manager(WebCtx *ctx) {
 static void web_deliver_we_properties(WebKitWebView *view, WebCtx *ctx) {
   static const char *kTpl =
       "(function(){"
-      "var O=%s;"
+      "var M=%s;"
       "var tries=0;"
       "function attempt(){"
       "tries++;"
@@ -926,26 +990,49 @@ static void web_deliver_we_properties(WebKitWebView *view, WebCtx *ctx) {
       ".then(function(p){"
       "if(p&&p.general&&p.general.properties){"
       "try{L.applyUserProperties(p.general.properties);}catch(e){}}"
-      "if(O){try{L.applyUserProperties(O);}catch(e){}}"
+      "if(M){try{L.applyUserProperties(M);}catch(e){}}"
       "}).catch(function(){"
-      "if(O){try{L.applyUserProperties(O);}catch(e){}}});"
+      "if(M){try{L.applyUserProperties(M);}catch(e){}}});"
       "}"
       "attempt();"
       "})();";
-  char *over = NULL;
+  char *merged = NULL;
   char *script;
 
-  if (ctx && ctx->n_over > 0) {
-    size_t need = (size_t)ctx->n_over * XW_WEB_PROP_JS_MAX + 64;
-    over = malloc(need);
-    if (over &&
-        xw_web_props_object_js(ctx->over, ctx->n_over, over, need) != 0) {
-      free(over);
-      over = NULL;
+  /* Merged translated values (defaults overlaid with overrides) so WE
+   * file properties pointing outside the root keep working over http. */
+  if (ctx && (ctx->n_props > 0 || ctx->n_over > 0)) {
+    XWWebProp *tmp =
+        malloc(sizeof(*tmp) * (size_t)(ctx->n_props + ctx->n_over));
+    if (tmp) {
+      int i, m = 0;
+      size_t need;
+      web_translate_props(ctx, ctx->props, ctx->n_props, tmp);
+      m = ctx->n_props;
+      for (i = 0; i < ctx->n_over; i++) {
+        XWWebProp one;
+        int j;
+        web_translate_props(ctx, &ctx->over[i], 1, &one);
+        for (j = 0; j < m; j++)
+          if (strcmp(tmp[j].name, one.name) == 0) {
+            tmp[j] = one;
+            break;
+          }
+        if (j == m && m < ctx->n_props + ctx->n_over)
+          tmp[m++] = one;
+      }
+      need = (size_t)m * XW_WEB_PROP_JS_MAX + 64;
+      merged = malloc(need);
+      if (merged &&
+          xw_web_props_object_js(tmp, m, merged, need) != 0) {
+        free(merged);
+        merged = NULL;
+      }
+      free(tmp);
     }
   }
-  script = g_strdup_printf(kTpl, over ? over : "null");
-  free(over);
+  script = g_strdup_printf(kTpl, merged ? merged : "null");
+  free(merged);
   if (!script)
     return;
   webkit_web_view_evaluate_javascript(view, script, -1, NULL, NULL, NULL,
@@ -953,16 +1040,202 @@ static void web_deliver_we_properties(WebKitWebView *view, WebCtx *ctx) {
   g_free(script);
 }
 
+/* One-shot file:// -> http localStorage migration. The file:// era keyed
+ * each wallpaper's storage under "file://"; the http server changed the
+ * origin, orphaning it (same data dir, different origin key). Once per
+ * wallpaper: load the entry over file://, dump localStorage to native,
+ * load over http, write it back, reload once so the page reads it on a
+ * normal load, record the marker. File-origin wins wholesale: post-switch
+ * http orphans only ever held defaults the page rewrote blind. */
+static const char *kMigDumpJS =
+    "(function(){try{var o={},n=0;"
+    "for(var i=0;i<localStorage.length;i++){"
+    "var k=localStorage.key(i);o[k]=localStorage.getItem(k);n++;}"
+    "return n?JSON.stringify(o):'';}catch(e){return null;}})()";
+
+static char *web_file_uri(WebCtx *ctx) {
+  char full[2048];
+  if (!ctx || !ctx->root_dir[0])
+    return NULL;
+  snprintf(full, sizeof(full), "%s/%s", ctx->root_dir, ctx->entry);
+  return g_filename_to_uri(full, NULL, NULL);
+}
+
+static char *web_http_uri(WebCtx *ctx) {
+  char *esc, *uri;
+  if (!ctx || !ctx->http)
+    return NULL;
+  esc = g_uri_escape_string(ctx->entry, NULL, FALSE);
+  if (!esc)
+    return NULL;
+  uri = g_strdup_printf("http://127.0.0.1:%d/%s",
+                        xw_web_http_port(ctx->http), esc);
+  g_free(esc);
+  return uri;
+}
+
+static void web_load_http_uri(WebCtx *ctx) {
+  char *uri;
+  if (!ctx || !ctx->view)
+    return;
+  uri = web_http_uri(ctx);
+  if (uri) {
+    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(ctx->view), uri);
+    g_free(uri);
+  }
+}
+
+static void web_mig_key(WebCtx *ctx, char *out, size_t n) {
+  if (!ctx || !out || n == 0)
+    return;
+  web_cache_key(ctx->root_dir, ctx->path, out, n);
+}
+
+static void web_mig_dump_done(GObject *o, GAsyncResult *r, gpointer ud) {
+  WebCtx *ctx = (WebCtx *)ud;
+  GError *e = NULL;
+  JSCValue *v = NULL;
+  char *s = NULL;
+  (void)o;
+  if (!ctx || ctx->dead || ctx->migrating != 1)
+    return;
+  v = webkit_web_view_evaluate_javascript_finish(WEBKIT_WEB_VIEW(o), r, &e);
+  if (v) {
+    s = jsc_value_to_string(v);
+    g_object_unref(v);
+  }
+  if (e)
+    g_error_free(e);
+  if (s && s[0] && strcmp(s, "null") != 0) {
+    free(ctx->mig_json);
+    ctx->mig_json = strdup(s);
+    ctx->migrating = 2;
+  } else {
+    char key[2048];
+    web_mig_key(ctx, key, sizeof(key));
+    xw_props_migrated_set(key);
+    ctx->migrating = 0;
+  }
+  g_free(s);
+  web_load_http_uri(ctx);
+}
+
+static void web_mig_dump(WebKitWebView *view, WebCtx *ctx) {
+  if (!view || !ctx)
+    return;
+  webkit_web_view_evaluate_javascript(view, kMigDumpJS, -1, NULL, NULL, NULL,
+                                       web_mig_dump_done, ctx);
+}
+
+static void web_mig_restore_done(GObject *o, GAsyncResult *r, gpointer ud) {
+  WebCtx *ctx = (WebCtx *)ud;
+  GError *e = NULL;
+  JSCValue *v = NULL;
+  char *s = NULL;
+  (void)o;
+  if (!ctx || ctx->dead || ctx->migrating != 2)
+    return;
+  v = webkit_web_view_evaluate_javascript_finish(WEBKIT_WEB_VIEW(o), r, &e);
+  if (v) {
+    s = jsc_value_to_string(v);
+    g_object_unref(v);
+  }
+  if (e)
+    g_error_free(e);
+  if (s && atoi(s) >= 0) {
+    char key[2048];
+    web_mig_key(ctx, key, sizeof(key));
+    xw_props_migrated_set(key);
+  }
+  g_free(s);
+  free(ctx->mig_json);
+  ctx->mig_json = NULL;
+  /* Reload so the page itself reads the carried storage on a normal load. */
+  ctx->migrating = 3;
+  if (ctx->view)
+    webkit_web_view_reload(WEBKIT_WEB_VIEW(ctx->view));
+}
+
+static void web_mig_restore(WebKitWebView *view, WebCtx *ctx) {
+  char *js;
+  if (!view || !ctx || !ctx->mig_json) {
+    if (ctx)
+      ctx->migrating = 0;
+    return;
+  }
+  js = g_strdup_printf(
+      "(function(){try{var o=(%s);var n=0;"
+      "for(var k in o){try{localStorage.setItem(k,o[k]);n++;}catch(x){}}"
+      "return n;}catch(e){return -1;}})()",
+      ctx->mig_json);
+  if (!js) {
+    ctx->migrating = 0;
+    return;
+  }
+  webkit_web_view_evaluate_javascript(view, js, -1, NULL, NULL, NULL,
+                                       web_mig_restore_done, ctx);
+  g_free(js);
+}
+
+static void web_mig_on_finished(WebKitWebView *view, WebCtx *ctx) {
+  const char *uri = view ? webkit_web_view_get_uri(view) : NULL;
+  int is_file = uri && strncmp(uri, "file://", 7) == 0;
+  if (ctx->migrating == 1 && is_file) {
+    web_mig_dump(view, ctx);
+    return;
+  }
+  if (ctx->migrating == 2 && !is_file) {
+    web_mig_restore(view, ctx);
+    return;
+  }
+  /* stage 3 reload landed, or anything unexpected: back to normal. */
+  ctx->migrating = 0;
+  web_push_audio_ctl(ctx);
+  if (ctx->root_dir[0])
+    web_deliver_we_properties(view, ctx);
+}
+
+static void web_mig_reset(WebCtx *ctx) {
+  if (!ctx)
+    return;
+  ctx->migrating = 0;
+  free(ctx->mig_json);
+  ctx->mig_json = NULL;
+}
+
 static void web_load_changed_cb(WebKitWebView *view,
                                 WebKitLoadEvent load_event, gpointer ud) {
   WebCtx *ctx = (WebCtx *)ud;
   if (load_event != WEBKIT_LOAD_FINISHED)
     return;
+  if (ctx->migrating) {
+    web_mig_on_finished(view, ctx);
+    return;
+  }
   /* the shim is re-injected per document, so re-apply the stored level */
   web_push_audio_ctl(ctx);
   if (!ctx->root_dir[0])
     return; /* only local dirs have a sibling project.json */
   web_deliver_we_properties(view, ctx);
+}
+
+/* Never brick the wallpaper on a failed migration load: fall through to
+ * the normal http load instead of sitting on an error page. */
+static gboolean web_load_failed_cb(WebKitWebView *view, WebKitLoadEvent ev,
+                                   const char *uri, GError *err,
+                                   gpointer ud) {
+  WebCtx *ctx = (WebCtx *)ud;
+  (void)view;
+  (void)ev;
+  (void)err;
+  if (!ctx || ctx->dead || !ctx->migrating)
+    return FALSE;
+  web_mig_reset(ctx);
+  if (uri && strncmp(uri, "file://", 7) == 0) {
+    web_load_http_uri(ctx);
+    return TRUE;
+  }
+  return FALSE;
 }
 
 static uint64_t web_now_ms(void) {
@@ -1058,9 +1331,10 @@ static int web_attach_context(WebCtx *ctx, XWError *err) {
     ctx->wctx = NULL;
     return -1;
   }
-  /* Local wallpapers load via file:// (native media seeking works, unlike
-   * custom schemes). The two file-access switches give static pages
-   * http-like subresource loading (fetch/ES modules). */
+  /* Local wallpapers load over the embedded localhost server (file://
+   * answers fetches with empty headers, which Unity WebGL builds abort
+   * on). The two file-access switches stay for the migration pass and
+   * single-file svg compat. */
   WebKitSettings *st = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(ctx->view));
   if (st) {
     webkit_settings_set_allow_file_access_from_file_urls(st, TRUE);
@@ -1070,6 +1344,8 @@ static int web_attach_context(WebCtx *ctx, XWError *err) {
                    G_CALLBACK(web_block_context_menu), NULL);
   g_signal_connect(ctx->view, "load-changed",
                    G_CALLBACK(web_load_changed_cb), ctx);
+  g_signal_connect(ctx->view, "load-failed",
+                   G_CALLBACK(web_load_failed_cb), ctx);
   g_signal_connect(ctx->view, "web-process-terminated",
                    G_CALLBACK(web_process_terminated_cb), ctx);
   web_pin_audio_sink();
@@ -1174,6 +1450,11 @@ static void web_detach_context(WebCtx *ctx) {
   if (ctx->wctx)
     g_object_unref(ctx->wctx);
   ctx->wctx = NULL;
+  if (ctx->http) {
+    xw_web_http_stop(ctx->http);
+    ctx->http = NULL;
+  }
+  web_mig_reset(ctx);
   ctx->want_audio = 0;
   ctx->crash_count = 0;
   ctx->crash_first_ms = 0;
@@ -1274,11 +1555,41 @@ static int web_start(XWBackend *b) {
 
   char *uri;
   if (ctx->root_dir[0]) {
-    /* dir mode: file:// URI of <root>/<entry>; subresources resolve
-     * relatively and media seeks natively (custom schemes break media) */
-    char full[2048];
-    snprintf(full, sizeof(full), "%s/%s", ctx->root_dir, ctx->entry);
-    uri = g_filename_to_uri(full, NULL, NULL);
+    /* dir mode: serve root_dir over the embedded localhost HTTP server.
+     * file:// answers fetches with empty headers and Unity WebGL builds
+     * abort ("both async and sync fetching of the wasm failed"): they need
+     * real Content-Type/Length for streaming compile and progress. */
+    XWError herr;
+    char key[2048];
+    memset(&herr, 0, sizeof(herr));
+    if (!ctx->http) {
+      /* Stable loopback origin: reuse the saved port so the wallpaper's
+       * WebKit storage (Cache/IndexedDB/localStorage) survives daemon
+       * restarts instead of orphaning on every ephemeral port. Save only
+       * when stable (no mapping yet, or bound what was saved): a fallback
+       * instance must not clobber the holder's mapping. */
+      int pref = -1, actual;
+      web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
+      pref = xw_props_port_load(key);
+      ctx->http = xw_web_http_start(ctx->root_dir, pref, &herr);
+      if (!ctx->http)
+        return -1;
+      actual = xw_web_http_port(ctx->http);
+      if (pref <= 0 || actual == pref)
+        xw_props_port_save(key, actual);
+    }
+    web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
+    if (!xw_props_migrated_done(key)) {
+      /* One-shot file:// -> http localStorage migration (Stage 1). */
+      char *furi = web_file_uri(ctx);
+      if (furi) {
+        ctx->migrating = 1;
+        webkit_web_view_load_uri(WEBKIT_WEB_VIEW(ctx->view), furi);
+        g_free(furi);
+        return 0;
+      }
+    }
+    uri = web_http_uri(ctx);
     if (!uri)
       return -1;
   } else if (xw_web_is_http_url(ctx->path)) {
@@ -1418,6 +1729,9 @@ static void web_destroy(XWBackend *b) {
     g_main_context_iteration(NULL, FALSE);
   if (ctx->wctx)
     g_object_unref(ctx->wctx);
+  if (ctx->http)
+    xw_web_http_stop(ctx->http);
+  web_mig_reset(ctx);
   free(ctx->path);
   free(ctx);
 }

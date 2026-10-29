@@ -27,20 +27,137 @@ static int store_dir(char *out, size_t n) {
   return (r < 0 || r >= (int)n) ? -1 : 0;
 }
 
-int xw_props_store_path(const char *wallpaper_id, char *out, size_t n) {
+static int ensure_dir_for(const char *path);
+
+/* <dir>/<sha>.<ext> sidecar path for a wallpaper id. */
+static int sidecar_path(const char *wallpaper_id, const char *ext, char *out,
+                        size_t n) {
   char dir[1024], *sum;
-  if (!wallpaper_id || !wallpaper_id[0] || !out || n == 0)
+  int r;
+  if (!wallpaper_id || !wallpaper_id[0] || !ext || !out || n == 0)
     return -1;
   if (store_dir(dir, sizeof(dir)) != 0)
     return -1;
   sum = g_compute_checksum_for_string(G_CHECKSUM_SHA256, wallpaper_id, -1);
   if (!sum)
     return -1;
-  {
-    int r = snprintf(out, n, "%s/%s.json", dir, sum);
-    g_free(sum);
-    return (r < 0 || r >= (int)n) ? -1 : 0;
+  r = snprintf(out, n, "%s/%s.%s", dir, sum, ext);
+  g_free(sum);
+  return (r < 0 || r >= (int)n) ? -1 : 0;
+}
+
+int xw_props_store_path(const char *wallpaper_id, char *out, size_t n) {
+  return sidecar_path(wallpaper_id, "json", out, n);
+}
+
+/* Per-wallpaper localhost HTTP port sidecar (<sha>.port next to <sha>.json).
+ * Pins each wallpaper to a stable loopback origin so its WebKit storage
+ * (Cache/IndexedDB/localStorage) survives daemon restarts instead of
+ * orphaning on every ephemeral port. Best effort, like the props sidecar. */
+static int port_path(const char *wallpaper_id, char *out, size_t n) {
+  return sidecar_path(wallpaper_id, "port", out, n);
+}
+
+int xw_props_port_save(const char *wallpaper_id, int port) {
+  char path[1100], tmp[1200], text[16];
+  FILE *f;
+  size_t len;
+  int w;
+  if (!wallpaper_id || !wallpaper_id[0] || port <= 0 || port > 65535)
+    return -1;
+  if (port_path(wallpaper_id, path, sizeof(path)) != 0)
+    return -1;
+  w = snprintf(text, sizeof(text), "%d\n", port);
+  if (w < 0 || (size_t)w >= sizeof(text))
+    return -1;
+  len = (size_t)w;
+  ensure_dir_for(path);
+  snprintf(tmp, sizeof(tmp), "%s.tmp.%d", path, (int)getpid());
+  f = fopen(tmp, "w");
+  if (!f)
+    return -1;
+  chmod(tmp, 0600);
+  if (fwrite(text, 1, len, f) != len) {
+    fclose(f);
+    unlink(tmp);
+    return -1;
   }
+  if (fclose(f) != 0) {
+    unlink(tmp);
+    return -1;
+  }
+  chmod(tmp, 0600);
+  if (rename(tmp, path) != 0) {
+    unlink(tmp);
+    return -1;
+  }
+  return 0;
+}
+
+int xw_props_port_load(const char *wallpaper_id) {
+  char path[1100], buf[32];
+  FILE *f;
+  size_t nr;
+  long v;
+  char *end;
+  if (!wallpaper_id || !wallpaper_id[0])
+    return -1;
+  if (port_path(wallpaper_id, path, sizeof(path)) != 0)
+    return -1;
+  f = fopen(path, "rb");
+  if (!f)
+    return -1;
+  nr = fread(buf, 1, sizeof(buf) - 1, f);
+  fclose(f);
+  if (nr == 0)
+    return -1;
+  buf[nr] = '\0';
+  v = strtol(buf, &end, 10);
+  if (end == buf || v <= 0 || v > 65535)
+    return -1;
+  return (int)v;
+}
+
+/* One-shot file:// -> http localStorage migration marker (<sha>.migrated).
+ * The migration itself runs once per wallpaper inside the web backend;
+ * the marker only records that it ran. */
+static int migrated_path(const char *wallpaper_id, char *out, size_t n) {
+  return sidecar_path(wallpaper_id, "migrated", out, n);
+}
+
+int xw_props_migrated_done(const char *wallpaper_id) {
+  char path[1100];
+  struct stat st;
+  if (!wallpaper_id || !wallpaper_id[0])
+    return 0;
+  if (migrated_path(wallpaper_id, path, sizeof(path)) != 0)
+    return 0;
+  return stat(path, &st) == 0 ? 1 : 0;
+}
+
+int xw_props_migrated_set(const char *wallpaper_id) {
+  char path[1100], tmp[1200];
+  FILE *f;
+  if (!wallpaper_id || !wallpaper_id[0])
+    return -1;
+  if (migrated_path(wallpaper_id, path, sizeof(path)) != 0)
+    return -1;
+  ensure_dir_for(path);
+  snprintf(tmp, sizeof(tmp), "%s.tmp.%d", path, (int)getpid());
+  f = fopen(tmp, "w");
+  if (!f)
+    return -1;
+  chmod(tmp, 0600);
+  if (fclose(f) != 0) {
+    unlink(tmp);
+    return -1;
+  }
+  chmod(tmp, 0600);
+  if (rename(tmp, path) != 0) {
+    unlink(tmp);
+    return -1;
+  }
+  return 0;
 }
 
 static int ensure_dir_for(const char *path) {

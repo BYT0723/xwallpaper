@@ -52,7 +52,7 @@ src/scene_script.o: CFLAGS += -Ivendor/quickjs
 # daemon: owns all wallpaper windows, links the full backend stack.
 DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/x11.c src/app.c src/image.c src/video.c src/web.c \
-              src/web_dir.c src/web_props.c src/props_store.c src/wl.c src/we_audio.c src/we_pulse.c \
+              src/web_dir.c src/web_http.c src/web_props.c src/props_store.c src/wl.c src/we_audio.c src/we_pulse.c \
               src/keybinds.c src/osd.c \
               src/scene_pkg.c src/scene_tex.c src/scene_shader.c \
               src/scene_parse.c src/scene_core.c src/scene_gl.c \
@@ -256,7 +256,7 @@ xwallpaperd: $(DAEMON_OBJ)
 # here made every header edit recompile the engine (~18s for quickjs.c alone).
 HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/client.h src/state.h src/x11.h src/app.h src/backends.h \
-  src/wl.h src/daemon.h src/web_dir.h src/web_props.h src/props_store.h src/web.h src/we_audio.h src/we_pulse.h \
+  src/wl.h src/daemon.h src/web_dir.h src/web_http.h src/web_props.h src/props_store.h src/web.h src/we_audio.h src/we_pulse.h \
   src/keybinds.h src/osd.h \
   src/scene_pkg.h src/scene_tex.h src/scene_shader.h src/scene_parse.h \
   src/scene_model.h src/scene_core.h src/scene_gl.h src/scene_image.h \
@@ -278,6 +278,9 @@ tests/test_state: tests/test_state.c src/state.o src/cli.o src/web_dir.o
 
 tests/test_web_dir: tests/test_web_dir.c src/web_dir.o
 	$(CC) $(CFLAGS) -o $@ $< src/web_dir.o
+
+tests/test_web_http: tests/test_web_http.c src/web_http.o
+	$(CC) $(CFLAGS) -o $@ $< src/web_http.o $(shell pkg-config --libs glib-2.0 gio-2.0)
 
 tests/test_web_props: tests/test_web_props.c src/web_props.o
 	$(CC) $(CFLAGS) $(SCENE_CFLAGS) -o $@ $< src/web_props.o $(SCENE_LIBS)

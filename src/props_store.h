@@ -32,4 +32,15 @@ int xw_props_store_save(const char *wallpaper_id,
 int xw_props_store_load(const char *wallpaper_id,
                         XWStoredProp *out, int cap, int *n);
 
+/* Per-wallpaper localhost HTTP port sidecar (pins the loopback origin so
+ * WebKit storage survives restarts). save is atomic (tmp+rename, 0600);
+ * load returns the port, or -1 when absent/corrupt. */
+int xw_props_port_save(const char *wallpaper_id, int port);
+int xw_props_port_load(const char *wallpaper_id);
+
+/* One-shot file:// -> http localStorage migration marker. done() is 1
+ * once the migration ran for this wallpaper; set() records it. */
+int xw_props_migrated_done(const char *wallpaper_id);
+int xw_props_migrated_set(const char *wallpaper_id);
+
 #endif /* XW_PROPS_STORE_H */

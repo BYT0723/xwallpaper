@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head><title>wemigrate</title></head>
+<body>
+<script>
+/* Report what this http-origin document sees in localStorage. After the
+ * one-shot file:// -> http migration the seeded file-era keys show up. */
+try {
+  var v = localStorage.getItem('k1');
+  document.title = 'MIG:' + (v === null ? 'none' : v);
+} catch (e) {
+  document.title = 'MIG:err';
+}
+</script>
+</body>
+</html>

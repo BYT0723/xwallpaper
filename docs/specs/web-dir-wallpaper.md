@@ -97,7 +97,10 @@ int xw_web_resolve(const char *in, char *root, size_t rn, char *entry, size_t en
 
 - Always: `make test` 全绿再合；`web.c` 不开第二个 X 连接（复用 `x11` 的）；`destroy` 释放 context/view/root 路径；无目录列表；`clear` 后对应 WebView 销毁即停服。
 - Ask first: 新增构建依赖（本方案不新增，若要换 libsoup 需另议）；改 protocol 文本格式（本方案不需要）；动 `web_init_wl`。
-- Never: `fork+exec python/http.server` 外部进程；绑 TCP 端口监听；把 webkit/mpv/imlib2 链进 `xwallpaper` CLI；提交 secret。
+- Never: `fork+exec python/http.server` 外部进程；监听非回环地址或固定端口；把 webkit/mpv/imlib2 链进 `xwallpaper` CLI；提交 secret。
+- 修订（2026-10-29）：Unity WebGL 壁纸在 `file://` 下必然 abort（见
+  `docs/specs/web-local-http.md`），目录模式改走内嵌 `127.0.0.1` 临时端口
+  HTTP 服务。原 "Never 绑 TCP 端口监听" 条款相应放宽为 "只许回环临时端口"。
 
 ## Success Criteria
 

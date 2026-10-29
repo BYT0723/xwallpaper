@@ -85,11 +85,38 @@ static void test_empty_deletes(void) {
   TEST_CHECK_EQ_INT(xw_props_store_load("/wall/bd2", out, 8, &n), 1);
 }
 
+static void test_port_roundtrip(void) {
+  TEST_BEGIN("http port sidecar roundtrips, garbage rejected");
+  char base[256];
+  make_tmp_state(base, sizeof(base));
+  TEST_CHECK_EQ_INT(xw_props_port_load("/wall/bd2"), -1);
+  TEST_CHECK_EQ_INT(xw_props_port_save("/wall/bd2", 43779), 0);
+  TEST_CHECK_EQ_INT(xw_props_port_load("/wall/bd2"), 43779);
+  TEST_CHECK_EQ_INT(xw_props_port_save("/wall/bd2", 0), -1);
+  TEST_CHECK_EQ_INT(xw_props_port_save("/wall/bd2", 70000), -1);
+  TEST_CHECK_EQ_INT(xw_props_port_save(NULL, 80), -1);
+  TEST_CHECK_EQ_INT(xw_props_port_load(NULL), -1);
+  TEST_CHECK_EQ_INT(xw_props_port_load("/wall/bd2"), 43779);
+}
+
+static void test_migrated_marker(void) {
+  TEST_BEGIN("migration marker sets once and sticks");
+  char base[256];
+  make_tmp_state(base, sizeof(base));
+  TEST_CHECK_EQ_INT(xw_props_migrated_done("/wall/bd2"), 0);
+  TEST_CHECK_EQ_INT(xw_props_migrated_set("/wall/bd2"), 0);
+  TEST_CHECK_EQ_INT(xw_props_migrated_done("/wall/bd2"), 1);
+  TEST_CHECK_EQ_INT(xw_props_migrated_done(NULL), 0);
+  TEST_CHECK_EQ_INT(xw_props_migrated_set(NULL), -1);
+}
+
 int main(void) {
   TEST_SUITE("props_store");
   test_key_stable();
   test_roundtrip();
   test_missing_and_bad();
   test_empty_deletes();
+  test_port_roundtrip();
+  test_migrated_marker();
   TEST_SUMMARY();
 }

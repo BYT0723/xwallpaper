@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head><title>seed</title></head>
+<body>
+<script>
+/* Plant file-origin localStorage (simulates the file:// era). Loaded
+ * manually over file:// by the test before backend.start(). */
+try {
+  localStorage.setItem('k1', 'v1');
+  localStorage.setItem('bd2-wallpaper-favs', '["0001","0002"]');
+  document.title = 'SEED:done';
+} catch (e) {
+  document.title = 'SEED:err';
+}
+</script>
+</body>
+</html>
