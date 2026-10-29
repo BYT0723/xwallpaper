@@ -186,7 +186,7 @@ static gboolean http_write(GOutputStream *os, const void *buf, size_t n) {
 
 static void http_send_file(GOutputStream *os, int head_only,
                            const char *full, long long lo, long long hi,
-                           int partial) {
+                           int partial, int keep_alive) {
   FILE *f = fopen(full, "rb");
   char hdr[512];
   struct stat st;
@@ -207,16 +207,18 @@ static void http_send_file(GOutputStream *os, int head_only,
                  "Content-Length: %lld\r\n"
                  "Content-Range: bytes %lld-%lld/%lld\r\n"
                  "Accept-Ranges: bytes\r\n"
-                 "Connection: close\r\n\r\n",
-                 xw_web_http_mime(full), len, lo, hi, size);
+                 "Connection: %s\r\n\r\n",
+                 xw_web_http_mime(full), len, lo, hi, size,
+                 keep_alive ? "keep-alive" : "close");
   else
     n = snprintf(hdr, sizeof(hdr),
                  "HTTP/1.1 200 OK\r\n"
                  "Content-Type: %s\r\n"
                  "Content-Length: %lld\r\n"
                  "Accept-Ranges: bytes\r\n"
-                 "Connection: close\r\n\r\n",
-                 xw_web_http_mime(full), len);
+                 "Connection: %s\r\n\r\n",
+                 xw_web_http_mime(full), len,
+                 keep_alive ? "keep-alive" : "close");
   if (!http_write(os, hdr, (size_t)n))
     goto body_done;
   if (!head_only && fseek(f, lo, SEEK_SET) == 0) {
@@ -239,14 +241,15 @@ body_done:
 }
 
 static void http_send_status(GOutputStream *os, int code, const char *phrase,
-                             const char *extra) {
+                             const char *extra, int keep_alive) {
   char hdr[512];
   int n = snprintf(hdr, sizeof(hdr),
                    "HTTP/1.1 %d %s\r\n"
                    "Content-Length: 0\r\n"
                    "%s"
-                   "Connection: close\r\n\r\n",
-                   code, phrase, extra ? extra : "");
+                   "Connection: %s\r\n\r\n",
+                   code, phrase, extra ? extra : "",
+                   keep_alive ? "keep-alive" : "close");
   http_write(os, hdr, (size_t)n);
 }
 
@@ -320,133 +323,173 @@ static void http_serve(XWWebHttp *h, GSocketConnection *conn) {
   GOutputStream *os = g_io_stream_get_output_stream(G_IO_STREAM(conn));
   char req[65536];
   gsize total = 0;
-  char *eoh, *line_end, *method, *target, *sp;
-  char full[8192];
-  char abuf[4096];
-  const char *serve = full;
-  struct stat st;
-  int head_only = 0;
   if (!root)
     return;
-  /* Idle peers (TCP preconnects, half-open sockets) must be reaped instead
-   * of parking a worker forever. */
   g_socket_set_timeout(g_socket_connection_get_socket(conn), 10);
   for (;;) {
-    gssize nr = g_input_stream_read(is, req + total,
-                                    sizeof(req) - 1 - total, NULL, NULL);
-    if (nr <= 0)
-      goto done;
-    total += (gsize)nr;
-    req[total] = '\0';
-    if (total >= sizeof(req) - 1)
-      break;
-    if (strstr(req, "\r\n\r\n") || strstr(req, "\n\n"))
-      break;
-  }
-  eoh = strstr(req, "\r\n\r\n");
-  if (!eoh)
-    eoh = strstr(req, "\n\n");
-  if (!eoh) {
-    http_send_status(os, 400, "Bad Request", NULL);
-    goto done;
-  }
-  line_end = strstr(req, "\r\n");
-  if (!line_end)
-    line_end = strchr(req, '\n');
-  *line_end = '\0';
-  method = req;
-  target = strchr(method, ' ');
-  if (!target) {
-    http_send_status(os, 400, "Bad Request", NULL);
-    goto done;
-  }
-  *target++ = '\0';
-  sp = strchr(target, ' ');
-  if (sp)
-    *sp = '\0';
-  if (strcasecmp(method, "GET") == 0)
-    head_only = 0;
-  else if (strcasecmp(method, "HEAD") == 0)
-    head_only = 1;
-  else {
-    http_send_status(os, 405, "Method Not Allowed",
-                     "Allow: GET, HEAD\r\n");
-    goto done;
-  }
-  /* Alias URLs are registered explicitly (WE file properties outside
-   * the root), so they bypass the root-containment check by design. */
-  if (http_alias_lookup(h, target, abuf, sizeof(abuf)) == 0) {
-    serve = abuf;
-  } else {
-    {
-      int rc = xw_web_http_resolve(root, target, full, sizeof(full));
-      if (rc == -2) {
-        http_send_status(os, 403, "Forbidden", NULL);
-        goto done;
-      }
-      if (rc != 0) {
-        http_send_status(os, 400, "Bad Request", NULL);
-        goto done;
-      }
-    }
-    {
-      char *rp = realpath(full, NULL);
-      size_t rl = strlen(root);
-      int inside;
-      if (!rp) {
-        http_send_status(os, 404, "Not Found", NULL);
-        goto done;
-      }
-      inside = strncmp(rp, root, rl) == 0 &&
-               (rp[rl] == '/' || rp[rl] == '\0');
-      free(rp);
-      if (!inside) {
-        http_send_status(os, 403, "Forbidden", NULL);
-        goto done;
-      }
-    }
-  }
-  if (stat(serve, &st) != 0 || !S_ISREG(st.st_mode)) {
-    http_send_status(os, 404, "Not Found", NULL);
-    goto done;
-  }
-  {
-    long long size = (long long)st.st_size, a = 0, b = size - 1;
-    int partial = 0;
-    char *val = NULL;
-    char *l = line_end + 1;
-    while (l < eoh) {
-      char *nl = strchr(l, '\n');
-      char *name = l;
-      char *end;
-      if (!nl || nl > eoh + 1)
+    char *eoh, *line_end, *method, *target, *sp, *ver;
+    char full[8192];
+    char abuf[4096];
+    const char *serve = full;
+    struct stat st;
+    int head_only = 0;
+    int keep_alive = 0, is_11 = 0;
+    int eoh_len = 0;
+    for (;;) {
+      gssize nr;
+      if (total > 0 && (strstr(req, "\r\n\r\n") || strstr(req, "\n\n")))
         break;
-      end = nl;
-      while (end > name && (end[-1] == '\r' || end[-1] == ' ' ||
-                            end[-1] == '\t'))
-        end--;
-      while (*name == ' ' || *name == '\t')
-        name++;
-      if (strncasecmp(name, "Range:", 6) == 0) {
-        val = name + 6;
-        while (*val == ' ' || *val == '\t')
-          val++;
-        *end = '\0';
-        break;
+      if (total >= sizeof(req) - 1) {
+        http_send_status(os, 400, "Bad Request", NULL, 0);
+        goto done;
       }
-      l = nl + 1;
+      nr = g_input_stream_read(is, req + total,
+                                      sizeof(req) - 1 - total, NULL, NULL);
+      if (nr <= 0)
+        goto done;
+      total += (gsize)nr;
+      req[total] = '\0';
     }
-    if (val && xw_web_http_parse_range(val, size, &a, &b) == 0)
-      partial = 1;
+    eoh = strstr(req, "\r\n\r\n");
+    if (eoh)
+      eoh_len = 4;
+    else if ((eoh = strstr(req, "\n\n")))
+      eoh_len = 2;
     else {
-      a = 0;
-      b = size - 1;
-    }
-    if (size == 0) {
-      http_send_file(os, head_only, serve, 0, -1, 0);
+      http_send_status(os, 400, "Bad Request", NULL, 0);
       goto done;
     }
-    http_send_file(os, head_only, serve, a, b, partial);
+    line_end = strstr(req, "\r\n");
+    if (!line_end)
+      line_end = strchr(req, '\n');
+    *line_end = '\0';
+    method = req;
+    target = strchr(method, ' ');
+    if (!target) {
+      http_send_status(os, 400, "Bad Request", NULL, 0);
+      goto done;
+    }
+    *target++ = '\0';
+    sp = strchr(target, ' ');
+    ver = NULL;
+    if (sp) {
+      *sp = '\0';
+      ver = sp + 1;
+      while (*ver == ' ' || *ver == '\t')
+        ver++;
+    }
+    is_11 = ver && strncmp(ver, "HTTP/1.1", 8) == 0;
+    if (strcasecmp(method, "GET") == 0)
+      head_only = 0;
+    else if (strcasecmp(method, "HEAD") == 0)
+      head_only = 1;
+    else {
+      http_send_status(os, 405, "Method Not Allowed",
+                       "Allow: GET, HEAD\r\n", 0);
+      goto done;
+    }
+    {
+      long long size, a = 0, b = 0;
+      int partial = 0;
+      char *val = NULL;
+      int conn_close = 0, conn_keep = 0;
+      char *l = line_end + 1;
+      while (l < eoh) {
+        char *nl = strchr(l, '\n');
+        char *name = l;
+        char *end;
+        if (!nl || nl > eoh + 1)
+          break;
+        end = nl;
+        while (end > name && (end[-1] == '\r' || end[-1] == ' ' ||
+                              end[-1] == '\t'))
+          end--;
+        while (*name == ' ' || *name == '\t')
+          name++;
+        if (strncasecmp(name, "Range:", 6) == 0) {
+          val = name + 6;
+          while (*val == ' ' || *val == '\t')
+            val++;
+          *end = '\0';
+        } else if (strncasecmp(name, "Connection:", 11) == 0) {
+          char *v = name + 11;
+          while (*v == ' ' || *v == '\t')
+            v++;
+          *end = '\0';
+          if (strcasecmp(v, "close") == 0)
+            conn_close = 1;
+          else if (strcasecmp(v, "keep-alive") == 0)
+            conn_keep = 1;
+        }
+        l = nl + 1;
+      }
+      keep_alive = conn_close ? 0 : (conn_keep ? 1 : is_11);
+      if (http_alias_lookup(h, target, abuf, sizeof(abuf)) == 0) {
+        serve = abuf;
+      } else {
+        int rc = xw_web_http_resolve(root, target, full, sizeof(full));
+        if (rc == -2) {
+          http_send_status(os, 403, "Forbidden", NULL, keep_alive);
+          if (!keep_alive)
+            goto done;
+          goto next;
+        }
+        if (rc != 0) {
+          http_send_status(os, 400, "Bad Request", NULL, keep_alive);
+          if (!keep_alive)
+            goto done;
+          goto next;
+        }
+        {
+          char *rp = realpath(full, NULL);
+          size_t rl = strlen(root);
+          int inside;
+          if (!rp) {
+            http_send_status(os, 404, "Not Found", NULL, keep_alive);
+            if (!keep_alive)
+              goto done;
+            goto next;
+          }
+          inside = strncmp(rp, root, rl) == 0 &&
+                   (rp[rl] == '/' || rp[rl] == '\0');
+          free(rp);
+          if (!inside) {
+            http_send_status(os, 403, "Forbidden", NULL, keep_alive);
+            if (!keep_alive)
+              goto done;
+            goto next;
+          }
+        }
+      }
+      if (stat(serve, &st) != 0 || !S_ISREG(st.st_mode)) {
+        http_send_status(os, 404, "Not Found", NULL, keep_alive);
+        if (!keep_alive)
+          goto done;
+        goto next;
+      }
+      size = (long long)st.st_size;
+      if (val && xw_web_http_parse_range(val, size, &a, &b) == 0)
+        partial = 1;
+      else {
+        a = 0;
+        b = size - 1;
+      }
+      if (size == 0) {
+        http_send_file(os, head_only, serve, 0, -1, 0, keep_alive);
+      } else {
+        http_send_file(os, head_only, serve, a, b, partial, keep_alive);
+      }
+      if (!keep_alive)
+        goto done;
+    }
+next:
+    {
+      gsize used = (gsize)(eoh - req) + (gsize)eoh_len;
+      if (used < total)
+        memmove(req, req + used, total - used);
+      total = total > used ? total - used : 0;
+      req[total] = '\0';
+    }
   }
 done:
   g_socket_close(g_socket_connection_get_socket(conn), NULL);

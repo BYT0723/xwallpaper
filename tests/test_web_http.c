@@ -4,6 +4,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/select.h>
+
+static void test_keepalive(void);
+static void test_keepalive_range(void);
 
 static void test_mime(void) {
   TEST_BEGIN("wasm/js/html mime types map correctly");
@@ -127,5 +136,162 @@ int main(void) {
   test_range();
   test_alias();
   test_preferred_port();
+  test_keepalive();
+  test_keepalive_range();
   TEST_SUMMARY();
+}
+
+static int test_tcp_connect(int port) {
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  struct sockaddr_in a;
+  if (fd < 0)
+    return -1;
+  memset(&a, 0, sizeof(a));
+  a.sin_family = AF_INET;
+  a.sin_port = htons((unsigned short)port);
+  a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  if (connect(fd, (struct sockaddr *)&a, sizeof(a)) != 0) {
+    close(fd);
+    return -1;
+  }
+  return fd;
+}
+
+static int test_recv_all(int fd, char *out, size_t cap) {
+  size_t total = 0;
+  for (;;) {
+    fd_set rfds;
+    struct timeval tv = {5, 0};
+    ssize_t nr;
+    FD_ZERO(&rfds);
+    FD_SET(fd, &rfds);
+    if (select(fd + 1, &rfds, NULL, NULL, &tv) <= 0)
+      return -1;
+    nr = recv(fd, out + total, cap - 1 - total, 0);
+    if (nr <= 0)
+      return total > 0 ? (int)total : -1;
+    total += (size_t)nr;
+    out[total] = '\0';
+    if (strstr(out, "\r\n\r\n"))
+      break;
+    if (total >= cap - 1)
+      break;
+  }
+  return (int)total;
+}
+
+static int test_read_response(int fd, char *hdr, size_t hcap, char **body, size_t *body_len) {
+  char buf[131072];
+  int n, hdr_len = 0;
+  char *eoh;
+  long long clen = 0;
+  size_t have = 0;
+  static char store[1048576];
+  n = test_recv_all(fd, buf, sizeof(buf));
+  if (n <= 0)
+    return -1;
+  eoh = strstr(buf, "\r\n\r\n");
+  if (!eoh)
+    return -1;
+  hdr_len = (int)(eoh - buf) + 4;
+  if ((size_t)hdr_len >= hcap)
+    return -1;
+  memcpy(hdr, buf, (size_t)hdr_len);
+  hdr[hdr_len] = '\0';
+  {
+    char *p = strstr(hdr, "Content-Length:");
+    if (p)
+      clen = atoll(p + 15);
+  }
+  have = (size_t)n - (size_t)hdr_len;
+  if (clen < 0 || (size_t)clen > sizeof(store))
+    return -1;
+  if (have > (size_t)clen)
+    have = (size_t)clen;
+  memcpy(store, buf + hdr_len, have);
+  while (have < (size_t)clen) {
+    fd_set rfds;
+    struct timeval tv = {5, 0};
+    ssize_t nr;
+    FD_ZERO(&rfds);
+    FD_SET(fd, &rfds);
+    if (select(fd + 1, &rfds, NULL, NULL, &tv) <= 0)
+      return -1;
+    nr = recv(fd, store + have, (size_t)clen - have, 0);
+    if (nr <= 0)
+      return -1;
+    have += (size_t)nr;
+  }
+  *body = store;
+  *body_len = have;
+  return 0;
+}
+
+static void test_keepalive(void) {
+  XWWebHttp *h = NULL;
+  XWError err;
+  int port = -1, fd = -1;
+  char hdr[8192], *body = NULL;
+  size_t blen = 0;
+  const char *pipelined =
+      "GET /app.wasm HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n\r\n"
+      "GET /app.wasm HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+  TEST_BEGIN("pipelined keep-alive serves both requests on one connection");
+  memset(&err, 0, sizeof(err));
+  h = xw_web_http_start("tests/data/webunity", 0, &err);
+  TEST_CHECK(h != NULL);
+  if (!h)
+    return;
+  port = xw_web_http_port(h);
+  TEST_CHECK(port > 0);
+  fd = test_tcp_connect(port);
+  TEST_CHECK(fd >= 0);
+  if (fd < 0) {
+    xw_web_http_stop(h);
+    return;
+  }
+  TEST_CHECK(send(fd, pipelined, strlen(pipelined), 0) == (ssize_t)strlen(pipelined));
+  TEST_CHECK(test_read_response(fd, hdr, sizeof(hdr), &body, &blen) == 0);
+  TEST_CHECK(strstr(hdr, "200") != NULL);
+  TEST_CHECK(strstr(hdr, "keep-alive") != NULL);
+  TEST_CHECK(blen > 0);
+  TEST_CHECK(test_read_response(fd, hdr, sizeof(hdr), &body, &blen) == 0);
+  TEST_CHECK(strstr(hdr, "200") != NULL);
+  TEST_CHECK(blen > 0);
+  close(fd);
+  xw_web_http_stop(h);
+}
+
+static void test_keepalive_range(void) {
+  XWWebHttp *h = NULL;
+  XWError err;
+  int port = -1, fd = -1;
+  char hdr[8192], *body = NULL;
+  size_t blen = 0;
+  const char *req =
+      "GET /app.wasm HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=0-99\r\nConnection: keep-alive\r\n\r\n"
+      "GET /app.wasm HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: bytes=0-99\r\nConnection: close\r\n\r\n";
+  TEST_BEGIN("pipelined ranges both return 206 without dropping the second");
+  memset(&err, 0, sizeof(err));
+  h = xw_web_http_start("tests/data/webunity", 0, &err);
+  TEST_CHECK(h != NULL);
+  if (!h)
+    return;
+  port = xw_web_http_port(h);
+  fd = test_tcp_connect(port);
+  TEST_CHECK(fd >= 0);
+  if (fd < 0) {
+    xw_web_http_stop(h);
+    return;
+  }
+  TEST_CHECK(send(fd, req, strlen(req), 0) == (ssize_t)strlen(req));
+  TEST_CHECK(test_read_response(fd, hdr, sizeof(hdr), &body, &blen) == 0);
+  TEST_CHECK(strstr(hdr, "206") != NULL);
+  TEST_CHECK(strstr(hdr, "Content-Range:") != NULL);
+  TEST_CHECK(blen > 0);
+  TEST_CHECK(test_read_response(fd, hdr, sizeof(hdr), &body, &blen) == 0);
+  TEST_CHECK(strstr(hdr, "206") != NULL);
+  TEST_CHECK(blen > 0);
+  close(fd);
+  xw_web_http_stop(h);
 }
