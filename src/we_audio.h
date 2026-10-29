@@ -4,12 +4,16 @@
 #include <stddef.h>
 
 #define XW_WE_AUDIO_BINS 128
-#define XW_WE_AUDIO_RATE 48000
+#define XW_WE_AUDIO_RATE 44100
 
 /* Map time-domain stereo samples to 128 WE-style bins
  * (0-63 left, 64-127 right, bass first). n must be a power of two >= 256.
- * Level per band follows linux-wallpaperengine (0.35*log10(power) with the
- * per-band gain), clamped 0..1. Silence yields all zeros.
+ * Band b reads FFT bin 2b straight, like linux-wallpaperengine's
+ * PulseAudioPlaybackRecorder (index = band * 2); level is
+ * 0.35*log10(power) with the per-band (2-e^...) gain, output clamped
+ * 0..1 (upstream leaves quiet bands negative; the clamp keeps the 0..1
+ * contract for JS listeners and renders identically in shaders).
+ * Silence is all zeros.
  * Returns 0 on success, -1 on bad args. */
 int xw_we_audio_map(const float *l, const float *r, int n, float out[128]);
 
@@ -31,12 +35,14 @@ typedef struct {
  * engine does - PulseAudioPlaybackRecorder writes destination[band >> 1] and
  * destination[band >> 2] in a plain loop, so the last write of each group
  * wins and the surviving source band is the odd one:
- * 32[k] = 64[2k+1] and 16[k] = 64[4k+3].
+ * 32[k] = 64[2k+1] and 16[k] = 64[4k+3] - but each resolution applies its
+ * own magnitude curve (band/63, band/31, band/15), so the 64-band gain baked
+ * into `in` is divided out first and the destination gain applied after.
+ * Exact except when the 64-band value hit the 1.0 cap while the narrower
+ * resolution would not have (sub-0.1 undershoot in that sliver).
  *
- * The engine also applies its own per-resolution magnitude curve (band/63,
- * band/31, band/15); these arrays carry the 64-band curve for all three, so
- * the 32- and 16-band levels are an approximation. `out` is zeroed first, so
- * a NULL input leaves a silent spectrum rather than garbage.
+ * `out` is zeroed first, so a NULL input leaves a silent spectrum rather
+ * than garbage.
  * Returns 0, or -1 on bad args. */
 int xw_we_audio_spectrum(const float in[XW_WE_AUDIO_BINS], XWWeSpectrum *out);
 

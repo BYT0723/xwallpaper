@@ -11,7 +11,7 @@
 #ifdef XW_HAVE_PULSE
 #include <pulse/pulseaudio.h>
 
-#define WE_CHUNK 2048
+#define WE_CHUNK 1024
 
 typedef struct {
   pthread_t th;

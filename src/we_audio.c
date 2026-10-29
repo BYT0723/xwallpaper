@@ -50,6 +50,10 @@ static void fft(double *re, double *im, int n) {
   }
 }
 
+static double we_gain(double band, double nbands) {
+  return 2.0 - exp((1.0 - band / nbands) - 0.5);
+}
+
 static void channel_bins(const float *in, int n, float *bands) {
   static double re[WE_FFT_MAX], im[WE_FFT_MAX];
   for (int i = 0; i < n; i++) {
@@ -58,38 +62,26 @@ static void channel_bins(const float *in, int n, float *bands) {
   }
   fft(re, im, n);
 
-  /* power of bins 1..n/2 (skip DC) */
+  /* power of bins 0..n/2 (bin 0 is DC, read by band 0 upstream too) */
   static double pw[WE_FFT_MAX / 2 + 1];
   int half = n / 2;
-  for (int k = 1; k <= half; k++)
+  for (int k = 0; k <= half; k++)
     pw[k] = re[k] * re[k] + im[k] * im[k];
 
-  /* 64 log-spaced bands from ~30Hz to Nyquist. Level follows the
-   * linux-wallpaperengine PulseAudioPlaybackRecorder curve -
-   * 0.35*log10(power) with the (2-e^...) per-band gain, clamped 0..1 -
-   * so quiet passages stay visible instead of collapsing to zero. */
-  const double fmin = 30.0, fmax = XW_WE_AUDIO_RATE / 2.0;
+  /* linear band map straight from linux-wallpaperengine's
+   * PulseAudioPlaybackRecorder: band b reads FFT bin 2b, level
+   * 0.35*log10(power) with the (2-e^...) per-band gain, capped above
+   * at 1.0. Upstream leaves quiet bands negative (renders as zero-height
+   * in GLSL); here the same array also feeds JS audio listeners, where
+   * negatives would poison page-side averaging, so clamp below at 0 to
+   * keep the 0..1 contract. */
   for (int b = 0; b < 64; b++) {
-    double f0 = fmin * pow(fmax / fmin, (double)b / 64.0);
-    double f1 = fmin * pow(fmax / fmin, (double)(b + 1) / 64.0);
-    int k0 = (int)(f0 * n / XW_WE_AUDIO_RATE);
-    int k1 = (int)(f1 * n / XW_WE_AUDIO_RATE);
-    if (k0 < 1)
-      k0 = 1;
-    if (k1 <= k0)
-      k1 = k0 + 1;
-    if (k1 > half)
-      k1 = half;
-    double sum = 0.0;
-    for (int k = k0; k < k1; k++)
-      sum += pw[k];
+    int k = b * 2;
+    if (k > half)
+      k = half;
     double v = 0.0;
-    double mean = sum / (k1 - k0);
-    if (mean > 0.0) {
-      double f = 0.35 * log10(mean);
-      double g = 2.0 - exp((1.0 - (double)b / 63.0) - 0.5);
-      v = f * g;
-    }
+    if (pw[k] > 0.0)
+      v = 0.35 * log10(pw[k]) * we_gain((double)b, 63.0);
     if (v < 0.0)
       v = 0.0;
     if (v > 1.0)
@@ -106,6 +98,17 @@ int xw_we_audio_map(const float *l, const float *r, int n, float out[128]) {
   return 0;
 }
 
+/* Re-apply the destination resolution's gain: `v64` carries the 64-band
+ * gain, so divide it out, then apply the 32/16-band curve. Exact unless
+ * v64 hit the 1.0 cap (raw is then a lower bound). */
+static float regained(float v64, int src, int dst, double ndst) {
+  double raw = (double)v64 / we_gain((double)src, 63.0);
+  double v = raw * we_gain((double)dst, ndst);
+  if (v > 1.0)
+    v = 1.0;
+  return (float)v;
+}
+
 int xw_we_audio_spectrum(const float in[XW_WE_AUDIO_BINS], XWWeSpectrum *out) {
   int i;
   if (!out)
@@ -118,12 +121,12 @@ int xw_we_audio_spectrum(const float in[XW_WE_AUDIO_BINS], XWWeSpectrum *out) {
     out->right64[i] = in[XW_WE_AUDIO_BINS / 2 + i];
   }
   for (i = 0; i < 32; i++) {
-    out->left32[i] = out->left64[2 * i + 1];
-    out->right32[i] = out->right64[2 * i + 1];
+    out->left32[i] = regained(out->left64[2 * i + 1], 2 * i + 1, i, 31.0);
+    out->right32[i] = regained(out->right64[2 * i + 1], 2 * i + 1, i, 31.0);
   }
   for (i = 0; i < 16; i++) {
-    out->left16[i] = out->left64[4 * i + 3];
-    out->right16[i] = out->right64[4 * i + 3];
+    out->left16[i] = regained(out->left64[4 * i + 3], 4 * i + 3, i, 15.0);
+    out->right16[i] = regained(out->right64[4 * i + 3], 4 * i + 3, i, 15.0);
   }
   return 0;
 }

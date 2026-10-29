@@ -25,8 +25,8 @@ User stories:
   待 plan 阶段定），**不新增 `fftw` 依赖**。
 - 关键 API：`pa_simple` 或 `pa_stream` 连默认 sink 的 `.monitor` 源
   （`@DEFAULT_MONITOR@` 优先，失败则枚举 `default_sink.monitor`），
-  `float32le 2ch 48000Hz` 采集；每 50ms 做一次 FFT → 128 floats（0–63 左，64–127 右，
-  低频→高频，`0.0~1.0`，偶发可 >1.0，与 WE 文档一致，客户端自行 `Math.min`）。
+  `float32le 2ch 44100Hz` 采集；1024 帧做一次 FFT → 128 floats（0–63 左，64–127 右，
+  band b 取 FFT bin 2b（与 linux-wallpaperengine 的 PulseAudioPlaybackRecorder 同式），输出钳位 0..1（上游静音附近 band 为负值，此处下钳为 0 以保 JS 监听器的 0..1 契约，着色器渲染与上游一致）。
 - 桥接：`web.c` 以 `document-start` user-script 注入 shim 定义
   `window.wallpaperRegisterAudioListener`（存回调数组，支持重复注册覆盖语义与 WE 一致：
   后注册者也收到数据）；daemon 音频线程每 50ms 对**有监听器的 view** 逐个

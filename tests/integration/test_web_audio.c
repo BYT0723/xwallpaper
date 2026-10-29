@@ -1,8 +1,8 @@
 /* Integration test: WE audio listener under Xvfb.
  * A fixture page registers window.wallpaperRegisterAudioListener; the test
- * feeds a synthetic 100Hz sine through we_audio_map + xw_web_we_push (the
- * same path the daemon tick uses) and asserts the page saw 128 bins with
- * bass dominating treble. No Pulse server required. */
+ * feeds a synthetic bin-centered sine through we_audio_map + xw_web_we_push
+ * (the same path the daemon tick uses) and asserts the page saw 128 bins
+ * with bass dominating treble. No Pulse server required. */
 
 #include <math.h>
 #include <stdio.h>
@@ -93,14 +93,16 @@ static void test_audio_listener_end_to_end(void) {
   pump_gtk(dpy, 4);
   TEST_CHECK_EQ_INT(xw_web_we_want(), 1);
 
-  /* synthetic 100Hz full-scale sine, same feed path as the daemon tick */
-  static float L[2048], R[2048];
-  for (int i = 0; i < 2048; i++) {
-    L[i] = (float)sin(2.0 * M_PI * 100.0 * i / 48000.0);
+  /* synthetic sine on FFT bin 24 (band 12, ~1034Hz @44100Hz), the same feed
+   * path as the daemon tick. Bin-centered so all energy lands in one band,
+   * like upstream; the fixture averages bands 8-15 for bass. */
+  static float L[1024], R[1024];
+  for (int i = 0; i < 1024; i++) {
+    L[i] = (float)sin(2.0 * M_PI * 24.0 * i / 1024.0);
     R[i] = L[i];
   }
   float bins[128];
-  TEST_CHECK_EQ_INT(xw_we_audio_map(L, R, 2048, bins), 0);
+  TEST_CHECK_EQ_INT(xw_we_audio_map(L, R, 1024, bins), 0);
   xw_web_we_push(bins);
   pump_gtk(dpy, 2);
 
