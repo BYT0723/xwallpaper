@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head><title>webmedia</title></head>
+<body>
+<video id="v" src="bounce.mp4" muted playsinline width="320" height="240"></video>
+<audio id="a" src="tone.mp3"></audio>
+<script>
+/* A wallpaper host has no gesture path, so unmuted play() must resolve
+ * (autoplay ALLOW). MPLAY reports video time plus the audio play outcome
+ * and time for the test to poll. */
+var v = document.getElementById('v');
+try {
+  var pv = v.play();
+  if (pv && pv.catch)
+    pv.catch(function () {});
+} catch (e) {}
+try {
+  document.getElementById('a').play().then(
+    function () { window.__aok = 1; },
+    function (e) { window.__aok = 0; window.__aerr = e.name; });
+} catch (e) {
+  window.__aok = 0;
+}
+setInterval(function () {
+  var m = document.getElementById('a');
+  document.title = 'MPLAY v=' + v.currentTime.toFixed(1) + ' a=' +
+    (window.__aok ? 'ok' : (window.__aok === 0 ? 'rej' : 'pending')) + ':' +
+    m.currentTime.toFixed(1);
+}, 500);
+</script>
+</body>
+</html>

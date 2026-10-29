@@ -235,6 +235,26 @@ static void video_osd(VideoBase *m, const char *name, const char *value, int cur
   mpv_command(m->mpv, args);
 }
 
+static int video_get_ctl(XWBackend *b, const char *name, char *out,
+                         size_t n) {
+  VideoBase *m = (b && b->priv) ? (VideoBase *)b->priv : NULL;
+  if (!m || !m->mpv || !name || !out || n == 0)
+    return -1;
+  if (strcmp(name, "volume") == 0) {
+    double v = 0.0;
+    if (mpv_get_property(m->mpv, "volume", MPV_FORMAT_DOUBLE, &v) < 0)
+      return -1;
+    return snprintf(out, n, "%d", (int)(v + 0.5)) < (int)n ? 0 : -1;
+  }
+  if (strcmp(name, "mute") == 0) {
+    int f = 0;
+    if (mpv_get_property(m->mpv, "mute", MPV_FORMAT_FLAG, &f) < 0)
+      return -1;
+    return snprintf(out, n, "%d", f) < (int)n ? 0 : -1;
+  }
+  return -1;
+}
+
 /* Runtime control for the key bindings and the volume/mute subcommands.
  * mpv owns the values, so every relative step reads the live property first
  * instead of trusting a cached copy. */
@@ -337,6 +357,7 @@ XWBackend *xw_video_backend_new(void) {
     .on_event = NULL,
     .set_paused = video_set_paused,
     .control = video_control,
+    .get_ctl = video_get_ctl,
     .reload = video_reload,
     .retry = video_retry,
 #ifdef XW_HAVE_WAYLAND

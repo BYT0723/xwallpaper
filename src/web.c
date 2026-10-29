@@ -357,6 +357,21 @@ static void web_osd(WebCtx *ctx, const char *name, const char *value, int cur) {
 }
 
 
+/* The view-level mute is a second, independent kill switch: while it is
+ * on, no page-side volume (and no JS shim) can produce sound. It must
+ * therefore always follow the daemon's own state instead of being set once
+ * on a DPMS pause — otherwise `mute off` on a resumed page fixes the shim
+ * but leaves the view muted, and sound only returns with a fresh view
+ * (i.e. after switching wallpapers). */
+static void web_sync_view_mute(WebCtx *ctx) {
+  int want;
+  if (!ctx || !ctx->view)
+    return;
+  want = ctx->dpms_paused || (ctx->ctl_started && ctx->ctl_muted);
+  webkit_web_view_set_is_muted(WEBKIT_WEB_VIEW(ctx->view),
+                               want ? TRUE : FALSE);
+}
+
 /* Push the daemon's stored level into the page (after a control change, and
  * again after every navigation). */
 static void web_push_audio_ctl(WebCtx *ctx) {
@@ -371,10 +386,9 @@ static void web_push_audio_ctl(WebCtx *ctx) {
     if (ctx->ctl_paused)
       web_eval(ctx, "window.__xwCtlMedia&&window.__xwCtlMedia('pause');");
   }
-  if (ctx->dpms_paused) {
-    webkit_web_view_set_is_muted(WEBKIT_WEB_VIEW(ctx->view), TRUE);
+  web_sync_view_mute(ctx);
+  if (ctx->dpms_paused)
     web_eval(ctx, "window.__xwCtlMedia&&window.__xwCtlMedia('pause');");
-  }
 }
 
 /* Wallpaper Engine user properties: <root>/project.json general.properties
@@ -897,6 +911,18 @@ static int web_control(XWBackend *b, const char *name, const char *value,
   return -1;
 }
 
+static int web_get_ctl(XWBackend *b, const char *name, char *out, size_t n) {
+  WebCtx *ctx = (b && b->priv) ? (WebCtx *)b->priv : NULL;
+  if (!ctx || !name || !out || n == 0)
+    return -1;
+  if (strcmp(name, "volume") == 0)
+    return snprintf(out, n, "%d", (int)(ctx->ctl_volume + 0.5)) < (int)n ? 0
+                                                                         : -1;
+  if (strcmp(name, "mute") == 0)
+    return snprintf(out, n, "%d", ctx->ctl_muted ? 1 : 0) < (int)n ? 0 : -1;
+  return -1;
+}
+
 static void web_audio_message_cb(WebKitUserContentManager *ucm,
                                  WebKitJavascriptResult *res, gpointer ud) {
   (void)ucm;
@@ -1203,6 +1229,29 @@ static void web_mig_reset(WebCtx *ctx) {
   ctx->mig_json = NULL;
 }
 
+/* A wallpaper host has no user-gesture path by design (it is a desktop
+ * background, not a browser), so pages must be free to start audio/video
+ * programmatically, Wallpaper Engine semantics. Without this, every
+ * unmuted play() rejects with NotAllowedError while the page still
+ * reports itself "playing": frozen first frame plus silence, no errors. */
+static gboolean web_autoplay_policy_cb(WebKitWebView *view,
+                                       WebKitPolicyDecision *dec,
+                                       WebKitPolicyDecisionType type,
+                                       gpointer ud) {
+  WebKitWebsitePolicies *pol;
+  (void)view;
+  (void)ud;
+  if (type != WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION)
+    return FALSE;
+  pol = webkit_website_policies_new_with_policies(
+      "autoplay", WEBKIT_AUTOPLAY_ALLOW, NULL);
+  if (!pol)
+    return FALSE;
+  webkit_policy_decision_use_with_policies(dec, pol);
+  g_object_unref(pol);
+  return TRUE;
+}
+
 static void web_load_changed_cb(WebKitWebView *view,
                                 WebKitLoadEvent load_event, gpointer ud) {
   WebCtx *ctx = (WebCtx *)ud;
@@ -1344,6 +1393,8 @@ static int web_attach_context(WebCtx *ctx, XWError *err) {
                    G_CALLBACK(web_block_context_menu), NULL);
   g_signal_connect(ctx->view, "load-changed",
                    G_CALLBACK(web_load_changed_cb), ctx);
+  g_signal_connect(ctx->view, "decide-policy",
+                   G_CALLBACK(web_autoplay_policy_cb), NULL);
   g_signal_connect(ctx->view, "load-failed",
                    G_CALLBACK(web_load_failed_cb), ctx);
   g_signal_connect(ctx->view, "web-process-terminated",
@@ -1626,13 +1677,12 @@ static void web_set_paused(XWBackend *b, int paused) {
     return;
   ctx->dpms_paused = paused ? 1 : 0;
   if (paused) {
-    webkit_web_view_set_is_muted(WEBKIT_WEB_VIEW(ctx->view), TRUE);
+    web_sync_view_mute(ctx);
     web_eval(ctx, "window.__xwCtlMedia&&window.__xwCtlMedia('pause');");
     gtk_widget_hide(ctx->window);
   } else {
     gtk_widget_show(ctx->window);
-    webkit_web_view_set_is_muted(WEBKIT_WEB_VIEW(ctx->view),
-                                 ctx->ctl_muted ? TRUE : FALSE);
+    web_sync_view_mute(ctx);
     if (!ctx->ctl_paused)
       web_eval(ctx, "window.__xwCtlMedia&&window.__xwCtlMedia('play');");
   }
@@ -1773,6 +1823,7 @@ XWBackend *xw_web_backend_new(void) {
     .destroy = web_destroy,
     .on_event = web_on_event,
     .control = web_control,
+    .get_ctl = web_get_ctl,
     .set_paused = web_set_paused,
     .list_props = web_list_props,
     .set_prop = web_set_prop,

@@ -101,6 +101,11 @@ struct XWBackend {
    * does not support that action. May be NULL (image has no audio). */
   int (*control)(XWBackend *b, const char *name, const char *value,
                  XWError *err);
+  /* optional: read back a runtime control's authoritative value ("volume"
+   * -> "0".."100", "mute" -> "0"/"1"). The daemon mirrors it into the
+   * window/state so a control never diverges from the saved flags. May be
+   * NULL (backend keeps no readable state). */
+  int (*get_ctl)(XWBackend *b, const char *name, char *out, size_t n);
   /* optional: pause/resume rendering when the X display is in DPMS
    * power-off (standby/suspend/off). Rendering backends (e.g. mpv) keep
    * presenting frames while DPMS is off, which wakes the display back up.

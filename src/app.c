@@ -1145,6 +1145,29 @@ int xw_app_clear_props(XWApp *app, const XWConfig *cfg, XWError *err) {
   return b->clear_props(b, err);
 }
 
+/* Mirror a successful volume/mute control back into the window flags so a
+ * later save (or the next restore) cannot resurrect the pre-control value:
+ * that is what used to bring restored wallpapers back silent. */
+static void mirror_ctl_to_window(XWApp *app, int idx, XWBackend *b,
+                                 const char *name) {
+  char got[32];
+  if (!app || idx < 0 || idx >= app->nwins || !app->wins[idx] || !b ||
+      !b->get_ctl)
+    return;
+  if (strcmp(name, "volume") != 0 && strcmp(name, "mute") != 0)
+    return;
+  if (b->get_ctl(b, name, got, sizeof(got)) != 0)
+    return;
+  if (strcmp(name, "volume") == 0)
+    app->wins[idx]->volume = atof(got);
+  else
+    app->wins[idx]->mute = atoi(got);
+}
+
+static int ctl_persisted(const char *name) {
+  return strcmp(name, "volume") == 0 || strcmp(name, "mute") == 0;
+}
+
 int xw_app_control(XWApp *app, const XWConfig *cfg, const char *name,
                    const char *value, XWError *err) {
   int idx;
@@ -1166,12 +1189,16 @@ int xw_app_control(XWApp *app, const XWConfig *cfg, const char *name,
       hit++;
       if (b->control && b->control(b, name, value, &e) == 0) {
         ok++;
+        mirror_ctl_to_window(app, i, b, name);
       } else if (!first.msg[0]) {
         first = e;
       }
     }
-    if (ok > 0)
+    if (ok > 0) {
+      if (ctl_persisted(name))
+        xw_app_save_state(app);
       return 0;
+    }
     if (!hit)
       XW_ERROR_SET(err, 1, "no wallpapers to control");
     else if (first.msg[0])
@@ -1191,7 +1218,15 @@ int xw_app_control(XWApp *app, const XWConfig *cfg, const char *name,
     XW_ERROR_SET(err, 1, "that wallpaper does not support '%s'", name);
     return -1;
   }
-  return b->control(b, name, value, err);
+  {
+    int r = b->control(b, name, value, err);
+    if (r == 0 && b->get_ctl) {
+      mirror_ctl_to_window(app, idx, b, name);
+      if (ctl_persisted(name))
+        xw_app_save_state(app);
+    }
+    return r;
+  }
 }
 
 #define DPMS_POLL_INTERVAL_MS 500
@@ -1504,6 +1539,10 @@ static int restore_entry(XWApp *app, const XWStateEntry *e) {
   XWError err;
   memset(&err, 0, sizeof(err));
   int r = xw_app_set(app, &cfg, &err);
+  if (r == 0 && cfg.mute)
+    fprintf(stderr,
+            "xwallpaperd: %s restored muted (mute off: xwallpaper mute off -m %s)\n",
+            e->name, e->name);
   if (getenv("XW_DEBUG_DAEMON"))
     fprintf(stderr, "xwallpaperd: restore: %s %s %s (%s)\n", e->name, mode,
             r == 0 ? "ok" : "FAIL", r == 0 ? "" : err.msg);

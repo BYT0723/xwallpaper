@@ -177,11 +177,11 @@ int xw_web_http_parse_range(const char *hdr, long long size, long long *a,
   return 0;
 }
 
-static void http_write(GOutputStream *os, const void *buf, size_t n) {
+static gboolean http_write(GOutputStream *os, const void *buf, size_t n) {
   gsize wrote = 0;
   if (n == 0)
-    return;
-  g_output_stream_write_all(os, buf, n, &wrote, NULL, NULL);
+    return TRUE;
+  return g_output_stream_write_all(os, buf, n, &wrote, NULL, NULL);
 }
 
 static void http_send_file(GOutputStream *os, int head_only,
@@ -217,7 +217,8 @@ static void http_send_file(GOutputStream *os, int head_only,
                  "Accept-Ranges: bytes\r\n"
                  "Connection: close\r\n\r\n",
                  xw_web_http_mime(full), len);
-  http_write(os, hdr, (size_t)n);
+  if (!http_write(os, hdr, (size_t)n))
+    goto body_done;
   if (!head_only && fseek(f, lo, SEEK_SET) == 0) {
     char buf[65536];
     while (len > 0) {
@@ -226,10 +227,14 @@ static void http_send_file(GOutputStream *os, int head_only,
       size_t nr = fread(buf, 1, want, f);
       if (nr == 0)
         break;
-      http_write(os, buf, nr);
+      /* The client went away (seek-abort, navigation): stop at once
+       * instead of pushing the rest of the file into a dead socket. */
+      if (!http_write(os, buf, nr))
+        break;
       len -= (long long)nr;
     }
   }
+body_done:
   fclose(f);
 }
 

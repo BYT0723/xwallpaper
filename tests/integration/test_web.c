@@ -1240,6 +1240,132 @@ static void test_web_migrate_file_storage(void) {
   xw_x11_destroy_window(win);
 }
 
+/* Unmuted programmatic playback must resolve on a wallpaper host: there
+ * is no gesture path by design, so the daemon allows autoplay. The page
+ * records the audio play() outcome plus both clocks in the title. */
+static void test_web_media_autoplay(void) {
+  TEST_BEGIN("unmuted audio play() resolves and advances");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  isolate_props_state();
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "webmedia");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/webmedia";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    /* wait until the audio play() resolved and the video clock pinned
+     * past 1s (no loop: it stays at 2.0 once ended, so no wrap flake). */
+    int ok = 0;
+    float vt = -1, at = -1;
+    for (int i = 0; i < 25 && !ok; i++) {
+      pump_gtk(dpy, 1);
+      const char *t = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+      if (t && strstr(t, " a=ok:") != NULL &&
+          sscanf(t, "MPLAY v=%f a=ok:%f", &vt, &at) == 2 && vt > 1.0f)
+        ok = 1;
+    }
+    TEST_CHECK(ok);
+    TEST_CHECK(vt > 1.0f);
+    TEST_CHECK(at > 0.0f);
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
+/* The view-level mute is a second kill switch that page JS cannot undo.
+ * It used to be set on DPMS pause and only re-evaluated on the next pause,
+ * so mute off after a lock/DPMS cycle fixed the shim but left the view
+ * muted — sound came back only after switching wallpapers (fresh view). */
+static void test_web_view_mute_follows_ctl(void) {
+  TEST_BEGIN("mute off clears the view mute after a DPMS cycle");
+  XWError err, ctl;
+  memset(&err, 0, sizeof(err));
+  memset(&ctl, 0, sizeof(ctl));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "webviewmute");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/webmedia";
+  opt.mute = 1; /* restored muted */
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 4);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    TEST_CHECK(webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
+    /* lock screen: DPMS off then back on while the restore was muted */
+    backend.set_paused(&backend, 1);
+    pump_gtk(dpy, 1);
+    TEST_CHECK(webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
+    backend.set_paused(&backend, 0);
+    pump_gtk(dpy, 1);
+    TEST_CHECK(webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
+
+    /* the user un-mutes: view must follow, no wallpaper switch needed */
+    TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "off", &ctl), 0);
+    pump_gtk(dpy, 2);
+    TEST_CHECK(!webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
+
+    /* and muting again must re-mute the view */
+    TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "on", &ctl), 0);
+    pump_gtk(dpy, 2);
+    TEST_CHECK(webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
+    TEST_CHECK_EQ_INT(backend.control(&backend, "mute", "off", &ctl), 0);
+    pump_gtk(dpy, 2);
+    TEST_CHECK(!webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_paints();
@@ -1247,6 +1373,8 @@ int main(void) {
   test_web_file_prop_aliased();
   test_web_http_port_stable();
   test_web_migrate_file_storage();
+  test_web_media_autoplay();
+  test_web_view_mute_follows_ctl();
   test_context_menu_blocked();
   test_wallpaper_noninteractive();
   test_storage_persistent();

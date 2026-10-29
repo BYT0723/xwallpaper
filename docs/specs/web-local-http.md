@@ -75,3 +75,16 @@ tests/integration/test_web.c → 加用例：URI 以 `http://127.0.0.1/` 开头�
   每壁纸只跑一次：file 载入口→dump→http 载入→写回→reload 一次让页面
   正常读取。file 源优先（http 孤儿只会有页面盲写的默认值）；相对路径
   与空存储直接标记完成。load-failed 则回退 http 永不黑屏。
+- autoplay 宿主策略：壁纸没有手势路径（连按键都被收掉），decide-policy
+  对导航放行 `WEBKIT_AUTOPLAY_ALLOW`。否则无声 play() 全拒
+  NotAllowedError，而页面照样标 playing——首帧冻结加无声，还无错。
+- 控制与落盘一致：`volume/mute` 运行时控制成功后经 `get_ctl` 回读并镜像
+  进窗口与 state 文件（web/video 都实现）。否则控制只改 backend，`win->mute`
+  仍是旧值，下次存盘把旧值写回去——restore 出来的壁纸永远静音，页面自己的
+  声音按钮也压不过 daemon shim（实测复刻：ctl mu=true 而三个 audio 均在播）。
+  另在恢复静音壁纸时向 stderr 打一行提示，给出解除命令。
+- view 级静音必须跟随 ctl：`webkit_web_view_set_is_muted` 是页面 JS 压不过的
+  第二道闸。旧实现只在 DPMS 熄屏时置 TRUE、只在下次 set_paused 时重算，
+  于是锁屏/DPMS 一轮后 `mute off` 只修好 shim 而 view 仍静音——**必须换壁纸
+  （新 view）才恢复声音**。现在每次推送/控制/DPMS 都按
+  `dpms_paused || (ctl_started && ctl_muted)` 重算。
