@@ -209,6 +209,54 @@ static void test_spectrum_per_resolution_gains(void) {
   }
 }
 
+static void test_monitor_gain(void) {
+  TEST_BEGIN("monitor gain only undoes volumes the tap actually applied");
+  /* Only a sink that reports monitor.channel-volumes=true attenuates its
+   * monitor tap, so only those get the inverse back. */
+  TEST_CHECK(fabsf(xw_we_audio_monitor_gain(NULL, 0.5) - 1.0f) < 1e-4f);
+  TEST_CHECK(fabsf(xw_we_audio_monitor_gain("false", 0.5) - 1.0f) < 1e-4f);
+  TEST_CHECK(fabsf(xw_we_audio_monitor_gain("TRUE", 0.5) - 1.0f) < 1e-4f);
+  TEST_CHECK(fabsf(xw_we_audio_monitor_gain("", 0.5) - 1.0f) < 1e-4f);
+
+  TEST_CHECK(fabsf(xw_we_audio_monitor_gain("true", 1.0) - 1.0f) < 1e-4f);
+  TEST_CHECK(fabsf(xw_we_audio_monitor_gain("true", 0.5) - 2.0f) < 1e-4f);
+  /* pactl 32% / -29.7 dB -> linear ~= 0.0328 -> gain ~= 30.5 */
+  TEST_CHECK(fabsf(xw_we_audio_monitor_gain("true", 0.0328) - 30.49f) < 0.05f);
+  /* over 100% volume is attenuated back down, not amplified */
+  TEST_CHECK(fabsf(xw_we_audio_monitor_gain("true", 2.0) - 0.5f) < 1e-4f);
+  /* silence and absurd volumes clamp instead of going to inf/0 */
+  TEST_CHECK(fabsf(xw_we_audio_monitor_gain("true", 0.0) - XW_WE_AUDIO_GAIN_MAX) < 1e-4f);
+  TEST_CHECK(fabsf(xw_we_audio_monitor_gain("true", 1e-9) - XW_WE_AUDIO_GAIN_MAX) < 1e-4f);
+  TEST_CHECK(fabsf(xw_we_audio_monitor_gain("true", 1e9) - 1.0f / XW_WE_AUDIO_GAIN_MAX) <
+             1e-6f);
+}
+
+static void test_apply_gain(void) {
+  TEST_BEGIN("apply_gain scales a stereo chunk and clamps to +-1");
+  float l[4] = {0.25f, -0.25f, 0.75f, -0.75f};
+  float r[4] = {0.5f, -0.5f, 0.0f, 1.0f};
+  TEST_CHECK_EQ_INT(xw_we_audio_apply_gain(l, r, 4, 2.0f), 0);
+  TEST_CHECK(fabsf(l[0] - 0.5f) < 1e-5f);
+  TEST_CHECK(fabsf(l[1] + 0.5f) < 1e-5f);
+  TEST_CHECK(l[2] == 1.0f);  /* 1.5 clamps */
+  TEST_CHECK(l[3] == -1.0f);
+  TEST_CHECK(r[0] == 1.0f);  /* 1.0 clamps */
+  TEST_CHECK(r[1] == -1.0f);
+  TEST_CHECK(r[2] == 0.0f);
+  TEST_CHECK(r[3] == 1.0f);
+
+  /* unity gain is a no-op */
+  float l2[2] = {0.3f, -0.3f}, r2[2] = {0.1f, -0.1f};
+  TEST_CHECK_EQ_INT(xw_we_audio_apply_gain(l2, r2, 2, 1.0f), 0);
+  TEST_CHECK(l2[0] == 0.3f && l2[1] == -0.3f);
+  TEST_CHECK(r2[0] == 0.1f && r2[1] == -0.1f);
+
+  TEST_CHECK_EQ_INT(xw_we_audio_apply_gain(NULL, r2, 2, 1.0f), -1);
+  TEST_CHECK_EQ_INT(xw_we_audio_apply_gain(l2, NULL, 2, 1.0f), -1);
+  TEST_CHECK_EQ_INT(xw_we_audio_apply_gain(l2, r2, 0, 1.0f), -1);
+  TEST_CHECK_EQ_INT(xw_we_audio_apply_gain(l2, r2, 2, 0.0f), -1);
+}
+
 static void test_spectrum_bad_args(void) {
   XWWeSpectrum s;
   TEST_BEGIN("spectrum split rejects null args");
@@ -231,6 +279,8 @@ int main(void) {
   test_bad_args();
   test_spectrum_arrays();
   test_spectrum_per_resolution_gains();
+  test_monitor_gain();
+  test_apply_gain();
   test_spectrum_bad_args();
   TEST_SUMMARY();
 }

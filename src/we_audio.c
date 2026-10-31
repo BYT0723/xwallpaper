@@ -147,3 +147,30 @@ int xw_we_audio_format(const float in[128], char *out, size_t n) {
   out[off] = '\0';
   return 0;
 }
+
+float xw_we_audio_monitor_gain(const char *channel_volumes, double linear_volume) {
+  if (!channel_volumes || strcmp(channel_volumes, "true") != 0)
+    return 1.0f;
+  if (!(linear_volume > 0.0))
+    return XW_WE_AUDIO_GAIN_MAX;
+  double g = 1.0 / linear_volume;
+  if (!(g < (double)XW_WE_AUDIO_GAIN_MAX))
+    return XW_WE_AUDIO_GAIN_MAX;
+  if (g < 1.0 / (double)XW_WE_AUDIO_GAIN_MAX)
+    return 1.0f / XW_WE_AUDIO_GAIN_MAX;
+  return (float)g;
+}
+
+static float clamp_unit(float v) {
+  return v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : v);
+}
+
+int xw_we_audio_apply_gain(float *l, float *r, int n, float g) {
+  if (!l || !r || n <= 0 || !(g > 0.0f) || !isfinite(g))
+    return -1;
+  for (int i = 0; i < n; i++) {
+    l[i] = clamp_unit(l[i] * g);
+    r[i] = clamp_unit(r[i] * g);
+  }
+  return 0;
+}

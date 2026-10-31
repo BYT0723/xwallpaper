@@ -21,6 +21,26 @@ int xw_we_audio_map(const float *l, const float *r, int n, float out[128]);
  * Returns 0 on success, -1 on bad args or truncation. */
 int xw_we_audio_format(const float in[128], char *out, size_t n);
 
+/* Cap on the monitor-volume compensation gain (+36 dB). A sink turned far
+ * down would otherwise ask for an unbounded gain and amplify the noise
+ * floor. */
+#define XW_WE_AUDIO_GAIN_MAX 64.0f
+
+/* Gain to apply to a captured monitor chunk. `channel_volumes` is the
+ * sink's monitor.channel-volumes proplist value (NULL when absent).
+ * PipeWire attenuates a monitor tap by the sink volume only for sinks that
+ * report "true"; those get 1/linear_volume back, clamped to [1/MAX, MAX].
+ * Every other sink gets 1.0, so the UCM HiFi split sinks - which tap before
+ * the volume and already hand us full scale - are not overdriven. Without
+ * this the same audio drove different visual responses depending on how
+ * loud the output device happened to be set.
+ * Zero, negative and NaN volumes clamp to MAX. */
+float xw_we_audio_monitor_gain(const char *channel_volumes, double linear_volume);
+
+/* Scale an interleaved-free stereo chunk by g in place, clamping each
+ * sample to +-1. Returns 0, or -1 on bad args (NULL, n<=0, g<=0, NaN). */
+int xw_we_audio_apply_gain(float *l, float *r, int n, float g);
+
 /* The six arrays the engine's g_AudioSpectrum{N}{Left,Right} shader uniforms
  * read; the corpus effects (workshop/2084198056, workshop/2504730727) use all
  * six. */

@@ -27,6 +27,10 @@ typedef struct {
   pa_stream *st;
   char monitor[256];
   int reconnect;
+  /* 1.0 unless the sink's monitor applies the sink volume
+   * (monitor.channel-volumes=true), in which case this undoes it so the
+   * spectrum does not depend on how loud the output device is set. */
+  float gain;
   float bl[WE_CHUNK], br[WE_CHUNK];
   int fill;
 } PulseState;
@@ -47,6 +51,9 @@ static void sink_info_cb(pa_context *c, const pa_sink_info *i, int eol, void *ud
     return;
   if (i->monitor_source_name)
     snprintf(s->monitor, sizeof(s->monitor), "%s", i->monitor_source_name);
+  s->gain = xw_we_audio_monitor_gain(
+      i->proplist ? pa_proplist_gets(i->proplist, "monitor.channel-volumes") : NULL,
+      pa_sw_volume_to_linear(pa_cvolume_avg(&i->volume)));
 }
 
 static void stream_read_cb(pa_stream *st, size_t nbytes, void *ud) {
@@ -65,7 +72,8 @@ static void stream_read_cb(pa_stream *st, size_t nbytes, void *ud) {
     }
     if (s->fill == WE_CHUNK) {
       float out[128];
-      if (xw_we_audio_map(s->bl, s->br, WE_CHUNK, out) == 0) {
+      if (xw_we_audio_apply_gain(s->bl, s->br, WE_CHUNK, s->gain) == 0 &&
+          xw_we_audio_map(s->bl, s->br, WE_CHUNK, out) == 0) {
         pthread_mutex_lock(&s->mu);
         memcpy(s->latest, out, sizeof(out));
         pthread_mutex_unlock(&s->mu);
@@ -229,6 +237,7 @@ int xw_we_pulse_start(void) {
   memset(g.latest, 0, sizeof(g.latest));
   g.stop = 0;
   g.fill = 0;
+  g.gain = 1.0f;
   g.ml = NULL;
   g.ctx = NULL;
   g.st = NULL;
