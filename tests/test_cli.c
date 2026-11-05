@@ -55,8 +55,8 @@ static void test_detect_dir_and_url(void) {
   TEST_CHECK_EQ_INT(xw_cli_detect_backend("http://localhost:8000/"), XW_BACKEND_WEB);
 }
 
-static void test_detect_scene(void) {
-  TEST_BEGIN("dir with scene.json/scene.pkg detects as scene");
+static void test_detect_scene_markers_are_web(void) {
+  TEST_BEGIN("dir with scene.json/scene.pkg detects as web (scene removed)");
   char *t = strdup("/tmp/xw-cli-scene-XXXXXX");
   TEST_CHECK(t != NULL && mkdtemp(t) != NULL);
   if (!t)
@@ -68,7 +68,7 @@ static void test_detect_scene(void) {
   if (f) {
     fputs("{}", f);
     fclose(f);
-    TEST_CHECK_EQ_INT(xw_cli_detect_backend(t), XW_BACKEND_SCENE);
+    TEST_CHECK_EQ_INT(xw_cli_detect_backend(t), XW_BACKEND_WEB);
     unlink(p);
   }
   snprintf(p, sizeof(p), "%s/scene.pkg", t);
@@ -76,7 +76,7 @@ static void test_detect_scene(void) {
   TEST_CHECK(f != NULL);
   if (f) {
     fclose(f);
-    TEST_CHECK_EQ_INT(xw_cli_detect_backend(t), XW_BACKEND_SCENE);
+    TEST_CHECK_EQ_INT(xw_cli_detect_backend(t), XW_BACKEND_WEB);
     unlink(p);
   }
   TEST_CHECK_EQ_INT(xw_cli_detect_backend(t), XW_BACKEND_WEB);
@@ -130,13 +130,12 @@ static void test_set_explicit_backend(void) {
   TEST_CHECK_EQ_STR(cfg.path, "file.bin");
 }
 
-static void test_set_explicit_scene(void) {
-  TEST_BEGIN("explicit --scene sets scene backend");
+static void test_set_scene_rejected(void) {
+  TEST_BEGIN("explicit --scene is rejected (scene support removed)");
   reset();
   char *argv[] = {"xwallpaper", "set", "--scene", "walldir"};
-  TEST_CHECK_EQ_INT(parse(argv, 4), 0);
-  TEST_CHECK_EQ_INT(cfg.backend_explicit, XW_BACKEND_SCENE);
-  TEST_CHECK_EQ_STR(cfg.path, "walldir");
+  TEST_CHECK_EQ_INT(parse(argv, 4), -1);
+  TEST_CHECK(err.code != 0);
 }
 
 static void test_props_commands(void) {
@@ -469,10 +468,6 @@ static void test_set_span_image_only(void) {
   char *a3[] = {"xwallpaper", "set", "--span", "10x10+0+0",
                 "--web", "p.html"};
   TEST_CHECK_EQ_INT(parse(a3, 6), -1);
-  reset();
-  char *a4[] = {"xwallpaper", "set", "--span", "10x10+0+0",
-                "--scene", "walldir"};
-  TEST_CHECK_EQ_INT(parse(a4, 6), -1);
 }
 
 static void test_control_commands(void) {
@@ -550,13 +545,13 @@ int main(void) {
   test_detect_video();
   test_detect_web();
   test_detect_dir_and_url();
-  test_detect_scene();
+  test_detect_scene_markers_are_web();
   test_detect_unknown();
   test_set_default();
   test_set_output();
   test_set_all();
   test_set_explicit_backend();
-  test_set_explicit_scene();
+  test_set_scene_rejected();
   test_props_commands();
   test_set_geometry();
   test_set_video_opts();

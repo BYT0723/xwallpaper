@@ -4,7 +4,7 @@
 #include <stddef.h>
 
 /* Per-wallpaper user-property sidecar (disk persistence for --set-property).
- * Keyed by wallpaper identity (web root_dir absolute, scene dir absolute),
+ * Keyed by wallpaper identity (web root_dir absolute),
  * shared across X11/Wayland and across windows showing the same wallpaper.
  * Pure logic + file IO, no GTK/WebKit/X11; unit-testable. */
 

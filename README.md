@@ -1,8 +1,8 @@
 # xwallpaper
 
-> Lightweight X11 wallpaper daemon for image / video / web / scene wallpapers — libmpv, webkit2gtk, imlib2 and desktop-GL scene backends with a long-running resident daemon and a thin CLI.
+> Lightweight X11 wallpaper daemon for image / video / web wallpapers — libmpv, webkit2gtk and imlib2 backends with a long-running resident daemon and a thin CLI.
 
-`xwallpaper` sets **image, video, live web and scene wallpapers** on bare X11 (i3, dwm, openbox, bspwm, …). It replaces the classic `xwinwrap + external player` workflow with embedded backends — no forked children, one desktop-type wrapper window per wallpaper, managed by a resident daemon you control with a thin CLI. Two binaries: `xwallpaperd` (the daemon, links the heavy backends) and `xwallpaper` (the CLI, links only libc so every invocation starts in <1ms).
+`xwallpaper` sets **image, video and live web wallpapers** on bare X11 (i3, dwm, openbox, bspwm, …). It replaces the classic `xwinwrap + external player` workflow with embedded backends — no forked children, one desktop-type wrapper window per wallpaper, managed by a resident daemon you control with a thin CLI. Two binaries: `xwallpaperd` (the daemon, links the heavy backends) and `xwallpaper` (the CLI, links only libc so every invocation starts in <1ms).
 
 ```sh
 xwallpaperd &                          # start the daemon once (stays resident)
@@ -32,10 +32,9 @@ Desktop icons and conky stay clickable: pointer events on the wallpaper window a
 | **Image** | imlib2 load/scale/tile — `fill`, `contain`, `stretch`, `tile` |
 | **Video** | libmpv embedded (hardware decode, loop, mute/volume, static rotation, forced frame rate) |
 | **Web** | webkit2gtk live page — one shared engine across screens |
-| **Scene** | Wallpaper Engine scene directories (`project.json` + `scene.json`/`scene.pkg`): image effects, particles, text, sound and JS-driven properties, rendered with desktop GL |
 | **Targets** | primary output, `-m <output>` by xrandr name, `--all`, or an explicit `-g WxH+X+Y --name` rectangle |
 | **Video extras** | `--rotate <0\|90\|180\|270>`, `--keybinds <keys>`, `--fps <n>`, `--mute --volume` |
-| **Playback control** | key bindings on the focused wallpaper (video, web and scene) plus `xwallpaper volume` / `mute` for scripts and WM bindings |
+| **Playback control** | key bindings on the focused wallpaper (video and web) plus `xwallpaper volume` / `mute` for scripts and WM bindings |
 | **Window opts** | opacity, below, sticky, skip-taskbar, skip-pager, no-focus |
 | **Desktop layer** | `_NET_WM_WINDOW_TYPE_DESKTOP` attach, sticky `_NET_WM_DESKTOP`, override-redirect |
 
@@ -46,7 +45,7 @@ Dependencies per distro (X11, `libx11`/`libxrandr`/`libxrender` and a C toolchai
 **Arch**
 
 ```sh
-sudo pacman -S --needed base-devel imlib2 mpv gtk3 webkit2gtk-4.1 json-c glew freetype2 sdl2_mixer
+sudo pacman -S --needed base-devel imlib2 mpv gtk3 webkit2gtk-4.1 json-c
 ```
 
 > `libmpv` is provided by the `mpv` package on Arch (there is no separate package).
@@ -56,7 +55,7 @@ sudo pacman -S --needed base-devel imlib2 mpv gtk3 webkit2gtk-4.1 json-c glew fr
 ```sh
 sudo apt install build-essential pkg-config \
   libimlib2-dev libmpv-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
-  libjson-c-dev libglew-dev libfreetype-dev libsdl2-mixer-dev
+  libjson-c-dev
 ```
 
 > `libmpv-dev` is a standalone package and does not pull in the `mpv` player binary.
@@ -85,10 +84,10 @@ xwallpaperd &
 Then control it from the CLI:
 
 ```
-xwallpaper set [--image|--video|--web|--scene] [target] [opts] <path>
+xwallpaper set [--image|--video|--web] [target] [opts] <path>
 xwallpaper clear [-m <name|output>]
 xwallpaper --list
-xwallpaper --list-properties [-m <output>]       # scene user properties
+xwallpaper --list-properties [-m <output>]       # web user properties
 xwallpaper --set-property <name=value> [-m <output>]
 xwallpaper exit
 ```
@@ -105,7 +104,7 @@ when `WAYLAND_DISPLAY` is set. Two Wayland notes:
   `compositor does not support wlr-layer-shell`.
 - Default target is the largest output (Wayland has no primary designation).
 
-If the daemon is not running, the CLI errors with `daemon not running, start xwallpaperd first`. The backend is chosen by file extension unless forced with `--image`/`--video`/`--web`/`--scene`; a directory holding `scene.pkg`/`scene.json` is detected as a scene wallpaper.
+If the daemon is not running, the CLI errors with `daemon not running, start xwallpaperd first`. The backend is chosen by file extension unless forced with `--image`/`--video`/`--web`; a directory is treated as a web wallpaper.
 
 Target selection:
 
@@ -138,8 +137,7 @@ h seek -5
 9 add volume -2    # every backend: -2 of 100
 0 add volume 2
 - cycle mute       # toggle
-= cycle pause      # video pauses playback, web pauses page media,
-                   # scene stops its animation
+= cycle pause      # video pauses playback, web pauses page media
 r cycle_values video-rotate 90 180 270 0
 Ctrl+r reload      # web: refresh the page, like a browser (other backends ignore)
 ```
@@ -165,7 +163,7 @@ For dwm's `config.h`:
 For a **web** wallpaper the level is a multiplier on the page's own audio
 (`100` = exactly as the page mixes it, `0` = silent) rather than an absolute
 value, because the page has its own mixing and keeps re-applying it; for video
-and scene it is absolute. `0` silences every backend either way.
+it is absolute. `0` silences every backend either way.
 
 An action a backend cannot do is ignored when it comes from a key press, and
 reported when it comes from the CLI (`that wallpaper does not support 'rotate'`).
@@ -179,12 +177,12 @@ fades after ~1.5s; unsupported actions show nothing.
 - **Two binaries, thin CLI.** `xwallpaperd` owns all wallpaper windows and links the heavy backends; `xwallpaper` (the CLI) links only libc and talks to the daemon over a UNIX socket at `$XDG_RUNTIME_DIR/xwallpaper.sock`. The daemon must be started separately; the CLI never spawns it, so every CLI invocation is instant.
 - **Desktop wrapper window.** Each wallpaper is an `override_redirect` window attached under the `_NET_WM_WINDOW_TYPE_DESKTOP` layer, lowered, made sticky and below — it behaves as a proper desktop backdrop.
 - **Single event loop.** `app` runs one `poll()` over the X connection fd and the GTK main-context fds; mpv self-renders via `--wid` on its own thread.
-- **Backend interface.** `image`/`video`/`web`/`scene` implement a common `XWBackend` (`init/start/stop/destroy`, plus optional `tick`/`set_paused`/`reload`/`list_props`/`set_prop`/`control`); the app swaps backends per window in place.
+- **Backend interface.** `image`/`video`/`web` implement a common `XWBackend` (`init/start/stop/destroy`, plus optional `set_paused`/`reload`/`list_props`/`set_prop`/`control`); the app swaps backends per window in place.
 
 ```
 xwallpaper (cli) ──→ client ──→ daemon (xwallpaperd) ──→ app ──→ x11
                                      ↑
-                 image / video / web / scene ─┘
+                 image / video / web ─┘
 ```
 
 ## Testing

@@ -77,7 +77,7 @@ static int video_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWEr
   mpv_set_option_string(ctx->base.mpv, "osd-margin-x", "16");
   mpv_set_option_string(ctx->base.mpv, "osd-margin-y", "48");
   mpv_set_option_string(ctx->base.mpv, "osd-border-style", "background-box");
-  /* box explicitly 65%% like the web/scene toast; no outline: the box
+  /* box explicitly 65%% like the web toast; no outline: the box
    * already guarantees contrast and an opaque outline on a translucent
    * box is what makes mpv look harsher than the other backends */
   mpv_set_option_string(ctx->base.mpv, "osd-back-color", "#A6000000");

@@ -13,7 +13,6 @@ static const char *type_name(int kind) {
   case XW_BACKEND_IMAGE: return "image";
   case XW_BACKEND_VIDEO: return "video";
   case XW_BACKEND_WEB:   return "web";
-  case XW_BACKEND_SCENE: return "scene";
   default: return "unknown";
   }
 }
@@ -22,7 +21,6 @@ static int type_from_name(const char *n) {
   if (strcmp(n, "image") == 0) return XW_BACKEND_IMAGE;
   if (strcmp(n, "video") == 0) return XW_BACKEND_VIDEO;
   if (strcmp(n, "web") == 0)   return XW_BACKEND_WEB;
-  if (strcmp(n, "scene") == 0) return XW_BACKEND_SCENE;
   return -1;
 }
 

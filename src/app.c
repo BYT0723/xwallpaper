@@ -44,7 +44,7 @@ static XWBackend *make_backend(const XWConfig *cfg, XWError *err) {
     k = xw_cli_detect_backend(cfg->path);
     if (k < 0) {
       XW_ERROR_SET(err, 1, "cannot determine backend for '%.100s' "
-                   "(use --image/--video/--web/--scene)", cfg->path);
+                   "(use --image/--video/--web)", cfg->path);
       return NULL;
     }
   }
@@ -52,7 +52,6 @@ static XWBackend *make_backend(const XWConfig *cfg, XWError *err) {
   case XW_BACKEND_IMAGE: return xw_image_backend_new();
   case XW_BACKEND_VIDEO: return xw_video_backend_new();
   case XW_BACKEND_WEB:   return xw_web_backend_new();
-  case XW_BACKEND_SCENE: return xw_scene_backend_new();
   default:
     XW_ERROR_SET(err, 1, "unknown backend kind %d", k);
     return NULL;
@@ -1002,23 +1001,6 @@ int xw_app_dpms_watch_required(XWApp *app) {
   return 0;
 }
 
-int xw_app_scene_tick_required(XWApp *app) {
-  if (!app)
-    return 0;
-  for (int i = 0; i < app->nwins; i++)
-    if (app->backends[i] && app->backends[i]->tick)
-      return 1;
-  return 0;
-}
-
-void xw_app_tick_backends(XWApp *app) {
-  if (!app)
-    return;
-  for (int i = 0; i < app->nwins; i++)
-    if (app->backends[i] && app->backends[i]->tick)
-      app->backends[i]->tick(app->backends[i]);
-}
-
 /* Feed a key press to the focused wallpaper's bindings: the key is
  * normalised the same way the file spells it, looked up, and turned into the
  * backend control action it names. Returns 1 when a binding consumed it.
@@ -1296,14 +1278,11 @@ static void pump_gtk(void) {
   g_main_context_iteration(NULL, FALSE);
 }
 
-/* WE audio wallpapers need their 20Hz fan-out tick; scene wallpapers
- * animate on tick (~30Hz); idle loops poll at 100ms to stay
- * signal-responsive. */
-static int app_poll_timeout_ms(XWApp *app) {
+/* WE audio wallpapers need their 20Hz fan-out tick; idle loops poll at
+ * 100ms to stay signal-responsive. */
+static int app_poll_timeout_ms(void) {
   if (xw_web_we_want())
     return 50;
-  if (xw_app_scene_tick_required(app))
-    return 33;
   return 100;
 }
 
@@ -1315,10 +1294,9 @@ int xw_app_run(XWApp *app) {
       if (app->uses_gtk)
         pump_gtk();
       xw_web_we_tick();
-      xw_app_tick_backends(app);
 
       struct pollfd pfd = {wfd, POLLIN, 0};
-      int r = poll(&pfd, 1, app_poll_timeout_ms(app));
+      int r = poll(&pfd, 1, app_poll_timeout_ms());
 
       if (r < 0) {
         if (errno == EINTR)
@@ -1338,10 +1316,9 @@ int xw_app_run(XWApp *app) {
       pump_gtk();
     xw_app_dpms_poll(app);
     xw_web_we_tick();
-    xw_app_tick_backends(app);
 
     struct pollfd pfd = {xfd, POLLIN, 0};
-    int r = poll(&pfd, 1, app_poll_timeout_ms(app));
+    int r = poll(&pfd, 1, app_poll_timeout_ms());
 
     if (r < 0) {
       if (errno == EINTR)

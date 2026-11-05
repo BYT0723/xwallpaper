@@ -124,30 +124,14 @@ static void test_roundtrip_output(void) {
   TEST_CHECK_EQ_INT(o.keep, 0);
 }
 
-static void test_roundtrip_scene(void) {
-  TEST_BEGIN("format/parse round-trips a scene entry");
-  XWStateEntry e;
-  memset(&e, 0, sizeof(e));
-  snprintf(e.name, sizeof(e.name), "DP-1");
-  e.type = XW_BACKEND_SCENE;
-  snprintf(e.path, sizeof(e.path), "/w/scene-wall");
-  e.rotation = 0;
-  e.have_geom = 0;
-  e.keep = 0;
-  e.volume = 100.0;
-  e.scale_mode = XW_SCALE_FILL;
-  e.opacity = 1.0;
-
-  char line[512];
-  TEST_CHECK(xw_state_format_line(&e, line, sizeof(line)) > 0);
-  TEST_CHECK_EQ_STR(line, "DP-1\tscene\t/w/scene-wall\t0\t-\t0"
-                          "\t0\t100\t0\t2\t1\t0\t0\t0\t0\t0\t\t\n");
-
+static void test_parse_stale_scene_rejected(void) {
+  TEST_BEGIN("stale scene state line fails to parse (skipped on restore)");
   XWStateEntry o;
   memset(&o, 0, sizeof(o));
-  TEST_CHECK_EQ_INT(xw_state_parse_line(line, &o), 0);
-  TEST_CHECK_EQ_INT(o.type, XW_BACKEND_SCENE);
-  TEST_CHECK_EQ_STR(o.path, "/w/scene-wall");
+  TEST_CHECK_EQ_INT(xw_state_parse_line("DP-1\tscene\t/w/scene-wall\t0\t-\t0"
+                                        "\t0\t100\t0\t2\t1\t0\t0\t0\t0\t0\t\t\n",
+                                        &o),
+                    -1);
 }
 
 static void test_roundtrip_escape(void) {
@@ -402,7 +386,7 @@ int main(void) {
   test_path_for_truncation();
   test_roundtrip_geom();
   test_roundtrip_output();
-  test_roundtrip_scene();
+  test_parse_stale_scene_rejected();
   test_roundtrip_escape();
   test_roundtrip_flags();
   test_parse_legacy_6field();

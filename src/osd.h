@@ -8,9 +8,9 @@
 /* Unified look: bottom-right, clear of bottom bars, white sans on a dark
  * translucent box, ~20px text, fading after XW_OSD_MS. Renderers cannot be
  * pixel identical, so this is the tier every backend matches: mpv osd
- * alignment/margins, web toast CSS and the scene GL raster all use it.
- * mpv pins its box to #A6000000 (the same 65% as the web/scene toast)
- * with the outline off, so all three boxes blend identically; mpv text
+ * alignment/margins and web toast CSS all use it.
+ * mpv pins its box to #A6000000 (the same 65% as the web toast)
+ * with the outline off, so both boxes blend identically; mpv text
  * stays single-line because background-box padding follows the line
  * height. */
 #define XW_OSD_TEXT_PX 20

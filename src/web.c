@@ -119,9 +119,8 @@ void xw_web_we_tick(void) {
   last = now;
   if (!xw_web_we_want()) {
     /* Release only the reference this backend holds. The monitor is a
-     * process-wide refcount shared with the scene backend, so stopping
-     * unconditionally would tear down a capture the scene still needs -
-     * xw_we_pulse_running() says nothing about who started it. */
+     * process-wide refcount, so stopping unconditionally would tear down
+     * a capture a concurrent user still needs. */
     if (web_pulse_ref) {
       xw_we_pulse_stop();
       web_pulse_ref = 0;
@@ -546,6 +545,14 @@ void xw_web_cache_clear_for_tests(void) {
 
 /* Disk write-through: mirror live overrides to the per-wallpaper sidecar.
  * n_over==0 deletes the sidecar (back to defaults). */
+static void web_copy_field(char *dst, size_t dn, const char *src, size_t sn) {
+  size_t n = dn < sn ? dn : sn;
+  if (n == 0)
+    return;
+  memcpy(dst, src, n);
+  dst[n - 1] = '\0';
+}
+
 static void web_disk_save(WebCtx *ctx, const char *key) {
   XWStoredProp *s = NULL;
   int i;
@@ -559,9 +566,12 @@ static void web_disk_save(WebCtx *ctx, const char *key) {
   if (!s)
     return;
   for (i = 0; i < ctx->n_over; i++) {
-    snprintf(s[i].name, sizeof(s[i].name), "%s", ctx->over[i].name);
-    snprintf(s[i].type, sizeof(s[i].type), "%s", ctx->over[i].type);
-    snprintf(s[i].value, sizeof(s[i].value), "%s", ctx->over[i].value);
+    web_copy_field(s[i].name, sizeof(s[i].name),
+                   ctx->over[i].name, sizeof(ctx->over[i].name));
+    web_copy_field(s[i].type, sizeof(s[i].type),
+                   ctx->over[i].type, sizeof(ctx->over[i].type));
+    web_copy_field(s[i].value, sizeof(s[i].value),
+                   ctx->over[i].value, sizeof(ctx->over[i].value));
   }
   xw_props_store_save(key, s, ctx->n_over);
   free(s);
@@ -577,6 +587,8 @@ static void web_disk_load(WebCtx *ctx, const char *key) {
     return;
   if (xw_props_store_load(key, s, XW_WEB_PROPS_CAP, &n) != 0 || n <= 0)
     return;
+  if (n > XW_WEB_PROPS_CAP)
+    return;
   free(ctx->over);
   ctx->over = NULL;
   ctx->n_over = 0;
@@ -584,9 +596,12 @@ static void web_disk_load(WebCtx *ctx, const char *key) {
   if (!ctx->over)
     return;
   for (i = 0; i < n; i++) {
-    snprintf(ctx->over[i].name, sizeof(ctx->over[i].name), "%s", s[i].name);
-    snprintf(ctx->over[i].type, sizeof(ctx->over[i].type), "%s", s[i].type);
-    snprintf(ctx->over[i].value, sizeof(ctx->over[i].value), "%s", s[i].value);
+    web_copy_field(ctx->over[i].name, sizeof(ctx->over[i].name),
+                   s[i].name, sizeof(s[i].name));
+    web_copy_field(ctx->over[i].type, sizeof(ctx->over[i].type),
+                   s[i].type, sizeof(s[i].type));
+    web_copy_field(ctx->over[i].value, sizeof(ctx->over[i].value),
+                   s[i].value, sizeof(s[i].value));
   }
   ctx->n_over = n;
   web_prune_overrides(ctx);
@@ -1668,7 +1683,7 @@ static void web_stop(XWBackend *b) {
 }
 
 /* DPMS power-off freeze: stop presenting (so the display stays off),
- * hard-mute the view and pause page media. Mirrors the video/scene
+ * hard-mute the view and pause page media. Mirrors the video
  * set_paused hook; dpms_paused is independent of the user's ctl_paused
  * so a DPMS cycle never clears a manual pause. */
 static void web_set_paused(XWBackend *b, int paused) {

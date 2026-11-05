@@ -73,18 +73,19 @@ static void test_encode_set_output(void) {
   TEST_CHECK(has_field(msg, n, "volume=40"));
 }
 
-static void test_encode_set_scene(void) {
-  TEST_BEGIN("set --scene encodes scene type");
+static void test_encode_stale_scene_kind(void) {
+  TEST_BEGIN("stale scene kind (3) encodes as unknown, daemon rejects it");
   reset();
   cfg.command = XW_CMD_SET;
   cfg.target = XW_TARGET_PRIMARY;
   snprintf(cfg.path, sizeof(cfg.path), "walldir");
-  cfg.backend_explicit = XW_BACKEND_SCENE;
+  cfg.backend_explicit = 3; /* pre-removal XW_BACKEND_SCENE value */
 
   char msg[XW_MSG_MAX];
   int n = xw_proto_encode_set(&cfg, msg, sizeof(msg));
   TEST_CHECK(n > 0);
-  TEST_CHECK(has_field(msg, n, "scene"));
+  TEST_CHECK(has_field(msg, n, "unknown"));
+  TEST_CHECK(!has_field(msg, n, "scene"));
   TEST_CHECK(has_field(msg, n, "walldir"));
 }
 
@@ -462,7 +463,7 @@ int main(void) {
   TEST_SUITE("client/protocol");
   test_encode_set_basic();
   test_encode_set_output();
-  test_encode_set_scene();
+  test_encode_stale_scene_kind();
   test_encode_props();
   test_encode_set_geom();
   test_encode_set_span();

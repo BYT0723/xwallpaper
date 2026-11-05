@@ -12,12 +12,11 @@ typedef struct XWWindow XWWindow;
  * Only pointers are used here, so no wayland headers leak into backends. */
 typedef struct XWWlWindow XWWlWindow;
 
-/* Backend kinds, matching --image/--video/--web/--scene */
+/* Backend kinds, matching --image/--video/--web */
 enum {
   XW_BACKEND_IMAGE = 0,
   XW_BACKEND_VIDEO,
   XW_BACKEND_WEB,
-  XW_BACKEND_SCENE,
 };
 
 /* Image scale modes */
@@ -81,11 +80,7 @@ struct XWBackend {
    * (X11 start/destroy reinterpret priv as the X11 ctx and touch X). */
   int (*start_wl)(XWBackend *b);
   void (*destroy_wl)(XWBackend *b);
-  /* optional: periodic frame tick for animated backends (scene). The app
-   * calls it from the daemon loop with fps throttling owned by the backend.
-   * May be NULL (static image/video/web need no tick: video self-renders). */
-  void (*tick)(XWBackend *b);
-  /* optional: user-property listing/override (scene, web). list_props appends
+  /* optional: user-property listing/override (web). list_props appends
    * "name\ttype\tvalue\n" lines, returns the count or -1. May be NULL
    * (image/video have no user properties). */
   int (*list_props)(XWBackend *b, char *out, size_t n);

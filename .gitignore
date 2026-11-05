@@ -12,16 +12,6 @@ xwallpaperd
 /tests/test_web_props
 /tests/test_props_store
 /tests/test_wl
-/tests/test_scene_pkg
-/tests/test_scene_tex
-/tests/test_scene_shader
-/tests/test_scene_text
-/tests/test_scene_sound
-/tests/test_scene_script
-/tests/test_scene_particle
-/tests/test_scene_parse
-/tests/test_scene_core
-/tests/test_scene_mesh
 /tests/integration/test_x11
 /tests/integration/test_image
 /tests/integration/test_video
@@ -33,13 +23,6 @@ xwallpaperd
 /tests/integration/test_fill
 /tests/integration/test_restore
 /tests/integration/test_reconfigure
-/tests/integration/test_scene
-/tests/integration/test_scene_gl
-/tests/integration/test_scene_particles
-/tests/integration/test_scene_text
-/tests/integration/test_scene_snd
-/tests/integration/test_scene_scripted
-/tests/integration/test_scene_props
 /tests/integration/test_wl_surface
 
 # wayland scanner outputs (regenerate: make proto-wayland)
@@ -48,6 +31,5 @@ src/proto/*-protocol.c
 
 # task docs (local only)
 tasks/
-/tests/test_scene_glsl
 /tests/test_osd
 /tests/test_web_http
