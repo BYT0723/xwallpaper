@@ -6,6 +6,9 @@
  * the daemon tick calls push() at ~20Hz and want() for refcounting. */
 void xw_web_we_push(const float bins[128]);
 int xw_web_we_want(void);
+/* JS evaluations issued by push() (monotonic). Tests assert redundant
+ * spectra are skipped. */
+int xw_web_we_eval_count(void);
 
 /* ~20Hz fan-out tick (50ms internally throttled, monotonic clock).
  * Starts Pulse capture on first want, stops it when nobody wants audio,

@@ -41,6 +41,8 @@ typedef struct {
                         * 3 post-restore reload */
   char *mig_json;      /* dumped file-origin localStorage (stage 2) */
   int want_audio;      /* page called wallpaperRegisterAudioListener */
+  char last_audio[2048]; /* last JSON pushed to __xwAudioPush (dedup) */
+  int has_audio;         /* last_audio valid; cleared on (re)registration */
   int dead;            /* web_destroy in progress: ignore late signals */
   int crash_count;     /* terminations inside the current 60s window */
   uint64_t crash_first_ms;
@@ -62,6 +64,9 @@ typedef struct {
  * attach/destroy/message-handler/push all run on the GTK main thread). */
 static WebCtx **g_views = NULL;
 static int g_nviews = 0;
+static int web_eval_count;
+
+int xw_web_we_eval_count(void) { return web_eval_count; }
 
 static void web_reg_add(WebCtx *ctx) {
   WebCtx **v = realloc(g_views, sizeof(*v) * (g_nviews + 1));
@@ -99,9 +104,17 @@ void xw_web_we_push(const float bins[128]) {
     return;
   for (int i = 0; i < g_nviews; i++) {
     if (g_views[i]->want_audio && g_views[i]->view &&
-        !g_views[i]->dpms_paused)
+        !g_views[i]->dpms_paused) {
+      if (g_views[i]->has_audio &&
+          strcmp(g_views[i]->last_audio, json) == 0)
+        continue;
+      snprintf(g_views[i]->last_audio, sizeof(g_views[i]->last_audio),
+               "%s", json);
+      g_views[i]->has_audio = 1;
+      web_eval_count++;
       webkit_web_view_evaluate_javascript(WEBKIT_WEB_VIEW(g_views[i]->view),
                                            js, -1, NULL, NULL, NULL, NULL, NULL);
+    }
   }
   g_free(js);
 }
@@ -946,6 +959,8 @@ static void web_audio_message_cb(WebKitUserContentManager *ucm,
     webkit_javascript_result_unref(res);
   if (ctx)
     ctx->want_audio = 1;
+  if (ctx)
+    ctx->has_audio = 0;
 }
 
 static void web_apply_wallpaper_policy(WebKitWebView *view, WebCtx *ctx) {
@@ -1522,6 +1537,7 @@ static void web_detach_context(WebCtx *ctx) {
   }
   web_mig_reset(ctx);
   ctx->want_audio = 0;
+  ctx->has_audio = 0;
   ctx->crash_count = 0;
   ctx->crash_first_ms = 0;
 }

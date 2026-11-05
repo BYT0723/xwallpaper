@@ -119,6 +119,19 @@ static void test_audio_listener_end_to_end(void) {
     }
   }
 
+  /* redundant spectra must not re-evaluate JS: the page already holds
+   * this exact array. A changed spectrum must go through. */
+  int n0 = xw_web_we_eval_count();
+  xw_web_we_push(bins);
+  TEST_CHECK_EQ_INT(xw_web_we_eval_count(), n0);
+  xw_web_we_push(bins);
+  TEST_CHECK_EQ_INT(xw_web_we_eval_count(), n0);
+  float bins2[128];
+  memcpy(bins2, bins, sizeof(bins2));
+  bins2[10] += 0.5f;
+  xw_web_we_push(bins2);
+  TEST_CHECK_EQ_INT(xw_web_we_eval_count(), n0 + 1);
+
   backend.destroy(&backend);
   xw_x11_destroy_window(win);
   pump_gtk(dpy, 1);
