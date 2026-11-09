@@ -50,6 +50,7 @@ typedef struct {
   double ctl_volume;   /* 0..100, the master level the user asked for */
   int ctl_muted;
   int ctl_paused;
+  int ctl_quiet;       /* transient lock-screen mute: no pause, no state */
   int ctl_started;     /* 0 = leave the page's own mixing alone */
   int dpms_paused;     /* DPMS power-off freeze, independent of ctl_paused */
   /* WE user properties from <root>/project.json (dir mode only) plus
@@ -281,8 +282,16 @@ static const char *kAudioCtlJS =
     "window.__xwCtlMedia=function(what,arg){"
     "function doit(e){"
     "try{"
-    "if(what==='pause')e.pause();"
-    "else if(what==='play'){var p=e.play();"
+    /* Only resume what we actually paused: a page that keeps firing
+     * one-shot sounds while frozen must not have every <audio> replayed
+     * from zero on thaw. */
+    "if(what==='pause'){"
+    "if(!e.paused&&!e.ended)e.__xwWasPlaying=1;"
+    "e.pause();}"
+    "else if(what==='play'){"
+    "if(!e.__xwWasPlaying)return;"
+    "e.__xwWasPlaying=0;"
+    "var p=e.play();"
     "if(p&&p.catch)p.catch(function(){});}"
     "else if(what==='seek')e.currentTime=Math.max(0,e.currentTime+arg);"
     "}catch(x){}"
@@ -379,7 +388,8 @@ static void web_sync_view_mute(WebCtx *ctx) {
   int want;
   if (!ctx || !ctx->view)
     return;
-  want = ctx->dpms_paused || (ctx->ctl_started && ctx->ctl_muted);
+  want = ctx->dpms_paused || ctx->ctl_quiet ||
+         (ctx->ctl_started && ctx->ctl_muted);
   webkit_web_view_set_is_muted(WEBKIT_WEB_VIEW(ctx->view),
                                want ? TRUE : FALSE);
 }
@@ -894,6 +904,19 @@ static int web_control(XWBackend *b, const char *name, const char *value,
     ctx->ctl_started = 1;
     web_push_audio_ctl(ctx);
     web_osd(ctx, "volume", value, v);
+    return 0;
+  }
+  /* Transient lock-screen mute: keep playback (and its timeline) running,
+   * only silence the view. Not persisted, so `mute on/off` in a lock script
+   * cannot clobber the user's saved mute state. */
+  if (strcmp(name, "quiet") == 0) {
+    int want;
+    if (xw_ctl_toggle(ctx->ctl_quiet, value, &want) != 0) {
+      XW_ERROR_SET(err, 1, "%s takes on, off or toggle", name);
+      return -1;
+    }
+    ctx->ctl_quiet = want;
+    web_sync_view_mute(ctx);
     return 0;
   }
   if (strcmp(name, "mute") == 0 || strcmp(name, "pause") == 0) {

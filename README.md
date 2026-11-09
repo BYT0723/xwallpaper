@@ -149,8 +149,13 @@ dwm/dwl is often the nicer choice):
 ```sh
 xwallpaper volume +2          # relative; also -2, or an absolute 50
 xwallpaper mute               # bare = toggle; also on|off
-xwallpaper -m DP-1 volume +2  # one output; --all for every one
+xwallpaper quiet on --all     # web: transient mute, no pause, not saved
+xwallpaper volume -m DP-1 +2  # one output; --all for every one
 ```
+
+`quiet` is for lock scripts: it silences web pages without pausing their media,
+so unlocking does not replay queued/one-shot sounds. Unlike `mute`, it is never
+written to the state file, so it cannot overwrite the user's saved mute state.
 
 For dwm's `config.h`:
 

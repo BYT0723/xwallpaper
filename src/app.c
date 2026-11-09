@@ -1216,8 +1216,8 @@ int xw_app_control(XWApp *app, const XWConfig *cfg, const char *name,
 /* 锁屏脚本会 SIGSTOP 整个 daemon, 熄屏/亮屏的往返恰好落在冻结期内;
  * 恢复后 power_level 看似没变, 但隐藏中的 WebKit 仍需一次显式重放
  * 才能继续媒体。monotonic 时间出现远超轮询节拍的跳变, 说明中间被
- * 冻结/挂起过, 此时即使电平没变也强制重放一次当前状态。重放是幂等的
- * (已在播的 play() 是空操作, 用户手动 pause/mute 由后端各自保持)。 */
+ * 冻结/挂起过, 此时即使电平没变也强制重放一次当前状态。web 端只恢复
+ * 冻结前确实在播的元素, 用户手动 pause/mute 由后端各自保持。 */
 #define DPMS_RESYNC_GAP_MS 3000
 
 static uint64_t now_monotonic_ms(void) {

@@ -1,7 +1,11 @@
 /* Integration test: web backend DPMS freeze under Xvfb.
  * set_paused(1) (DPMS power-off) must hide the window (stop presenting so the
  * display stays off), hard-mute the view and pause page media; set_paused(0)
- * restores presentation and unmutes without clearing a manual user pause. */
+ * restores presentation and unmutes without clearing a manual user pause.
+ * Media resume is selective: only elements that were actually playing before
+ * the freeze are replayed, never every element in the page. The transient
+ * `quiet` control mutes without pausing, so lock scripts do not cause a
+ * batch replay on unlock. */
 
 #include <stdio.h>
 #include <string.h>
@@ -101,22 +105,42 @@ static char *run_js_sync(GtkWidget *view, const char *script) {
   return out.value; /* caller g_frees, may be NULL on timeout */
 }
 
-/* How many times the fixture page's <video> received play() (-1 on error).
- * The shim may invoke play once per tracked copy, so callers compare
- * relatively instead of asserting an absolute count. */
-static int play_count(GtkWidget *view) {
-  char *s = run_js_sync(view, "String(window.__plays)");
+/* Read an integer JS expression (-1 on error). */
+static int js_int(GtkWidget *view, const char *script) {
+  char *s = run_js_sync(view, script);
   int n = s ? atoi(s) : -1;
   g_free(s);
   return n;
 }
 
+static int play_count_a(GtkWidget *view) {
+  return js_int(view, "String(window.__playsA)");
+}
+
+static int play_count_b(GtkWidget *view) {
+  return js_int(view, "String(window.__playsB)");
+}
+
+/* Two fake media elements: A is already playing when the freeze starts, B is
+ * idle. `paused` is an own accessor so the shim sees the same state a real
+ * element would report. The shim may invoke play once per tracked copy, so
+ * callers compare relatively instead of asserting an absolute count. */
 static const char kPage[] =
     "<html><body>"
-    "<video id=\"v\"></video>"
-    "<script>window.__plays=0;"
-    "var v=document.getElementById('v');"
-    "v.play=function(){window.__plays++;};"
+    "<audio id=\"a\"></audio><audio id=\"b\"></audio>"
+    "<script>window.__playsA=0;window.__playsB=0;"
+    "function mk(id,counter){"
+    "var e=document.getElementById(id);e.__p=true;"
+    "Object.defineProperty(e,'paused',{configurable:true,"
+    "get:function(){return e.__p;}});"
+    "Object.defineProperty(e,'ended',{configurable:true,"
+    "get:function(){return false;}});"
+    "e.play=function(){window[counter]++;e.__p=false;"
+    "return Promise.resolve();};"
+    "e.pause=function(){e.__p=true;};"
+    "return e;}"
+    "window.__a=mk('a','__playsA');window.__b=mk('b','__playsB');"
+    "window.__a.__p=false;"
     "</script>"
     "</body></html>";
 
@@ -180,15 +204,18 @@ static void test_web_dpms_freeze(void) {
   TEST_CHECK(top != NULL && !gtk_widget_get_visible(top));
   TEST_CHECK(webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
 
-  /* thaw: presentation back, view unmuted, media resumed (no user pause) */
+  /* thaw: presentation back, view unmuted, only the element that was
+   * playing before the freeze resumes; the idle one must stay untouched. */
+  int a_before = play_count_a(view);
+  int b_before = play_count_b(view);
   backend.set_paused(&backend, 0);
   pump_gtk(dpy, 1);
   top = find_web_toplevel();
   TEST_CHECK(top != NULL && gtk_widget_get_visible(top));
   TEST_CHECK(!webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
-  /* resume replays play (no user pause); compare relatively */
-  int n0 = play_count(view);
-  TEST_CHECK(n0 > 0);
+  TEST_CHECK(play_count_a(view) > a_before);
+  TEST_CHECK_EQ_INT(play_count_b(view), b_before);
+  int a_resumed = play_count_a(view);
 
   /* a manual user pause survives a DPMS cycle: thaw must not replay */
   TEST_CHECK_EQ_INT(backend.control(&backend, "pause", "on", &ctl), 0);
@@ -201,9 +228,23 @@ static void test_web_dpms_freeze(void) {
   pump_gtk(dpy, 1);
   top = find_web_toplevel();
   TEST_CHECK(top != NULL && gtk_widget_get_visible(top));
-  TEST_CHECK_EQ_INT(play_count(view), n0);
+  TEST_CHECK_EQ_INT(play_count_a(view), a_resumed);
   TEST_CHECK_EQ_INT(backend.control(&backend, "pause", "off", &ctl), 0);
   pump_gtk(dpy, 1);
+
+  /* quiet (lock-script transient mute): view muted but playback keeps
+   * running and unmuting must not replay anything. */
+  a_before = play_count_a(view);
+  TEST_CHECK_EQ_INT(backend.control(&backend, "quiet", "on", &ctl), 0);
+  pump_gtk(dpy, 1);
+  top = find_web_toplevel();
+  TEST_CHECK(top != NULL && gtk_widget_get_visible(top));
+  TEST_CHECK(webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
+  TEST_CHECK_EQ_INT(js_int(view, "String(window.__a.__p?1:0)"), 0);
+  TEST_CHECK_EQ_INT(backend.control(&backend, "quiet", "off", &ctl), 0);
+  pump_gtk(dpy, 1);
+  TEST_CHECK(!webkit_web_view_get_is_muted(WEBKIT_WEB_VIEW(view)));
+  TEST_CHECK_EQ_INT(play_count_a(view), a_before);
 
   /* switching wallpapers mid-freeze: the fresh view must stay frozen
    * (muted + hidden) instead of playing unmuted behind the lock screen.

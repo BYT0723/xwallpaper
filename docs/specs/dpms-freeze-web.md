@@ -20,8 +20,10 @@ DPMS 恢复后自动恢复。对齐现有 `video`/`scene` 的 `set_paused` 行�
 2. 新增 `web_set_paused(b, paused)` 并注册到 backend：
    - `paused=1`：`gtk_widget_hide(window)` 停呈现；`webkit_web_view_set_is_muted(TRUE)`；
      `__xwCtlMedia('pause')` 暂停页面音视频；`xw_web_we_tick` 跳过该 view 的音频下发。
-   - `paused=0`：`gtk_widget_show(window)` 恢复呈现；`set_is_muted` 回到 `ctl_muted`；
-     仅当 `ctl_paused==0` 时才 `__xwCtlMedia('play')`（不清除用户手动暂停）。
+   - `paused=0`：`gtk_widget_show(window)` 恢复呈现；`set_is_muted` 回到
+     `ctl_muted`/`ctl_quiet`；仅当 `ctl_paused==0` 时才 `__xwCtlMedia('play')`，
+     且只恢复冻结前确实在播（`__xwWasPlaying`）的元素，避免页面里闲置的
+     `new Audio()` 被一次性重播（不清除用户手动暂停）。
 3. 新建/切换壁纸时走现有 `apply_dpms_to_backend`，熄屏期间建的 web 直接进冻结态。
 4. Wayland：本次不动（`xw_app_dpms_poll` 在 Wayland 本就 no-op，等 `ext-idle-notify`）。
 

@@ -373,7 +373,7 @@ static void test_audio_client_name_flag(void) {
   TEST_BEGIN("--audio-client-name parses; default is xwallpaper");
   reset();
   char *argv[] = {"xwallpaper", "set", "--video", "--audio-client-name", "mywall", "a.mp4"};
-  TEST_CHECK_EQ_INT(parse(argv, 7), 0);
+  TEST_CHECK_EQ_INT(parse(argv, 6), 0);
   TEST_CHECK_EQ_STR(cfg.audio_client_name, "mywall");
 
   /* default is "xwallpaper" */
@@ -514,6 +514,21 @@ static void test_control_commands(void) {
   char *a7[] = {"xwallpaper", "mute", "--all"};
   TEST_CHECK_EQ_INT(parse(a7, 3), 0);
   TEST_CHECK_EQ_INT(cfg.target, XW_TARGET_ALL);
+
+  /* quiet is the transient (non-persisted) mute used by lock scripts */
+  reset();
+  char *a8[] = {"xwallpaper", "quiet", "on", "--all"};
+  TEST_CHECK_EQ_INT(parse(a8, 4), 0);
+  TEST_CHECK_EQ_INT(cfg.command, XW_CMD_CONTROL);
+  TEST_CHECK_EQ_STR(cfg.ctl_name, "quiet");
+  TEST_CHECK_EQ_STR(cfg.ctl_value, "on");
+  TEST_CHECK_EQ_INT(cfg.target, XW_TARGET_ALL);
+
+  reset();
+  char *a9[] = {"xwallpaper", "quiet", "off"};
+  TEST_CHECK_EQ_INT(parse(a9, 3), 0);
+  TEST_CHECK_EQ_STR(cfg.ctl_name, "quiet");
+  TEST_CHECK_EQ_STR(cfg.ctl_value, "off");
 }
 
 static void test_control_bad_args(void) {
@@ -537,6 +552,10 @@ static void test_control_bad_args(void) {
   reset();
   char *bad5[] = {"xwallpaper", "mute", "bogus"};
   TEST_CHECK_EQ_INT(parse(bad5, 3), -1);
+
+  reset();
+  char *bad6[] = {"xwallpaper", "quiet", "bogus"};
+  TEST_CHECK_EQ_INT(parse(bad6, 3), -1);
 }
 
 int main(void) {
