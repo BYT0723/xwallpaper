@@ -1278,10 +1278,15 @@ static void pump_gtk(void) {
   g_main_context_iteration(NULL, FALSE);
 }
 
-/* WE audio wallpapers need their 20Hz fan-out tick; idle loops poll at
- * 100ms to stay signal-responsive. */
+void xw_app_tick(void) {
+  xw_web_we_tick();
+  xw_web_media_tick();
+}
+
+/* WE audio wallpapers need their 20Hz fan-out tick; media needs prompt
+ * MPRIS dispatch and 1Hz timeline pushes. Idle loops poll at 100ms. */
 static int app_poll_timeout_ms(void) {
-  if (xw_web_we_want())
+  if (xw_web_we_want() || xw_web_media_want())
     return 50;
   return 100;
 }
@@ -1293,7 +1298,7 @@ int xw_app_run(XWApp *app) {
     while (!app->stop_requested) {
       if (app->uses_gtk)
         pump_gtk();
-      xw_web_we_tick();
+      xw_app_tick();
 
       struct pollfd pfd = {wfd, POLLIN, 0};
       int r = poll(&pfd, 1, app_poll_timeout_ms());
@@ -1315,7 +1320,7 @@ int xw_app_run(XWApp *app) {
     if (app->uses_gtk)
       pump_gtk();
     xw_app_dpms_poll(app);
-    xw_web_we_tick();
+    xw_app_tick();
 
     struct pollfd pfd = {xfd, POLLIN, 0};
     int r = poll(&pfd, 1, app_poll_timeout_ms());

@@ -12,7 +12,7 @@ User stories:
 - 我切歌/换默认输出设备后，无需重设壁纸，音频跟随新的默认输出。
 - 我没有音频壁纸时，行为零变化：daemon 不连 Pulse，无额外 CPU；`make check-client-libs` 仍过。
 
-非目标：`wallpaperRegisterMediaProperties/Thumbnail/Playback/Timeline` 媒体联动全套；
+非目标：媒体联动（已由 `docs/specs/we-media-listener.md` 覆盖）；
 `wallpaperPropertyListener` 已有投递不动；`wallpaperReady` 不补（无害空调用）；
 麦克风采集；逐应用采集；Wayland `web_init_wl` 首版可跟随（若成本大则 X11 先行，Wayland 对齐另起 task）。
 

@@ -8,7 +8,7 @@
 | `x11` | Desktop wrapper window creation (`_NET_WM_TYPE_DESKTOP`, `_NET_WM_STATE_BELOW`, `_NET_WM_DESKTOP`, sticky/skip, override-redirect, `_NET_WM_WINDOW_OPACITY`), desktop-layer discovery (`__SWM_VROOT`, `_NET_WM_WINDOW_TYPE_DESKTOP`), xrandr monitor resolution, geometry application, mouse-event forwarding to root, input shape | — |
 | `image` | imlib2 image load/scale/tile, render onto window via XRender/drawable | `x11` |
 | `video` | libmpv embedded (init, load, loop, mute/volume via `wid`), `--wid` window attach | `x11` |
-| `web` | webkit2gtk page render, GtkPlug embed into foreign X window, GTK main context integration | `x11`, `gtk` |
+| `web` | webkit2gtk page render, GtkPlug embed into foreign X window, GTK main context integration, WE audio spectrum + MPRIS media listeners | `x11`, `gtk`, `gio` |
 | `app` | Backend abstraction (`XWBackend` interface: `init/start/stop/destroy`), unified event loop (poll X fd + GTK ctx), lifecycle, backend switching per window, cleanup | `cli`, `x11`, `image`, `video`, `web` |
 
 ```

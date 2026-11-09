@@ -32,11 +32,32 @@ Desktop icons and conky stay clickable: pointer events on the wallpaper window a
 | **Image** | imlib2 load/scale/tile — `fill`, `contain`, `stretch`, `tile` |
 | **Video** | libmpv embedded (hardware decode, loop, mute/volume, static rotation, forced frame rate) |
 | **Web** | webkit2gtk live page — one shared engine across screens |
+| **Web media** | MPRIS media integration for WE web wallpapers — title, artist, artwork, playback state and timeline (MPD via `mpdris2-rs`) |
 | **Targets** | primary output, `-m <output>` by xrandr name, `--all`, or an explicit `-g WxH+X+Y --name` rectangle |
 | **Video extras** | `--rotate <0\|90\|180\|270>`, `--keybinds <keys>`, `--fps <n>`, `--mute --volume` |
 | **Playback control** | key bindings on the focused wallpaper (video and web) plus `xwallpaper volume` / `mute` for scripts and WM bindings |
 | **Window opts** | opacity, below, sticky, skip-taskbar, skip-pager, no-focus |
 | **Desktop layer** | `_NET_WM_WINDOW_TYPE_DESKTOP` attach, sticky `_NET_WM_DESKTOP`, override-redirect |
+
+### Web media integration
+
+Web wallpapers that call Wallpaper Engine's
+`wallpaperRegisterMediaProperties/Thumbnail/Playback/TimelineListener` APIs are
+fed from the Linux session bus (MPRIS2), not from the page itself. The daemon
+connects only while at least one web wallpaper has registered a media listener,
+and shares one active-player snapshot across all web walls.
+
+- Supported sources: any player that publishes MPRIS (`org.mpris.MediaPlayer2.*`),
+  such as Spotify, Firefox/Chromium, VLC, mpv-mpris.
+- **MPD** does not publish MPRIS itself: run `mpdris2-rs` (or `mpdris2`) in the
+  same session. It exposes MPD as `org.mpris.MediaPlayer2.mpd`, including
+  artwork obtained through MPD's `readpicture/albumart`.
+- `Playing` beats `Paused`; when several players are active, the most recently
+  active one wins. `playerctld` is ignored to avoid duplicate proxies.
+- Local `file://` artwork is embedded as a `data:` URL; remote `http(s)` artwork
+  is passed to the page as a URL. `primaryColor`/`textColor` are currently empty.
+- Read-only: xwallpaper never controls the player; page-local `<audio>/<video>`
+  control remains the existing key binding/`xwallpaper pause|seek` path.
 
 ## Install
 

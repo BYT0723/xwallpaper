@@ -25,6 +25,15 @@
 #include "web_props.h"
 #include "x11.h"
 
+enum {
+  XW_MEDIA_PROPS = 0,
+  XW_MEDIA_THUMB,
+  XW_MEDIA_PLAYBACK,
+  XW_MEDIA_TIMELINE,
+  XW_MEDIA_STATUS,
+  XW_MEDIA_KINDS
+};
+
 typedef struct {
   XWWindow *win;
   struct XWWlWindow *wlwin; /* Wayland host window (NULL on X11) */
@@ -41,6 +50,8 @@ typedef struct {
                         * 3 post-restore reload */
   char *mig_json;      /* dumped file-origin localStorage (stage 2) */
   int want_audio;      /* page called wallpaperRegisterAudioListener */
+  unsigned media_want; /* bit per wallpaperRegisterMedia*Listener kind */
+  uint64_t media_seen[XW_MEDIA_KINDS];
   char last_audio[2048]; /* last JSON pushed to __xwAudioPush (dedup) */
   int has_audio;         /* last_audio valid; cleared on (re)registration */
   int dead;            /* web_destroy in progress: ignore late signals */
@@ -66,8 +77,10 @@ typedef struct {
 static WebCtx **g_views = NULL;
 static int g_nviews = 0;
 static int web_eval_count;
+static int web_media_eval_count;
 
 int xw_web_we_eval_count(void) { return web_eval_count; }
+int xw_web_media_eval_count(void) { return web_media_eval_count; }
 
 static void web_reg_add(WebCtx *ctx) {
   WebCtx **v = realloc(g_views, sizeof(*v) * (g_nviews + 1));
@@ -217,6 +230,38 @@ static const char *kAudioJS =
     "};"
     "})();";
 
+/* Wallpaper Engine media shim. Registration notifies native through the
+ * xwMedia message handler so the daemon can start MPRIS only when a page
+ * actually wants media data, and can replay the current snapshot after a
+ * late registration. */
+static const char *kMediaJS =
+    "(function(){"
+    "if(window.__xwMedia)return;"
+    "var st=window.__xwMedia={props:[],thumb:[],playback:[],timeline:[],status:[]};"
+    "function reg(kind,cb){"
+    "if(typeof cb!=='function')return;"
+    "st[kind].push(cb);"
+    "try{window.webkit.messageHandlers.xwMedia.postMessage(kind);}catch(e){}"
+    "}"
+    "window.wallpaperRegisterMediaPropertiesListener=function(cb){reg('props',cb);};"
+    "window.wallpaperRegisterMediaThumbnailListener=function(cb){reg('thumb',cb);};"
+    "window.wallpaperRegisterMediaPlaybackListener=function(cb){reg('playback',cb);};"
+    "window.wallpaperRegisterMediaTimelineListener=function(cb){reg('timeline',cb);};"
+    "window.wallpaperRegisterMediaStatusListener=function(cb){reg('status',cb);};"
+    "window.wallpaperMediaIntegration={"
+    "PLAYBACK_PLAYING:0,PLAYBACK_PAUSED:1,PLAYBACK_STOPPED:2,"
+    "playback:{PLAYING:0,PAUSED:1,STOPPED:2}};"
+    "function emit(kind,arg){"
+    "var c=st[kind];"
+    "for(var i=0;i<c.length;i++){try{c[i](arg);}catch(e){}}"
+    "}"
+    "window.__xwMediaProps=function(o){emit('props',o);};"
+    "window.__xwMediaThumb=function(o){emit('thumb',o);};"
+    "window.__xwMediaPlayback=function(o){emit('playback',o);};"
+    "window.__xwMediaTimeline=function(o){emit('timeline',o);};"
+    "window.__xwMediaStatus=function(o){emit('status',o);};"
+    "})();";
+
 /* Runtime audio control. WebKitGTK has no volume API, so the page is driven
  * from inside: every media element is held at the master level, including
  * ones created later, and Web Audio graphs are rerouted through a master
@@ -344,6 +389,110 @@ static void web_eval(WebCtx *ctx, const char *js) {
     return;
   webkit_web_view_evaluate_javascript(WEBKIT_WEB_VIEW(ctx->view), js, -1, NULL,
                                       NULL, NULL, NULL, NULL);
+}
+
+static int web_media_eval(WebCtx *ctx, const char *js) {
+  if (!ctx || !ctx->view || ctx->dead || !js)
+    return -1;
+  web_media_eval_count++;
+  webkit_web_view_evaluate_javascript(WEBKIT_WEB_VIEW(ctx->view), js, -1, NULL,
+                                      NULL, NULL, NULL, NULL);
+  return 0;
+}
+
+static int web_media_send(WebCtx *ctx, const char *fn, const char *payload,
+                          uint64_t *seen, uint64_t version) {
+  char *js;
+  if (!ctx || !fn || !payload)
+    return -1;
+  js = g_strdup_printf("__xwMedia%s(%s)", fn, payload);
+  if (!js)
+    return -1;
+  if (web_media_eval(ctx, js) != 0) {
+    g_free(js);
+    return -1;
+  }
+  g_free(js);
+  if (seen)
+    *seen = version;
+  return 0;
+}
+
+int xw_web_media_want(void) {
+  for (int i = 0; i < g_nviews; i++)
+    if (g_views[i]->media_want)
+      return 1;
+  return 0;
+}
+
+void xw_web_media_push(const XWMediaInfo *m) {
+  char props[3 * XW_WE_MEDIA_TEXT_MAX * 6 + 512];
+  char small[160];
+  if (!m)
+    return;
+  for (int i = 0; i < g_nviews; i++) {
+    WebCtx *ctx = g_views[i];
+    int props_pushed = 0;
+    if (!ctx->view || ctx->dead)
+      continue;
+    if ((ctx->media_want & (1u << XW_MEDIA_PROPS)) &&
+        m->v_props > ctx->media_seen[XW_MEDIA_PROPS] &&
+        xw_we_media_format_props(m, props, sizeof(props)) == 0)
+      props_pushed = web_media_send(ctx, "Props", props,
+                                    &ctx->media_seen[XW_MEDIA_PROPS],
+                                    m->v_props) == 0;
+
+    if ((ctx->media_want & (1u << XW_MEDIA_THUMB)) &&
+        m->v_thumb > ctx->media_seen[XW_MEDIA_THUMB]) {
+      size_t cap = m->thumbnail ? strlen(m->thumbnail) : 0;
+      char *buf;
+      if (!(m->thumbnail && strncmp(m->thumbnail, "data:", 5) == 0))
+        cap *= 6;
+      cap += 512;
+      buf = g_malloc(cap);
+      if (buf) {
+        if (xw_we_media_format_thumb(m, buf, cap) == 0)
+          (void)web_media_send(ctx, "Thumb", buf,
+                               &ctx->media_seen[XW_MEDIA_THUMB], m->v_thumb);
+        g_free(buf);
+      }
+    }
+
+    if ((ctx->media_want & (1u << XW_MEDIA_PLAYBACK)) &&
+        m->v_playback > ctx->media_seen[XW_MEDIA_PLAYBACK] &&
+        xw_we_media_format_playback(m, small, sizeof(small)) == 0)
+      (void)web_media_send(ctx, "Playback", small,
+                           &ctx->media_seen[XW_MEDIA_PLAYBACK],
+                           m->v_playback);
+
+    /* The target wallpaper zeroes its timeline in the properties callback,
+     * so every props push must be followed by a timeline push. */
+    if (props_pushed && (ctx->media_want & (1u << XW_MEDIA_TIMELINE)))
+      ctx->media_seen[XW_MEDIA_TIMELINE] = 0;
+
+    if ((ctx->media_want & (1u << XW_MEDIA_TIMELINE)) &&
+        m->v_timeline > ctx->media_seen[XW_MEDIA_TIMELINE] &&
+        xw_we_media_format_timeline(m, small, sizeof(small)) == 0)
+      (void)web_media_send(ctx, "Timeline", small,
+                           &ctx->media_seen[XW_MEDIA_TIMELINE],
+                           m->v_timeline);
+
+    if ((ctx->media_want & (1u << XW_MEDIA_STATUS)) &&
+        m->v_status > ctx->media_seen[XW_MEDIA_STATUS] &&
+        xw_we_media_format_status(m, small, sizeof(small)) == 0)
+      (void)web_media_send(ctx, "Status", small,
+                           &ctx->media_seen[XW_MEDIA_STATUS], m->v_status);
+  }
+}
+
+void xw_web_media_tick(void) {
+  if (!xw_web_media_want()) {
+    xw_we_media_stop();
+    return;
+  }
+  (void)xw_we_media_start();
+  xw_we_media_tick();
+  xw_web_media_push(xw_we_media_get());
 }
 
 static void web_osd(WebCtx *ctx, const char *name, const char *value, int cur) {
@@ -986,6 +1135,39 @@ static void web_audio_message_cb(WebKitUserContentManager *ucm,
     ctx->has_audio = 0;
 }
 
+static void web_media_message_cb(WebKitUserContentManager *ucm,
+                                 WebKitJavascriptResult *res, gpointer ud) {
+  WebCtx *ctx = (WebCtx *)ud;
+  char *kind = NULL;
+  int idx = -1;
+  (void)ucm;
+  if (res) {
+    JSCValue *v = webkit_javascript_result_get_js_value(res);
+    if (v)
+      kind = jsc_value_to_string(v);
+    webkit_javascript_result_unref(res);
+  }
+  if (!ctx || !kind) {
+    g_free(kind);
+    return;
+  }
+  if (strcmp(kind, "props") == 0)
+    idx = XW_MEDIA_PROPS;
+  else if (strcmp(kind, "thumb") == 0)
+    idx = XW_MEDIA_THUMB;
+  else if (strcmp(kind, "playback") == 0)
+    idx = XW_MEDIA_PLAYBACK;
+  else if (strcmp(kind, "timeline") == 0)
+    idx = XW_MEDIA_TIMELINE;
+  else if (strcmp(kind, "status") == 0)
+    idx = XW_MEDIA_STATUS;
+  if (idx >= 0) {
+    ctx->media_want |= 1u << idx;
+    ctx->media_seen[idx] = 0;
+  }
+  g_free(kind);
+}
+
 static void web_apply_wallpaper_policy(WebKitWebView *view, WebCtx *ctx) {
   WebKitUserContentManager *ucm =
       webkit_web_view_get_user_content_manager(view);
@@ -1019,8 +1201,19 @@ static void web_apply_wallpaper_policy(WebKitWebView *view, WebCtx *ctx) {
     webkit_user_content_manager_add_script(ucm, ctl);
     webkit_user_script_unref(ctl);
   }
-  webkit_user_content_manager_register_script_message_handler(ucm, "xwAudio");  g_signal_connect(ucm, "script-message-received::xwAudio",
+  WebKitUserScript *media = webkit_user_script_new(
+      kMediaJS, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES,
+      WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL, NULL);
+  if (media) {
+    webkit_user_content_manager_add_script(ucm, media);
+    webkit_user_script_unref(media);
+  }
+  webkit_user_content_manager_register_script_message_handler(ucm, "xwAudio");
+  g_signal_connect(ucm, "script-message-received::xwAudio",
                    G_CALLBACK(web_audio_message_cb), ctx);
+  webkit_user_content_manager_register_script_message_handler(ucm, "xwMedia");
+  g_signal_connect(ucm, "script-message-received::xwMedia",
+                   G_CALLBACK(web_media_message_cb), ctx);
 }
 
 /* Per-wallpaper WebsiteDataManager: storage/cookies/cache land under
@@ -1784,6 +1977,8 @@ static int web_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   if (same)
     return web_start(b);
   web_detach_context(ctx);
+  ctx->media_want = 0;
+  memset(ctx->media_seen, 0, sizeof(ctx->media_seen));
   if (web_attach_context(ctx, err) != 0)
     return -1;
   if (ctx->is_wayland) {

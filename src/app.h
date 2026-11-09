@@ -36,6 +36,10 @@ int xw_app_clear_all(XWApp *app);
  * New outputs never gain windows here. Saves state. Returns 0 or -1. */
 int xw_app_reconfigure(XWApp *app, XWError *err);
 
+/* Fan out WE audio/media ticks. Call once per event-loop iteration from
+ * both xw_app_run() and the resident daemon loop in daemon.c. */
+void xw_app_tick(void);
+
 /* Run the event loop until stop is requested. */
 int xw_app_run(XWApp *app);
 

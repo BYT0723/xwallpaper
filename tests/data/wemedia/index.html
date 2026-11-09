@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head><title>wemedia</title></head>
+<body>
+<script>
+window.__recv = {};
+
+function report() {
+  var p = window.__recv.props || {};
+  var t = window.__recv.timeline || {};
+  var b = window.__recv.playback || {};
+  var s = window.__recv.status || {};
+  var th = window.__recv.thumb || {};
+  document.title = 'WEMEDIA:' +
+    (p.title || '') + '|' +
+    (p.artist || '') + '|' +
+    (b.state === undefined ? 'x' : b.state) + '|' +
+    (t.position === undefined ? 'x' : t.position) + '|' +
+    (t.duration === undefined ? 'x' : t.duration) + '|' +
+    (th.thumbnail ? th.thumbnail.slice(0, 32) : '') + '|' +
+    (s.enabled === undefined ? 'x' : s.enabled);
+}
+
+function reg(name, key) {
+  if (typeof window[name] === 'function') {
+    window[name](function (e) {
+      window.__recv[key] = e;
+      report();
+    });
+  }
+}
+
+reg('wallpaperRegisterMediaPropertiesListener', 'props');
+reg('wallpaperRegisterMediaThumbnailListener', 'thumb');
+reg('wallpaperRegisterMediaPlaybackListener', 'playback');
+reg('wallpaperRegisterMediaTimelineListener', 'timeline');
+reg('wallpaperRegisterMediaStatusListener', 'status');
+report();
+</script>
+</body>
+</html>

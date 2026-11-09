@@ -40,7 +40,7 @@ CLI_OBJ := $(CLI_SRC:.c=.o)
 DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/x11.c src/app.c src/image.c src/video.c src/web.c \
               src/web_dir.c src/web_http.c src/web_props.c src/props_store.c src/wl.c src/we_audio.c src/we_pulse.c \
-              src/keybinds.c src/osd.c
+              src/we_media.c src/keybinds.c src/osd.c
 DAEMON_OBJ := $(DAEMON_SRC:.c=.o)
 
 # ---- Web user properties (json-c): daemon-only ----
@@ -132,6 +132,7 @@ INTEG_BIN := tests/integration/test_x11 tests/integration/test_image \
              tests/integration/test_video tests/integration/test_web \
              tests/integration/test_web_dpms \
              tests/integration/test_web_audio \
+             tests/integration/test_web_media \
              tests/integration/test_app_geom tests/integration/test_app_all \
              tests/integration/test_fill tests/integration/test_restore \
              tests/integration/test_reconfigure
@@ -159,7 +160,7 @@ xwallpaperd: $(DAEMON_OBJ)
 # layout change relinks stale objects against new ones (mixed ABI).
 HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/client.h src/state.h src/x11.h src/app.h src/backends.h \
-  src/wl.h src/daemon.h src/web_dir.h src/web_http.h src/web_props.h src/props_store.h src/web.h src/we_audio.h src/we_pulse.h \
+  src/wl.h src/daemon.h src/web_dir.h src/web_http.h src/web_props.h src/props_store.h src/web.h src/we_audio.h src/we_pulse.h src/we_media.h \
   src/keybinds.h src/osd.h \
   $(wildcard src/proto/*-client-protocol.h)
 $(CLI_OBJ) $(DAEMON_OBJ) \
@@ -189,6 +190,9 @@ tests/test_props_store: tests/test_props_store.c src/props_store.o
 
 tests/test_we_audio: tests/test_we_audio.c src/we_audio.o
 	$(CC) $(CFLAGS) -o $@ $< src/we_audio.o -lm
+
+tests/test_we_media: tests/test_we_media.c src/we_media.o
+	$(CC) $(CFLAGS) -o $@ $< src/we_media.o $(shell pkg-config --libs gio-2.0)
 
 tests/test_keybinds: tests/test_keybinds.c src/keybinds.o
 	$(CC) $(CFLAGS) -o $@ $< src/keybinds.o
@@ -235,7 +239,7 @@ proto-wayland: $(WLR_XML)
 	$(WAYLAND_SCANNER) private-code $(XDGOUT_XML) $(XDGOUT_GEN_C)
 
 check-client-libs: xwallpaper
-	@! ldd ./xwallpaper | grep -qE 'webkit|mpv|Imlib2|javascriptcore|libpulse|libjson-c|libGL|GLEW|freetype|SDL2' \
+	@! ldd ./xwallpaper | grep -qE 'webkit|mpv|Imlib2|javascriptcore|libpulse|libjson-c|libgio|libGL|GLEW|freetype|SDL2' \
 	  && echo "OK: xwallpaper (cli) is free of heavy backend libs" \
 	  || (echo "FAIL: cli links heavy backend libs"; exit 1)
 

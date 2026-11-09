@@ -369,8 +369,9 @@ int xw_daemon_main(void) {
     }
 
     int timeout = gtimeout; /* -1 = block until an fd/event arrives */
-    if (xw_web_we_want()) {
-      /* WE audio wallpapers need a 20Hz fan-out tick; never block past it. */
+    if (xw_web_we_want() || xw_web_media_want()) {
+      /* WE audio needs a 20Hz fan-out tick; media needs prompt MPRIS
+       * dispatch and 1Hz timeline pushes. Never block past either. */
       if (timeout < 0 || timeout > 50)
         timeout = 50;
     } else if (xw_app_dpms_watch_required(cur) || now_ms - startup_ms < 120000) {
@@ -399,9 +400,8 @@ int xw_daemon_main(void) {
      * display after lock/screen-off) */
     xw_app_dpms_poll(cur);
 
-    /* WE audio fan-out to web wallpapers (50ms internally throttled;
-     * starts/stops the Pulse capture by want-refcount) */
-    xw_web_we_tick();
+    /* WE audio + media fan-out for web wallpapers. */
+    xw_app_tick();
 
     if (now_ms - startup_ms < 120000) {
       if (now_ms - last_selfheal_ms >= 500) {

@@ -8,6 +8,7 @@ xwallpaperd
 /tests/test_keybinds
 /tests/test_state
 /tests/test_we_audio
+/tests/test_we_media
 /tests/test_web_dir
 /tests/test_web_props
 /tests/test_props_store
@@ -18,6 +19,7 @@ xwallpaperd
 /tests/integration/test_web
 /tests/integration/test_web_dpms
 /tests/integration/test_web_audio
+/tests/integration/test_web_media
 /tests/integration/test_app_geom
 /tests/integration/test_app_all
 /tests/integration/test_fill
