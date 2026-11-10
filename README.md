@@ -108,7 +108,7 @@ Then control it from the CLI:
 xwallpaper set [--image|--video|--web] [target] [opts] <path>
 xwallpaper clear [-m <name|output>]
 xwallpaper --list
-xwallpaper --list-properties [-m <output>]       # web user properties
+xwallpaper --list-properties [--labels] [-m <output>]  # web user properties
 xwallpaper --set-property <name=value> [-m <output>]
 xwallpaper exit
 ```

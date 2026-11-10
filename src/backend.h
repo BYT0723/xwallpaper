@@ -81,9 +81,10 @@ struct XWBackend {
   int (*start_wl)(XWBackend *b);
   void (*destroy_wl)(XWBackend *b);
   /* optional: user-property listing/override (web). list_props appends
-   * "name\ttype\tvalue\n" lines, returns the count or -1. May be NULL
-   * (image/video have no user properties). */
-  int (*list_props)(XWBackend *b, char *out, size_t n);
+   * "name\ttype\tvalue\n" lines, or "name\ttype\tvalue\tlabel\n" when
+   * labels != 0; returns the count or -1. May be NULL (image/video have
+   * no user properties). */
+  int (*list_props)(XWBackend *b, char *out, size_t n, int labels);
   int (*set_prop)(XWBackend *b, const char *name, const char *value,
                   XWError *err);
   /* optional: drop all user-property overrides (memory + disk) and re-apply

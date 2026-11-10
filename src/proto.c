@@ -176,6 +176,8 @@ int xw_proto_encode_list_props(const XWConfig *cfg, char *msg, size_t n) {
     return -1;
   if (append_field(msg, n, &off, t) < 0)
     return -1;
+  if (cfg->labels && append_field(msg, n, &off, "labels=1") < 0)
+    return -1;
   return finish(msg, n, &off);
 }
 

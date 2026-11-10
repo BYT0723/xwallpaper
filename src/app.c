@@ -1091,7 +1091,7 @@ int xw_app_list_props(XWApp *app, const XWConfig *cfg, char *out, size_t n,
     XW_ERROR_SET(err, 1, "that wallpaper has no user properties");
     return -1;
   }
-  return b->list_props(b, out, n);
+  return b->list_props(b, out, n, cfg->labels);
 }
 
 int xw_app_set_prop(XWApp *app, const XWConfig *cfg, const char *name,

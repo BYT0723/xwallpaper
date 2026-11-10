@@ -100,6 +100,12 @@ static void test_encode_props(void) {
   TEST_CHECK(n > 0);
   TEST_CHECK(strncmp(msg, "list-props\0", 11) == 0);
   TEST_CHECK(has_field(msg, n, "primary"));
+  TEST_CHECK(!has_field(msg, n, "labels=1"));
+
+  cfg.labels = 1;
+  n = xw_proto_encode_list_props(&cfg, msg, sizeof(msg));
+  TEST_CHECK(n > 0);
+  TEST_CHECK(has_field(msg, n, "labels=1"));
 
   reset();
   cfg.command = XW_CMD_SET_PROP;

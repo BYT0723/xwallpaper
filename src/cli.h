@@ -48,6 +48,7 @@ typedef struct XWConfig {
   int backend_explicit; /* -1 = auto, else XW_BACKEND_* */
   char path[1024];
   char prop[512];     /* --set-property name=value */
+  int labels;         /* --list-properties --labels: add localized labels */
   char ctl_name[16];  /* XW_CMD_CONTROL: volume | mute */
   char ctl_value[64]; /* XW_CMD_CONTROL argument: "+2" / "50" / "toggle" */
   int scale_mode;     /* XW_SCALE_* for image */

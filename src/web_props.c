@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,8 +7,139 @@
 
 #include "web_props.h"
 
-int xw_web_props_parse(const char *json, size_t len, XWWebProp **out) {
+void xw_web_props_locale_for(const char *tag, char *out, size_t n) {
+  char buf[64];
+  size_t i = 0;
+  const char *p = tag ? tag : "";
+
+  if (!out || n == 0)
+    return;
+  while (*p && *p != '.' && *p != '@' && i + 1 < sizeof(buf)) {
+    char c = *p++;
+    if (c == '_')
+      c = '-';
+    buf[i++] = (char)tolower((unsigned char)c);
+  }
+  buf[i] = '\0';
+
+  if (!buf[0] || strcmp(buf, "c") == 0 || strcmp(buf, "posix") == 0) {
+    snprintf(out, n, "en-us");
+    return;
+  }
+  {
+    const char *dash = strchr(buf, '-');
+    size_t ll = dash ? (size_t)(dash - buf) : strlen(buf);
+    const char *r = dash ? dash + 1 : "";
+    if (ll == 2 && memcmp(buf, "zh", 2) == 0) {
+      if (strcmp(r, "tw") == 0 || strcmp(r, "hk") == 0 ||
+          strcmp(r, "mo") == 0 || strcmp(r, "cht") == 0 ||
+          strcmp(r, "hant") == 0)
+        snprintf(out, n, "zh-cht");
+      else
+        snprintf(out, n, "zh-chs");
+      return;
+    }
+    if (ll == 2 && memcmp(buf, "ja", 2) == 0) {
+      snprintf(out, n, "ja-jp");
+      return;
+    }
+    if (ll == 2 && memcmp(buf, "ko", 2) == 0) {
+      snprintf(out, n, "ko-kr");
+      return;
+    }
+    if (ll == 2 && memcmp(buf, "ru", 2) == 0) {
+      snprintf(out, n, "ru-ru");
+      return;
+    }
+  }
+  snprintf(out, n, "en-us");
+}
+
+void xw_web_props_locale(char *out, size_t n) {
+  const char *tag = getenv("LC_ALL");
+  if (!tag || !tag[0])
+    tag = getenv("LC_MESSAGES");
+  if (!tag || !tag[0])
+    tag = getenv("LANG");
+  xw_web_props_locale_for(tag, out, n);
+}
+
+/* Pick the localization object: exact key, same language prefix, en-us,
+ * then the first object. NULL when the project has no localization. */
+static struct json_object *pick_localization(struct json_object *loc,
+                                             const char *locale) {
+  struct json_object *obj = NULL;
+  char lang[16];
+  size_t l;
+  const char *dash;
+
+  if (!loc || json_object_get_type(loc) != json_type_object)
+    return NULL;
+  if (locale && locale[0] &&
+      json_object_object_get_ex(loc, locale, &obj) && obj &&
+      json_object_get_type(obj) == json_type_object)
+    return obj;
+
+  dash = locale ? strchr(locale, '-') : NULL;
+  l = dash ? (size_t)(dash - locale) : (locale ? strlen(locale) : 0);
+  if (l >= sizeof(lang))
+    l = sizeof(lang) - 1;
+  memcpy(lang, locale ? locale : "", l);
+  lang[l] = '\0';
+  if (lang[0]) {
+    char prefix[24];
+    snprintf(prefix, sizeof(prefix), "%s-", lang);
+    json_object_object_foreach(loc, key, val) {
+      if (json_object_get_type(val) == json_type_object &&
+          strncmp(key, prefix, strlen(prefix)) == 0)
+        return val;
+    }
+  }
+
+  if (json_object_object_get_ex(loc, "en-us", &obj) && obj &&
+      json_object_get_type(obj) == json_type_object)
+    return obj;
+  json_object_object_foreach(loc, key, val) {
+    (void)key;
+    if (json_object_get_type(val) == json_type_object)
+      return val;
+  }
+  return NULL;
+}
+
+/* Localized labels are UI text, not TSV fields: strip HTML tags and turn
+ * tabs/newlines into spaces so one property stays on one line. */
+static void copy_label(char *dst, size_t dn, const char *src) {
+  size_t o = 0;
+  int in_tag = 0;
+
+  if (!dst || dn == 0)
+    return;
+  dst[0] = '\0';
+  if (!src)
+    return;
+  for (; *src && o + 1 < dn; src++) {
+    unsigned char c = (unsigned char)*src;
+    if (c == '<') {
+      in_tag = 1;
+      continue;
+    }
+    if (in_tag) {
+      if (c == '>')
+        in_tag = 0;
+      continue;
+    }
+    if (c == '\t' || c == '\n' || c == '\r')
+      c = ' ';
+    dst[o++] = (char)c;
+  }
+  dst[o] = '\0';
+}
+
+int xw_web_props_parse(const char *json, size_t len, const char *locale,
+                       XWWebProp **out) {
   struct json_object *root = NULL, *general = NULL, *props = NULL;
+  struct json_object *loc = NULL, *strings = NULL;
   XWWebProp *arr = NULL;
   int n = 0, cap = 0;
   char *text;
@@ -33,8 +165,11 @@ int xw_web_props_parse(const char *json, size_t len, XWWebProp **out) {
     return -1;
   }
 
+  if (json_object_object_get_ex(general, "localization", &loc))
+    strings = pick_localization(loc, locale);
+
   json_object_object_foreach(props, key, val) {
-    struct json_object *t = NULL, *v = NULL;
+    struct json_object *t = NULL, *v = NULL, *txt = NULL, *lbl = NULL;
     const char *ts = "", *vs = "";
     if (json_object_get_type(val) == json_type_object) {
       if (json_object_object_get_ex(val, "type", &t) && t &&
@@ -72,9 +207,19 @@ int xw_web_props_parse(const char *json, size_t len, XWWebProp **out) {
       arr = grown;
       cap = next;
     }
+    memset(&arr[n], 0, sizeof(arr[n]));
     snprintf(arr[n].name, sizeof(arr[n].name), "%s", key);
     snprintf(arr[n].type, sizeof(arr[n].type), "%s", ts);
     snprintf(arr[n].value, sizeof(arr[n].value), "%s", vs);
+    if (strings &&
+        json_object_object_get_ex(val, "text", &txt) && txt &&
+        json_object_get_type(txt) == json_type_string) {
+      const char *tk = json_object_get_string(txt);
+      if (tk && json_object_object_get_ex(strings, tk, &lbl) && lbl &&
+          json_object_get_type(lbl) == json_type_string)
+        copy_label(arr[n].label, sizeof(arr[n].label),
+                   json_object_get_string(lbl));
+    }
     n++;
   }
 

@@ -118,7 +118,7 @@ void xw_cli_usage(FILE *f) {
     "  xwallpaper restore\n"
     "  xwallpaper --list\n"
     "  xwallpaper --state\n"
-    "  xwallpaper --list-properties [-m <output>]\n"
+    "  xwallpaper --list-properties [--labels] [-m <output>]\n"
     "  xwallpaper --set-property <name=value> [-m <output>]\n"
     "  xwallpaper --clear-properties [-m <output>]\n"
     "  xwallpaper volume [-m <output>|--all] <+N|-N|N>\n"
@@ -224,13 +224,17 @@ int xw_cli_parse(int argc, char **argv, XWConfig *cfg, XWError *err) {
         }
         snprintf(cfg->output, sizeof(cfg->output), "%s", argv[i]);
         cfg->target = XW_TARGET_OUTPUT;
+      } else if (cfg->command == XW_CMD_LIST_PROPS &&
+                 strcmp(a, "--labels") == 0) {
+        cfg->labels = 1;
       } else if (cfg->command == XW_CMD_SET_PROP && cfg->prop[0] == '\0' &&
                  strchr(a, '=')) {
         snprintf(cfg->prop, sizeof(cfg->prop), "%s", a);
       } else {
         XW_ERROR_SET(err, 1, "unexpected argument '%s' (%s takes only "
                      "[-m <output>]%s)", a, cmd,
-                     cfg->command == XW_CMD_SET_PROP ? " name=value" : "");
+                     cfg->command == XW_CMD_SET_PROP ? " name=value" :
+                     cfg->command == XW_CMD_LIST_PROPS ? " [--labels]" : "");
         return -1;
       }
     }

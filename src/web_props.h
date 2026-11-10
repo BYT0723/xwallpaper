@@ -5,6 +5,7 @@
 
 /* One Wallpaper Engine user property from project.json general.properties. */
 #define XW_WEB_PROP_VALUE_MAX 1024
+#define XW_WEB_PROP_LABEL_MAX 128
 /* Sanity bound for a hostile 1 MiB project.json; real wallpapers stay in
  * the hundreds. The array itself grows to the property count. */
 #define XW_WEB_PROPS_MAX 4096
@@ -12,7 +13,15 @@ typedef struct {
   char name[128];
   char type[32];
   char value[XW_WEB_PROP_VALUE_MAX];
+  char label[XW_WEB_PROP_LABEL_MAX]; /* localized "text", sanitized for TSV */
 } XWWebProp;
+
+/* Map a POSIX locale tag ("zh_CN.UTF-8", "ja_JP", "C") to a WE localization
+ * key ("zh-chs", "ja-jp", "en-us"). Unknown tags fall back to en-us. */
+void xw_web_props_locale_for(const char *tag, char *out, size_t n);
+
+/* Same, using LC_ALL > LC_MESSAGES > LANG from the daemon environment. */
+void xw_web_props_locale(char *out, size_t n);
 
 /* Worst-case JS for one property: 127B name + 1024B value fully
  * \uXXXX-escaped (~7kB). Single-property callers size their buffer with
@@ -20,11 +29,14 @@ typedef struct {
 #define XW_WEB_PROP_JS_MAX 8192
 
 /* Parse project.json text, extract general.properties entries. Group
- * headings (entries without a "type") are skipped. On success *out is a
- * malloc'd array (caller frees) and the count is returned; *out is NULL
- * when there are no properties. Returns -1 on bad input, allocation
- * failure, or more than XW_WEB_PROPS_MAX entries. */
-int xw_web_props_parse(const char *json, size_t len, XWWebProp **out);
+ * headings (entries without a "type") are skipped. locale is a WE key such
+ * as "zh-chs" (NULL/empty = en-us); each property's "text" is resolved
+ * against general.localization with same-language and en-us fallbacks.
+ * On success *out is a malloc'd array (caller frees) and the count is
+ * returned; *out is NULL when there are no properties. Returns -1 on bad
+ * input, allocation failure, or more than XW_WEB_PROPS_MAX entries. */
+int xw_web_props_parse(const char *json, size_t len, const char *locale,
+                       XWWebProp **out);
 
 /* Build a JS statement calling
  * window.wallpaperPropertyListener.applyUserProperties({name:{value:"..."}})

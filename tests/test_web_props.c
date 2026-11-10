@@ -30,6 +30,23 @@ static const char kWithGroups[] =
     "  }"
     "}";
 
+static const char kLocalized[] =
+    "{"
+    "  \"general\": {"
+    "    \"properties\": {"
+    "      \"zoom\": {\"type\": \"slider\", \"value\": 100, \"text\": \"ui_zoom\"},"
+    "      \"bg\": {\"type\": \"color\", \"value\": \"0 0 0\", \"text\": \"ui_bg\"},"
+    "      \"note\": {\"type\": \"text\", \"value\": \"hi\", \"text\": \"ui_note\"},"
+    "      \"hdr\": {\"text\": \"ui_hdr\", \"order\": 1}"
+    "    },"
+    "    \"localization\": {"
+    "      \"en-us\": {\"ui_zoom\": \"Zoom, %\", \"ui_bg\": \"Background\", \"ui_note\": \"Note\"},"
+    "      \"zh-chs\": {\"ui_zoom\": \"缩放, %\", \"ui_bg\": \"背景\", \"ui_note\": \"备注\"},"
+    "      \"ru-ru\": {\"ui_zoom\": \"Масштаб, %\", \"ui_bg\": \"Фон\", \"ui_note\": \"Заметка\"}"
+    "    }"
+    "  }"
+    "}";
+
 static char *make_many_props(int count) {
   size_t cap = (size_t)count * 64 + 128;
   char *json = malloc(cap);
@@ -58,7 +75,7 @@ static char *make_many_props(int count) {
 static void test_parse_ok(void) {
   TEST_BEGIN("parse extracts name/type/value");
   XWWebProp *out = NULL;
-  TEST_CHECK_EQ_INT(xw_web_props_parse(kProps, strlen(kProps), &out), 5);
+  TEST_CHECK_EQ_INT(xw_web_props_parse(kProps, strlen(kProps), "en-us", &out), 5);
   TEST_CHECK(out != NULL);
   if (out) {
     TEST_CHECK_EQ_STR(out[0].name, "bgColor");
@@ -78,20 +95,20 @@ static void test_parse_ok(void) {
 static void test_parse_bad(void) {
   TEST_BEGIN("parse rejects malformed input");
   XWWebProp *out = NULL;
-  TEST_CHECK_EQ_INT(xw_web_props_parse("not json", strlen("not json"), &out), -1);
+  TEST_CHECK_EQ_INT(xw_web_props_parse("not json", strlen("not json"), "en-us", &out), -1);
   TEST_CHECK(out == NULL);
-  TEST_CHECK_EQ_INT(xw_web_props_parse("{}", strlen("{}"), &out), -1);
+  TEST_CHECK_EQ_INT(xw_web_props_parse("{}", strlen("{}"), "en-us", &out), -1);
   TEST_CHECK_EQ_INT(
-      xw_web_props_parse("{\"general\":{}}", strlen("{\"general\":{}}"), &out), -1);
-  TEST_CHECK_EQ_INT(xw_web_props_parse(NULL, 0, &out), -1);
-  TEST_CHECK_EQ_INT(xw_web_props_parse(kProps, strlen(kProps), NULL), -1);
+      xw_web_props_parse("{\"general\":{}}", strlen("{\"general\":{}}"), "en-us", &out), -1);
+  TEST_CHECK_EQ_INT(xw_web_props_parse(NULL, 0, "en-us", &out), -1);
+  TEST_CHECK_EQ_INT(xw_web_props_parse(kProps, strlen(kProps), "en-us", NULL), -1);
 }
 
 static void test_parse_groups_skipped(void) {
   TEST_BEGIN("group headings without a type are skipped");
   XWWebProp *out = NULL;
   TEST_CHECK_EQ_INT(
-      xw_web_props_parse(kWithGroups, strlen(kWithGroups), &out), 2);
+      xw_web_props_parse(kWithGroups, strlen(kWithGroups), "en-us", &out), 2);
   TEST_CHECK(out != NULL);
   if (out) {
     TEST_CHECK_EQ_STR(out[0].name, "a");
@@ -107,7 +124,7 @@ static void test_parse_large(void) {
   TEST_CHECK(json != NULL);
   if (!json)
     return;
-  TEST_CHECK_EQ_INT(xw_web_props_parse(json, strlen(json), &out), 300);
+  TEST_CHECK_EQ_INT(xw_web_props_parse(json, strlen(json), "en-us", &out), 300);
   TEST_CHECK(out != NULL);
   if (out) {
     TEST_CHECK_EQ_STR(out[0].name, "p0");
@@ -117,6 +134,110 @@ static void test_parse_large(void) {
   }
   free(out);
   free(json);
+}
+
+static void test_parse_labels(void) {
+  TEST_BEGIN("parse resolves localized labels");
+  XWWebProp *out = NULL;
+  TEST_CHECK_EQ_INT(
+      xw_web_props_parse(kLocalized, strlen(kLocalized), "zh-chs", &out), 3);
+  TEST_CHECK(out != NULL);
+  if (out) {
+    TEST_CHECK_EQ_STR(out[0].name, "zoom");
+    TEST_CHECK_EQ_STR(out[0].label, "缩放, %");
+    TEST_CHECK_EQ_STR(out[1].label, "背景");
+    TEST_CHECK_EQ_STR(out[2].label, "备注");
+  }
+  free(out);
+
+  out = NULL;
+  TEST_CHECK_EQ_INT(
+      xw_web_props_parse(kLocalized, strlen(kLocalized), "en-us", &out), 3);
+  TEST_CHECK(out != NULL);
+  if (out)
+    TEST_CHECK_EQ_STR(out[0].label, "Zoom, %");
+  free(out);
+
+  out = NULL;
+  TEST_CHECK_EQ_INT(
+      xw_web_props_parse(kLocalized, strlen(kLocalized), "ru-ru", &out), 3);
+  TEST_CHECK(out != NULL);
+  if (out)
+    TEST_CHECK_EQ_STR(out[0].label, "Масштаб, %");
+  free(out);
+}
+
+static void test_label_fallback(void) {
+  TEST_BEGIN("missing locale falls back to same language, then en-us");
+  XWWebProp *out = NULL;
+  TEST_CHECK_EQ_INT(
+      xw_web_props_parse(kLocalized, strlen(kLocalized), "ja-jp", &out), 3);
+  TEST_CHECK(out != NULL);
+  if (out)
+    TEST_CHECK_EQ_STR(out[0].label, "Zoom, %");
+  free(out);
+
+  out = NULL;
+  TEST_CHECK_EQ_INT(
+      xw_web_props_parse(kLocalized, strlen(kLocalized), "zh-cht", &out), 3);
+  TEST_CHECK(out != NULL);
+  if (out)
+    TEST_CHECK_EQ_STR(out[0].label, "缩放, %");
+  free(out);
+
+  out = NULL;
+  TEST_CHECK_EQ_INT(
+      xw_web_props_parse(kLocalized, strlen(kLocalized), NULL, &out), 3);
+  TEST_CHECK(out != NULL);
+  if (out)
+    TEST_CHECK_EQ_STR(out[0].label, "Zoom, %");
+  free(out);
+}
+
+static void test_locale_mapping(void) {
+  TEST_BEGIN("POSIX locale tags map to WE localization keys");
+  char b[32];
+  xw_web_props_locale_for("zh_CN.UTF-8", b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "zh-chs");
+  xw_web_props_locale_for("zh_TW.UTF-8", b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "zh-cht");
+  xw_web_props_locale_for("zh_HK", b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "zh-cht");
+  xw_web_props_locale_for("ja_JP.eucJP", b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "ja-jp");
+  xw_web_props_locale_for("ko_KR.UTF-8", b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "ko-kr");
+  xw_web_props_locale_for("ru_RU.UTF-8", b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "ru-ru");
+  xw_web_props_locale_for("en_US.UTF-8", b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "en-us");
+  xw_web_props_locale_for("C.UTF-8", b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "en-us");
+  xw_web_props_locale_for("POSIX", b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "en-us");
+  xw_web_props_locale_for("de_DE.UTF-8", b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "en-us");
+  xw_web_props_locale_for("kok_IN", b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "en-us");
+  xw_web_props_locale_for("rue", b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "en-us");
+  xw_web_props_locale_for(NULL, b, sizeof(b));
+  TEST_CHECK_EQ_STR(b, "en-us");
+}
+
+static void test_label_sanitized(void) {
+  TEST_BEGIN("labels are safe for one TSV line");
+  static const char kBad[] =
+      "{\"general\":{\"properties\":{"
+      "\"x\":{\"type\":\"text\",\"value\":\"v\",\"text\":\"ui_x\"}},"
+      "\"localization\":{\"en-us\":{\"ui_x\":\"<b>Hi</b>\\tThere\\n\"}}}}";
+  XWWebProp *out = NULL;
+  TEST_CHECK_EQ_INT(
+      xw_web_props_parse(kBad, strlen(kBad), "en-us", &out), 1);
+  TEST_CHECK(out != NULL);
+  if (out)
+    TEST_CHECK_EQ_STR(out[0].label, "Hi There ");
+  free(out);
 }
 
 static void test_apply_js(void) {
@@ -232,6 +353,10 @@ int main(void) {
   test_parse_bad();
   test_parse_groups_skipped();
   test_parse_large();
+  test_parse_labels();
+  test_label_fallback();
+  test_locale_mapping();
+  test_label_sanitized();
   test_apply_js();
   test_object_js();
   test_object_js_len_escaped();

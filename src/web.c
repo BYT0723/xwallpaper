@@ -769,6 +769,7 @@ static void web_disk_load(WebCtx *ctx, const char *key) {
     return;
   }
   for (i = 0; i < n; i++) {
+    memset(&ctx->over[i], 0, sizeof(ctx->over[i]));
     web_copy_field(ctx->over[i].name, sizeof(ctx->over[i].name),
                    s[i].name, sizeof(s[i].name));
     web_copy_field(ctx->over[i].type, sizeof(ctx->over[i].type),
@@ -801,6 +802,7 @@ static void web_load_props(WebCtx *ctx) {
   char *buf;
   size_t nr;
   XWWebProp *tmp = NULL;
+  char locale[32];
   int n;
 
   if (!ctx)
@@ -832,7 +834,8 @@ static void web_load_props(WebCtx *ctx) {
     free(buf);
     return;
   }
-  n = xw_web_props_parse(buf, nr, &tmp);
+  xw_web_props_locale(locale, sizeof(locale));
+  n = xw_web_props_parse(buf, nr, locale, &tmp);
   free(buf);
   if (n < 0) {
     fprintf(stderr,
@@ -924,7 +927,7 @@ static void web_translate_props(WebCtx *ctx, const XWWebProp *in, int n,
   }
 }
 
-static int web_list_props(XWBackend *b, char *out, size_t n) {
+static int web_list_props(XWBackend *b, char *out, size_t n, int labels) {
   WebCtx *ctx = (b && b->priv) ? (WebCtx *)b->priv : NULL;
   size_t off = 0;
   int i, count = 0;
@@ -932,7 +935,8 @@ static int web_list_props(XWBackend *b, char *out, size_t n) {
   if (!ctx || !out || n == 0 || ctx->n_props <= 0)
     return -1;
   for (i = 0; i < ctx->n_props; i++) {
-    const XWWebProp *p = &ctx->props[i];
+    const XWWebProp *base = &ctx->props[i];
+    const XWWebProp *p = base;
     const XWWebProp *o = web_find_prop(ctx->over, ctx->n_over, p->name);
     int w;
     if (o)
@@ -942,8 +946,12 @@ static int web_list_props(XWBackend *b, char *out, size_t n) {
     if (strchr(p->name, '\t') || strchr(p->name, '\n') ||
         strchr(p->value, '\n'))
       continue;
-    w = snprintf(out + off, n - off, "%s\t%s\t%s\n", p->name, p->type,
-                 p->value);
+    if (labels)
+      w = snprintf(out + off, n - off, "%s\t%s\t%s\t%s\n", p->name, p->type,
+                   p->value, base->label);
+    else
+      w = snprintf(out + off, n - off, "%s\t%s\t%s\n", p->name, p->type,
+                   p->value);
     if (w < 0 || (size_t)w >= n - off)
       return -1;
     off += (size_t)w;
@@ -986,8 +994,10 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
     }
     ctx->over = grown;
     slot = &ctx->over[ctx->n_over++];
+    memset(slot, 0, sizeof(*slot));
     snprintf(slot->name, sizeof(slot->name), "%s", name);
     snprintf(slot->type, sizeof(slot->type), "%s", known->type);
+    snprintf(slot->label, sizeof(slot->label), "%s", known->label);
   }
   snprintf(slot->value, sizeof(slot->value), "%s", value);
   /* Best effort: a page that has not finished loading (or navigated away)

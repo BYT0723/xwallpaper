@@ -1,1 +1,21 @@
-{"general": {"properties": {"bg": {"type": "color", "value": "0 0 0"}, "zoom": {"type": "slider", "value": 100}, "note": {"type": "text", "value": "hi"}}}}
+{
+  "general": {
+    "properties": {
+      "bg": {"type": "color", "value": "0 0 0", "text": "ui_bg"},
+      "zoom": {"type": "slider", "value": 100, "text": "ui_zoom"},
+      "note": {"type": "text", "value": "hi", "text": "ui_note"}
+    },
+    "localization": {
+      "en-us": {
+        "ui_bg": "Background",
+        "ui_zoom": "Zoom",
+        "ui_note": "Note"
+      },
+      "zh-chs": {
+        "ui_bg": "背景",
+        "ui_zoom": "缩放",
+        "ui_note": "备注"
+      }
+    }
+  }
+}

@@ -608,6 +608,9 @@ int xw_daemon_main(void) {
                   cfg.target = XW_TARGET_OUTPUT;
                   snprintf(cfg.output, sizeof(cfg.output), "%s", d.fields[1]);
                 }
+                for (int k = 2; k < d.nfields; k++)
+                  if (strcmp(d.fields[k], "labels=1") == 0)
+                    cfg.labels = 1;
                 cnt = xw_app_list_props(cur, &cfg, lines, XW_REPLY_MAX, &aerr);
                 if (cnt < 0) {
                   reply_n = reply_error(reply, sizeof(reply), aerr.msg);

@@ -80,7 +80,8 @@ int main(int argc, char **argv) {
 
   /* print the reply for list/state commands */
   if (cfg.command == XW_CMD_LIST_PROPS) {
-    /* reply starts "props\0N\n" then N lines: <name>\t<type>\t<value>\n */
+    /* reply starts "props\0N\n" then N lines:
+     * <name>\t<type>\t<value>[\t<label>]\n */
     const char *p = reply;
     const char *nl = memchr(p, '\n', XW_REPLY_MAX);
     if (nl && strncmp(p, "props", 5) == 0)

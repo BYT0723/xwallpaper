@@ -20,7 +20,7 @@
  *    clear\0<target>\n       target: all | <output-name>
  *      optional field keep=1: remove windows but retain their last state
  *      (screen full-wallpaper clearing; `restore` brings them back)
- *    list-props\0<target>\n  target: primary | <output-name>
+ *    list-props\0<target>\0[labels=1]\n  target: primary | <output-name>
  *    set-prop\0<target>\0<name=value>\n
  *    clear-props\0<target>\n  target: primary | <output-name>
  *    list\n

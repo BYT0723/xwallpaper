@@ -673,7 +673,7 @@ static void test_we_props_list_set(void) {
   char lines[4096];
   memset(lines, 0, sizeof(lines));
   TEST_CHECK(backend.list_props != NULL);
-  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines), 0), 3);
   TEST_CHECK(strstr(lines, "bg\tcolor\t0 0 0") != NULL);
   TEST_CHECK(strstr(lines, "zoom\tslider\t100") != NULL);
   TEST_CHECK(strstr(lines, "note\ttext\thi") != NULL);
@@ -693,7 +693,7 @@ static void test_we_props_list_set(void) {
 
   /* ... and shadows the default in list */
   memset(lines, 0, sizeof(lines));
-  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines), 0), 3);
   TEST_CHECK(strstr(lines, "zoom\tslider\t200") != NULL);
 
   /* reload replays the override after the defaults */
@@ -716,6 +716,80 @@ static void test_we_props_list_set(void) {
 
   backend.destroy(&backend);
   xw_x11_destroy_window(win);
+}
+
+/* --labels adds the localized project.json text as a fourth TSV column;
+ * the default output stays three columns. */
+static void test_we_props_labels(void) {
+  TEST_BEGIN("--labels appends localized property labels");
+  XWError err;
+  Display *dpy = NULL;
+  XWWindow *win = NULL;
+  XWBackend backend;
+  int inited = 0;
+  char saved[64];
+  const char *old;
+
+  memset(&err, 0, sizeof(err));
+  memset(&backend, 0, sizeof(backend));
+  old = getenv("LC_ALL");
+  if (old)
+    snprintf(saved, sizeof(saved), "%s", old);
+  else
+    saved[0] = '\0';
+  setenv("LC_ALL", "zh_CN.UTF-8", 1);
+  isolate_props_state();
+
+  dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    goto out;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wepropslabels");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    goto out;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wepropset";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  inited = 1;
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 4);
+
+  char lines[4096];
+  memset(lines, 0, sizeof(lines));
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines), 0), 3);
+  TEST_CHECK(strstr(lines, "bg\tcolor\t0 0 0\n") != NULL);
+  TEST_CHECK(strstr(lines, "bg\tcolor\t0 0 0\t") == NULL);
+
+  memset(lines, 0, sizeof(lines));
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines), 1), 3);
+  TEST_CHECK(strstr(lines, "bg\tcolor\t0 0 0\t背景") != NULL);
+  TEST_CHECK(strstr(lines, "zoom\tslider\t100\t缩放") != NULL);
+  TEST_CHECK(strstr(lines, "note\ttext\thi\t备注") != NULL);
+
+out:
+  if (inited)
+    backend.destroy(&backend);
+  if (win)
+    xw_x11_destroy_window(win);
+  if (saved[0])
+    setenv("LC_ALL", saved, 1);
+  else
+    unsetenv("LC_ALL");
 }
 
 /* A real wallpaper can define more than the old 256-property cap (the
@@ -789,7 +863,7 @@ static void test_we_props_large_project(void) {
   TEST_CHECK(lines != NULL);
   if (lines) {
     memset(lines, 0, 65536);
-    TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, 65536), 300);
+    TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, 65536, 0), 300);
     TEST_CHECK(strstr(lines, "p0\tslider\t0") != NULL);
     TEST_CHECK(strstr(lines, "p299\tslider\t299") != NULL);
     free(lines);
@@ -821,7 +895,7 @@ static void reload_expect(XWBackend *b, const char *path, const char *want) {
   TEST_CHECK(b->reload != NULL);
   TEST_CHECK_EQ_INT(b->reload(b, &opt, &err), 0);
   memset(lines, 0, sizeof(lines));
-  TEST_CHECK_EQ_INT(b->list_props(b, lines, sizeof(lines)), 3);
+  TEST_CHECK_EQ_INT(b->list_props(b, lines, sizeof(lines), 0), 3);
   TEST_CHECK(strstr(lines, want) != NULL);
 }
 
@@ -864,7 +938,7 @@ static void test_we_props_switch_isolation(void) {
   memset(&serr, 0, sizeof(serr));
   TEST_CHECK_EQ_INT(backend.set_prop(&backend, "zoom", "200", &serr), 0);
   memset(lines, 0, sizeof(lines));
-  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines), 0), 3);
   TEST_CHECK(strstr(lines, "zoom\tslider\t200") != NULL);
 
   /* same-wallpaper reload keeps the override */
@@ -878,7 +952,7 @@ static void test_we_props_switch_isolation(void) {
   memset(&serr, 0, sizeof(serr));
   TEST_CHECK_EQ_INT(backend.set_prop(&backend, "zoom", "300", &serr), 0);
   memset(lines, 0, sizeof(lines));
-  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines), 0), 3);
   TEST_CHECK(strstr(lines, "zoom\tslider\t300") != NULL);
 
   /* ... but switching back restores that wallpaper's own override */
@@ -894,7 +968,7 @@ static void test_we_props_switch_isolation(void) {
   opt.path = "tests/data/webdir";
   TEST_CHECK_EQ_INT(backend.reload(&backend, &opt, &serr), 0);
   memset(lines, 0, sizeof(lines));
-  TEST_CHECK(backend.list_props(&backend, lines, sizeof(lines)) <= 0);
+  TEST_CHECK(backend.list_props(&backend, lines, sizeof(lines), 0) <= 0);
   memset(&serr, 0, sizeof(serr));
   TEST_CHECK_EQ_INT(backend.set_prop(&backend, "zoom", "1", &serr), -1);
 
@@ -1030,7 +1104,7 @@ static void test_we_props_disk_and_clear(void) {
   TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
   TEST_CHECK_EQ_INT(backend.start(&backend), 0);
   memset(lines, 0, sizeof(lines));
-  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines), 0), 3);
   TEST_CHECK(strstr(lines, "zoom\tslider\t200") != NULL);
 
   /* clear drops memory+disk and re-applies defaults to the live page */
@@ -1038,7 +1112,7 @@ static void test_we_props_disk_and_clear(void) {
   TEST_CHECK(backend.clear_props != NULL);
   TEST_CHECK_EQ_INT(backend.clear_props(&backend, &serr), 0);
   memset(lines, 0, sizeof(lines));
-  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines), 0), 3);
   TEST_CHECK(strstr(lines, "zoom\tslider\t100") != NULL);
 
   /* a fresh init after clear stays at the default (disk file gone) */
@@ -1050,7 +1124,7 @@ static void test_we_props_disk_and_clear(void) {
   TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
   TEST_CHECK_EQ_INT(backend.start(&backend), 0);
   memset(lines, 0, sizeof(lines));
-  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 3);
+  TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines), 0), 3);
   TEST_CHECK(strstr(lines, "zoom\tslider\t100") != NULL);
 
   backend.destroy(&backend);
@@ -1170,7 +1244,7 @@ static void test_web_file_prop_aliased(void) {
       TEST_CHECK(title != NULL && strstr(title, "/_xw/file/") != NULL);
       /* storage keeps the user's path, not the alias URL */
       memset(lines, 0, sizeof(lines));
-      TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines)), 2);
+      TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, sizeof(lines), 0), 2);
       TEST_CHECK(strstr(lines, abs) != NULL);
       free(abs);
     }
@@ -1468,6 +1542,7 @@ int main(void) {
   test_storage_persistent();
   test_we_properties_delivered();
   test_we_props_list_set();
+  test_we_props_labels();
   test_we_props_large_project();
   test_we_props_switch_isolation();
   test_web_reload_isolates_context();
