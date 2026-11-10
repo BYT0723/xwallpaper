@@ -18,35 +18,105 @@ static const char kProps[] =
     "  }"
     "}";
 
+static const char kWithGroups[] =
+    "{"
+    "  \"general\": {"
+    "    \"properties\": {"
+    "      \"hdr\": {\"text\": \"ui_hdr\", \"order\": 1},"
+    "      \"a\": {\"type\": \"bool\", \"value\": true},"
+    "      \"hdr2\": {\"text\": \"ui_hdr2\", \"order\": 2},"
+    "      \"b\": {\"type\": \"slider\", \"value\": 5}"
+    "    }"
+    "  }"
+    "}";
+
+static char *make_many_props(int count) {
+  size_t cap = (size_t)count * 64 + 128;
+  char *json = malloc(cap);
+  size_t off;
+  int i;
+  if (!json)
+    return NULL;
+  off = (size_t)snprintf(json, cap, "{\"general\":{\"properties\":{");
+  for (i = 0; i < count; i++) {
+    int w = snprintf(json + off, cap - off,
+                     "%s\"p%d\":{\"type\":\"slider\",\"value\":%d}",
+                     i ? "," : "", i, i);
+    if (w < 0 || (size_t)w >= cap - off) {
+      free(json);
+      return NULL;
+    }
+    off += (size_t)w;
+  }
+  if (snprintf(json + off, cap - off, "}}}") >= (int)(cap - off)) {
+    free(json);
+    return NULL;
+  }
+  return json;
+}
+
 static void test_parse_ok(void) {
   TEST_BEGIN("parse extracts name/type/value");
-  XWWebProp out[8];
-  TEST_CHECK_EQ_INT(xw_web_props_parse(kProps, strlen(kProps), out, 8), 5);
-  TEST_CHECK_EQ_STR(out[0].name, "bgColor");
-  TEST_CHECK_EQ_STR(out[0].type, "color");
-  TEST_CHECK_EQ_STR(out[0].value, "1.000000 1.000000 1.000000");
-  TEST_CHECK_EQ_STR(out[1].name, "roleScale");
-  TEST_CHECK_EQ_STR(out[1].type, "slider");
-  TEST_CHECK_EQ_STR(out[1].value, "100");
-  TEST_CHECK_EQ_STR(out[2].name, "bgImage");
-  TEST_CHECK_EQ_STR(out[2].value, "");
-  TEST_CHECK_EQ_STR(out[3].name, "useFx");
-  TEST_CHECK_EQ_STR(out[3].value, "true");
+  XWWebProp *out = NULL;
+  TEST_CHECK_EQ_INT(xw_web_props_parse(kProps, strlen(kProps), &out), 5);
+  TEST_CHECK(out != NULL);
+  if (out) {
+    TEST_CHECK_EQ_STR(out[0].name, "bgColor");
+    TEST_CHECK_EQ_STR(out[0].type, "color");
+    TEST_CHECK_EQ_STR(out[0].value, "1.000000 1.000000 1.000000");
+    TEST_CHECK_EQ_STR(out[1].name, "roleScale");
+    TEST_CHECK_EQ_STR(out[1].type, "slider");
+    TEST_CHECK_EQ_STR(out[1].value, "100");
+    TEST_CHECK_EQ_STR(out[2].name, "bgImage");
+    TEST_CHECK_EQ_STR(out[2].value, "");
+    TEST_CHECK_EQ_STR(out[3].name, "useFx");
+    TEST_CHECK_EQ_STR(out[3].value, "true");
+  }
+  free(out);
 }
 
 static void test_parse_bad(void) {
   TEST_BEGIN("parse rejects malformed input");
-  XWWebProp out[8];
-  TEST_CHECK_EQ_INT(xw_web_props_parse("not json", strlen("not json"), out, 8), -1);
-  TEST_CHECK_EQ_INT(xw_web_props_parse("{}", strlen("{}"), out, 8), -1);
+  XWWebProp *out = NULL;
+  TEST_CHECK_EQ_INT(xw_web_props_parse("not json", strlen("not json"), &out), -1);
+  TEST_CHECK(out == NULL);
+  TEST_CHECK_EQ_INT(xw_web_props_parse("{}", strlen("{}"), &out), -1);
   TEST_CHECK_EQ_INT(
-      xw_web_props_parse("{\"general\":{}}", strlen("{\"general\":{}}"), out, 8), -1);
-  TEST_CHECK_EQ_INT(xw_web_props_parse(NULL, 0, out, 8), -1);
-  TEST_CHECK_EQ_INT(xw_web_props_parse(kProps, strlen(kProps), NULL, 8), -1);
-  TEST_CHECK_EQ_INT(xw_web_props_parse(kProps, strlen(kProps), out, 0), -1);
-  /* over capacity */
-  XWWebProp one[1];
-  TEST_CHECK_EQ_INT(xw_web_props_parse(kProps, strlen(kProps), one, 1), -1);
+      xw_web_props_parse("{\"general\":{}}", strlen("{\"general\":{}}"), &out), -1);
+  TEST_CHECK_EQ_INT(xw_web_props_parse(NULL, 0, &out), -1);
+  TEST_CHECK_EQ_INT(xw_web_props_parse(kProps, strlen(kProps), NULL), -1);
+}
+
+static void test_parse_groups_skipped(void) {
+  TEST_BEGIN("group headings without a type are skipped");
+  XWWebProp *out = NULL;
+  TEST_CHECK_EQ_INT(
+      xw_web_props_parse(kWithGroups, strlen(kWithGroups), &out), 2);
+  TEST_CHECK(out != NULL);
+  if (out) {
+    TEST_CHECK_EQ_STR(out[0].name, "a");
+    TEST_CHECK_EQ_STR(out[1].name, "b");
+  }
+  free(out);
+}
+
+static void test_parse_large(void) {
+  TEST_BEGIN("parse handles more than the old 256-property cap");
+  char *json = make_many_props(300);
+  XWWebProp *out = NULL;
+  TEST_CHECK(json != NULL);
+  if (!json)
+    return;
+  TEST_CHECK_EQ_INT(xw_web_props_parse(json, strlen(json), &out), 300);
+  TEST_CHECK(out != NULL);
+  if (out) {
+    TEST_CHECK_EQ_STR(out[0].name, "p0");
+    TEST_CHECK_EQ_STR(out[0].value, "0");
+    TEST_CHECK_EQ_STR(out[299].name, "p299");
+    TEST_CHECK_EQ_STR(out[299].value, "299");
+  }
+  free(out);
+  free(json);
 }
 
 static void test_apply_js(void) {
@@ -77,6 +147,54 @@ static void test_object_js(void) {
   TEST_CHECK_EQ_INT(xw_web_props_object_js(ps, 1, js, sizeof(js)), 0);
   TEST_CHECK_EQ_STR(js, "{\"roleScale\":{\"value\":\"200\"}}");
   TEST_CHECK_EQ_INT(xw_web_props_object_js(NULL, 0, js, sizeof(js)), -1);
+  TEST_CHECK_EQ_INT((long long)xw_web_props_object_js_len(ps, 1),
+                    (long long)(strlen(js) + 1));
+}
+
+static void test_object_js_len_escaped(void) {
+  TEST_BEGIN("object length accounts for JSON escaping");
+  XWWebProp ps[2];
+  snprintf(ps[0].name, sizeof(ps[0].name), "quote");
+  snprintf(ps[0].type, sizeof(ps[0].type), "text");
+  snprintf(ps[0].value, sizeof(ps[0].value), "a\"b\\c\nd");
+  snprintf(ps[1].name, sizeof(ps[1].name), "ctrl");
+  snprintf(ps[1].type, sizeof(ps[1].type), "text");
+  snprintf(ps[1].value, sizeof(ps[1].value), "x\x01y");
+  char js[512];
+  size_t need = xw_web_props_object_js_len(ps, 2);
+  TEST_CHECK(need > 0 && need <= sizeof(js));
+  TEST_CHECK_EQ_INT(xw_web_props_object_js(ps, 2, js, sizeof(js)), 0);
+  TEST_CHECK_EQ_INT((long long)need, (long long)(strlen(js) + 1));
+  TEST_CHECK_EQ_INT(xw_web_props_object_js_len(NULL, 1), 0);
+  TEST_CHECK_EQ_INT(xw_web_props_object_js_len(ps, 0), 0);
+}
+
+static void test_apply_large(void) {
+  TEST_BEGIN("apply handles payloads larger than one fixed 8K fragment");
+  const int n = 600;
+  XWWebProp *ps = calloc((size_t)n, sizeof(*ps));
+  size_t need;
+  char *js;
+  int i;
+  TEST_CHECK(ps != NULL);
+  if (!ps)
+    return;
+  for (i = 0; i < n; i++) {
+    snprintf(ps[i].name, sizeof(ps[i].name), "p%d", i);
+    snprintf(ps[i].type, sizeof(ps[i].type), "slider");
+    snprintf(ps[i].value, sizeof(ps[i].value), "%d", i);
+  }
+  need = xw_web_props_object_js_len(ps, n);
+  TEST_CHECK(need > XW_WEB_PROP_JS_MAX);
+  js = need ? malloc(need + 128) : NULL;
+  TEST_CHECK(js != NULL);
+  if (js) {
+    TEST_CHECK_EQ_INT(xw_web_props_apply_js(ps, n, js, need + 128), 0);
+    TEST_CHECK(strstr(js, "\"p0\":{\"value\":\"0\"}") != NULL);
+    TEST_CHECK(strstr(js, "\"p599\":{\"value\":\"599\"}") != NULL);
+  }
+  free(js);
+  free(ps);
 }
 
 static void test_normalize_color(void) {
@@ -112,8 +230,12 @@ int main(void) {
   TEST_SUITE("web_props");
   test_parse_ok();
   test_parse_bad();
+  test_parse_groups_skipped();
+  test_parse_large();
   test_apply_js();
   test_object_js();
+  test_object_js_len_escaped();
+  test_apply_large();
   test_normalize_color();
   TEST_SUMMARY();
 }

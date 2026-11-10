@@ -6,13 +6,15 @@
 
 #include "web_props.h"
 
-int xw_web_props_parse(const char *json, size_t len,
-                        XWWebProp *out, int cap) {
+int xw_web_props_parse(const char *json, size_t len, XWWebProp **out) {
   struct json_object *root = NULL, *general = NULL, *props = NULL;
-  int n = 0;
+  XWWebProp *arr = NULL;
+  int n = 0, cap = 0;
   char *text;
 
-  if (!json || !len || !out || cap <= 0)
+  if (out)
+    *out = NULL;
+  if (!json || !len || !out)
     return -1;
   text = malloc(len + 1);
   if (!text)
@@ -34,10 +36,6 @@ int xw_web_props_parse(const char *json, size_t len,
   json_object_object_foreach(props, key, val) {
     struct json_object *t = NULL, *v = NULL;
     const char *ts = "", *vs = "";
-    if (n >= cap) {
-      json_object_put(root);
-      return -1;
-    }
     if (json_object_get_type(val) == json_type_object) {
       if (json_object_object_get_ex(val, "type", &t) && t &&
           json_object_get_type(t) == json_type_string) {
@@ -52,13 +50,36 @@ int xw_web_props_parse(const char *json, size_t len,
           vs = s;
       }
     }
-    snprintf(out[n].name, sizeof(out[n].name), "%s", key);
-    snprintf(out[n].type, sizeof(out[n].type), "%s", ts);
-    snprintf(out[n].value, sizeof(out[n].value), "%s", vs);
+    /* Group headings have text/order but no type; they are not settings. */
+    if (!ts[0])
+      continue;
+    if (n == cap) {
+      int next = cap ? cap * 2 : 16;
+      XWWebProp *grown;
+      if (next > XW_WEB_PROPS_MAX)
+        next = XW_WEB_PROPS_MAX;
+      if (next <= cap) {
+        free(arr);
+        json_object_put(root);
+        return -1;
+      }
+      grown = realloc(arr, sizeof(*arr) * (size_t)next);
+      if (!grown) {
+        free(arr);
+        json_object_put(root);
+        return -1;
+      }
+      arr = grown;
+      cap = next;
+    }
+    snprintf(arr[n].name, sizeof(arr[n].name), "%s", key);
+    snprintf(arr[n].type, sizeof(arr[n].type), "%s", ts);
+    snprintf(arr[n].value, sizeof(arr[n].value), "%s", vs);
     n++;
   }
 
   json_object_put(root);
+  *out = arr;
   return n;
 }
 
@@ -166,6 +187,21 @@ int xw_web_props_normalize(const char *type, const char *value,
   return 0;
 }
 
+/* Byte length of s after esc_append() escaping. */
+static size_t esc_len(const char *s) {
+  size_t n = 0;
+  for (; *s; s++) {
+    unsigned char c = (unsigned char)*s;
+    if (c == '"' || c == '\\' || c == '\n' || c == '\r' || c == '\t')
+      n += 2;
+    else if (c < 0x20)
+      n += 6;
+    else
+      n++;
+  }
+  return n;
+}
+
 static int lit_append(char *out, size_t m, size_t *off, const char *s) {
   size_t n = strlen(s);
   if (*off + n >= m)
@@ -201,19 +237,38 @@ int xw_web_props_object_js(const XWWebProp *props, int n,
   return 0;
 }
 
+size_t xw_web_props_object_js_len(const XWWebProp *props, int n) {
+  size_t total = 2; /* { ... } */
+  int i;
+  if (!props || n <= 0)
+    return 0;
+  for (i = 0; i < n; i++) {
+    /* opening quote + ":{\"value\":\"" + closing quote/brace */
+    size_t add = 15 + esc_len(props[i].name) + esc_len(props[i].value);
+    if (i > 0)
+      add++;
+    if (add > (size_t)-1 - total)
+      return 0;
+    total += add;
+  }
+  if (total > (size_t)-1 - 1)
+    return 0;
+  return total + 1; /* trailing NUL */
+}
+
 int xw_web_props_apply_js(const XWWebProp *props, int n,
                            char *out, size_t m) {
-  char obj[XW_WEB_PROP_JS_MAX];
   size_t off = 0;
   if (!props || n <= 0 || !out || m == 0)
     return -1;
-  if (xw_web_props_object_js(props, n, obj, sizeof(obj)) != 0)
-    return -1;
   if (lit_append(out, m, &off,
                  "window.wallpaperPropertyListener&&"
-                 "window.wallpaperPropertyListener.applyUserProperties(") != 0 ||
-      lit_append(out, m, &off, obj) != 0 ||
-      lit_append(out, m, &off, ");") != 0)
+                 "window.wallpaperPropertyListener.applyUserProperties(") != 0)
+    return -1;
+  if (xw_web_props_object_js(props, n, out + off, m - off) != 0)
+    return -1;
+  off += strlen(out + off);
+  if (lit_append(out, m, &off, ");") != 0)
     return -1;
   if (off >= m)
     return -1;

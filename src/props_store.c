@@ -254,17 +254,20 @@ int xw_props_store_save(const char *wallpaper_id,
 }
 
 int xw_props_store_load(const char *wallpaper_id,
-                        XWStoredProp *out, int cap, int *n) {
+                        XWStoredProp **out, int *n) {
   char path[1100], *buf = NULL;
   FILE *f;
   long sz;
   size_t nr;
   struct json_object *root = NULL, *obj = NULL;
-  int count = 0;
+  XWStoredProp *arr = NULL;
+  int count = 0, cap = 0;
 
+  if (out)
+    *out = NULL;
   if (n)
     *n = 0;
-  if (!wallpaper_id || !wallpaper_id[0] || !out || cap <= 0 || !n)
+  if (!wallpaper_id || !wallpaper_id[0] || !out || !n)
     return -1;
   if (xw_props_store_path(wallpaper_id, path, sizeof(path)) != 0)
     return -1;
@@ -302,10 +305,6 @@ int xw_props_store_load(const char *wallpaper_id,
   json_object_object_foreach(obj, key, val) {
     struct json_object *t = NULL, *v = NULL;
     const char *ts = "", *vs = "";
-    if (count >= cap) {
-      json_object_put(root);
-      return -1;
-    }
     if (json_object_get_type(val) == json_type_object) {
       if (json_object_object_get_ex(val, "type", &t) && t &&
           json_object_get_type(t) == json_type_string) {
@@ -319,12 +318,31 @@ int xw_props_store_load(const char *wallpaper_id,
           vs = s;
       }
     }
-    snprintf(out[count].name, sizeof(out[count].name), "%s", key);
-    snprintf(out[count].type, sizeof(out[count].type), "%s", ts);
-    snprintf(out[count].value, sizeof(out[count].value), "%s", vs);
+    if (count == cap) {
+      int next = cap ? cap * 2 : 16;
+      XWStoredProp *grown;
+      if (next > XW_PROPS_STORE_MAX)
+        next = XW_PROPS_STORE_MAX;
+      if (next <= cap)
+        goto fail;
+      grown = realloc(arr, sizeof(*arr) * (size_t)next);
+      if (!grown)
+        goto fail;
+      arr = grown;
+      cap = next;
+    }
+    snprintf(arr[count].name, sizeof(arr[count].name), "%s", key);
+    snprintf(arr[count].type, sizeof(arr[count].type), "%s", ts);
+    snprintf(arr[count].value, sizeof(arr[count].value), "%s", vs);
     count++;
   }
   json_object_put(root);
+  *out = arr;
   *n = count;
   return 0;
+
+fail:
+  json_object_put(root);
+  free(arr);
+  return -1;
 }

@@ -5,6 +5,9 @@
 
 /* One Wallpaper Engine user property from project.json general.properties. */
 #define XW_WEB_PROP_VALUE_MAX 1024
+/* Sanity bound for a hostile 1 MiB project.json; real wallpapers stay in
+ * the hundreds. The array itself grows to the property count. */
+#define XW_WEB_PROPS_MAX 4096
 typedef struct {
   char name[128];
   char type[32];
@@ -12,14 +15,16 @@ typedef struct {
 } XWWebProp;
 
 /* Worst-case JS for one property: 127B name + 1024B value fully
- * \uXXXX-escaped (~7kB). Sizes every object_js/apply_js buffer. */
+ * \uXXXX-escaped (~7kB). Single-property callers size their buffer with
+ * this; multi-property callers use xw_web_props_object_js_len(). */
 #define XW_WEB_PROP_JS_MAX 8192
 
-/* Parse project.json text, extract general.properties entries.
- * Returns the number stored in out (cap limited), or -1 on bad input
- * or when more entries exist than cap. */
-int xw_web_props_parse(const char *json, size_t len,
-                        XWWebProp *out, int cap);
+/* Parse project.json text, extract general.properties entries. Group
+ * headings (entries without a "type") are skipped. On success *out is a
+ * malloc'd array (caller frees) and the count is returned; *out is NULL
+ * when there are no properties. Returns -1 on bad input, allocation
+ * failure, or more than XW_WEB_PROPS_MAX entries. */
+int xw_web_props_parse(const char *json, size_t len, XWWebProp **out);
 
 /* Build a JS statement calling
  * window.wallpaperPropertyListener.applyUserProperties({name:{value:"..."}})
@@ -41,5 +46,9 @@ int xw_web_props_normalize(const char *type, const char *value,
  * Returns 0, or -1 on bad input or a too-small buffer. */
 int xw_web_props_object_js(const XWWebProp *props, int n,
                             char *out, size_t m);
+
+/* Required buffer size for xw_web_props_object_js(), including the trailing
+ * NUL. Returns 0 for invalid input (NULL/n<=0 or size overflow). */
+size_t xw_web_props_object_js_len(const XWWebProp *props, int n);
 
 #endif

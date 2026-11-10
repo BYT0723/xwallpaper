@@ -718,6 +718,94 @@ static void test_we_props_list_set(void) {
   xw_x11_destroy_window(win);
 }
 
+/* A real wallpaper can define more than the old 256-property cap (the
+ * animeflash project has 316). The parser must list all of them instead of
+ * failing the whole file and returning zero properties. */
+static void test_we_props_large_project(void) {
+  TEST_BEGIN("project.json with more than 256 properties lists them all");
+  char dir[256], path[512], cmd[1024];
+  FILE *f;
+  int i;
+  XWError err;
+
+  memset(&err, 0, sizeof(err));
+  isolate_props_state();
+  snprintf(dir, sizeof(dir), "/tmp/opencode/xw-many-%d", (int)getpid());
+  snprintf(cmd, sizeof(cmd), "rm -rf %s && mkdir -p %s", dir, dir);
+  (void)system(cmd);
+
+  snprintf(path, sizeof(path), "%s/index.html", dir);
+  f = fopen(path, "w");
+  TEST_CHECK(f != NULL);
+  if (!f)
+    return;
+  fputs("<html><body>many props</body></html>\n", f);
+  fclose(f);
+
+  snprintf(path, sizeof(path), "%s/project.json", dir);
+  f = fopen(path, "w");
+  TEST_CHECK(f != NULL);
+  if (!f)
+    return;
+  fputs("{\"general\":{\"properties\":{", f);
+  for (i = 0; i < 300; i++)
+    fprintf(f, "%s\"p%d\":{\"type\":\"slider\",\"value\":%d}",
+            i ? "," : "", i, i);
+  fputs("}}}", f);
+  fclose(f);
+
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wemany");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win) {
+    snprintf(cmd, sizeof(cmd), "rm -rf %s", dir);
+    (void)system(cmd);
+    return;
+  }
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = dir;
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 4);
+
+  char *lines = malloc(65536);
+  TEST_CHECK(lines != NULL);
+  if (lines) {
+    memset(lines, 0, 65536);
+    TEST_CHECK_EQ_INT(backend.list_props(&backend, lines, 65536), 300);
+    TEST_CHECK(strstr(lines, "p0\tslider\t0") != NULL);
+    TEST_CHECK(strstr(lines, "p299\tslider\t299") != NULL);
+    free(lines);
+  }
+
+  /* the last property is addressable too (the old list was empty) */
+  XWError serr;
+  memset(&serr, 0, sizeof(serr));
+  TEST_CHECK_EQ_INT(backend.set_prop(&backend, "p299", "999", &serr), 0);
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+  snprintf(cmd, sizeof(cmd), "rm -rf %s", dir);
+  (void)system(cmd);
+}
+
 /* Switching wallpapers must not leak overrides, but each wallpaper keeps
  * its own customization: A -> B shows B's default, B -> A restores A's. */
 /* Reload to path and expect list_props to show want (one "name\ttype\tvalue"
@@ -1380,6 +1468,7 @@ int main(void) {
   test_storage_persistent();
   test_we_properties_delivered();
   test_we_props_list_set();
+  test_we_props_large_project();
   test_we_props_switch_isolation();
   test_web_reload_isolates_context();
   test_we_props_disk_and_clear();

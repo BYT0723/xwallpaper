@@ -11,7 +11,9 @@
 #define XW_STORED_PROP_NAME_MAX 128
 #define XW_STORED_PROP_TYPE_MAX 32
 #define XW_STORED_PROP_VALUE_MAX 1024
-#define XW_PROPS_STORE_MAX 256
+/* Sanity bound for a corrupt/hostile sidecar; real wallpapers stay well
+ * below this (the largest known WE projects have a few hundred). */
+#define XW_PROPS_STORE_MAX 4096
 
 typedef struct {
   char name[XW_STORED_PROP_NAME_MAX];
@@ -27,10 +29,11 @@ int xw_props_store_path(const char *wallpaper_id, char *out, size_t n);
 int xw_props_store_save(const char *wallpaper_id,
                         const XWStoredProp *props, int n);
 
-/* Load sidecar into out (cap limited). Returns 0 with *n set, 1 when no
- * sidecar exists, -1 on bad input or corrupt file (caller treats as absent). */
+/* Load sidecar into a malloc'd array in *out (caller frees). Returns 0 with
+ * *n set, 1 when no sidecar exists, -1 on bad input, corrupt file, or more
+ * than XW_PROPS_STORE_MAX entries (caller treats as absent). */
 int xw_props_store_load(const char *wallpaper_id,
-                        XWStoredProp *out, int cap, int *n);
+                        XWStoredProp **out, int *n);
 
 /* Per-wallpaper localhost HTTP port sidecar (pins the loopback origin so
  * WebKit storage survives restarts). save is atomic (tmp+rename, 0600);

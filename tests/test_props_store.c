@@ -39,22 +39,56 @@ static void test_roundtrip(void) {
   snprintf(in[1].type, sizeof(in[1].type), "color");
   snprintf(in[1].value, sizeof(in[1].value), "0.000000 1.000000 0.000000");
   TEST_CHECK_EQ_INT(xw_props_store_save("/wall/bd2", in, 2), 0);
-  XWStoredProp out[8];
+  XWStoredProp *out = NULL;
   int n = 0;
-  TEST_CHECK_EQ_INT(xw_props_store_load("/wall/bd2", out, 8, &n), 0);
+  TEST_CHECK_EQ_INT(xw_props_store_load("/wall/bd2", &out, &n), 0);
   TEST_CHECK_EQ_INT(n, 2);
-  TEST_CHECK_EQ_STR(out[0].name, "zoom");
-  TEST_CHECK_EQ_STR(out[0].value, "200");
-  TEST_CHECK_EQ_STR(out[1].type, "color");
+  TEST_CHECK(out != NULL);
+  if (out) {
+    TEST_CHECK_EQ_STR(out[0].name, "zoom");
+    TEST_CHECK_EQ_STR(out[0].value, "200");
+    TEST_CHECK_EQ_STR(out[1].type, "color");
+  }
+  free(out);
+}
+
+static void test_large_roundtrip(void) {
+  TEST_BEGIN("save/load handles more than the old 256-property cap");
+  char base[256];
+  const int n_in = 300;
+  XWStoredProp *in = calloc((size_t)n_in, sizeof(*in));
+  XWStoredProp *out = NULL;
+  int n = 0, i;
+  make_tmp_state(base, sizeof(base));
+  TEST_CHECK(in != NULL);
+  if (!in)
+    return;
+  for (i = 0; i < n_in; i++) {
+    snprintf(in[i].name, sizeof(in[i].name), "p%d", i);
+    snprintf(in[i].type, sizeof(in[i].type), "slider");
+    snprintf(in[i].value, sizeof(in[i].value), "%d", i);
+  }
+  TEST_CHECK_EQ_INT(xw_props_store_save("/wall/bd2", in, n_in), 0);
+  TEST_CHECK_EQ_INT(xw_props_store_load("/wall/bd2", &out, &n), 0);
+  TEST_CHECK_EQ_INT(n, n_in);
+  TEST_CHECK(out != NULL);
+  if (out) {
+    TEST_CHECK_EQ_STR(out[0].name, "p0");
+    TEST_CHECK_EQ_STR(out[299].name, "p299");
+    TEST_CHECK_EQ_STR(out[299].value, "299");
+  }
+  free(out);
+  free(in);
 }
 
 static void test_missing_and_bad(void) {
   TEST_BEGIN("missing returns 1, bad file returns -1 without crash");
   char base[256];
   make_tmp_state(base, sizeof(base));
-  XWStoredProp out[8];
+  XWStoredProp *out = NULL;
   int n = 0;
-  TEST_CHECK_EQ_INT(xw_props_store_load("/wall/nonexistent", out, 8, &n), 1);
+  TEST_CHECK_EQ_INT(xw_props_store_load("/wall/nonexistent", &out, &n), 1);
+  TEST_CHECK(out == NULL);
   /* write garbage where the sidecar should be */
   char path[1024];
   TEST_CHECK_EQ_INT(xw_props_store_path("/wall/bd2", path, sizeof(path)), 0);
@@ -67,7 +101,9 @@ static void test_missing_and_bad(void) {
     snprintf(cmd, sizeof(cmd), "mkdir -p %s && echo 'not json' > %s", dir, path);
     (void)system(cmd);
   }
-  TEST_CHECK_EQ_INT(xw_props_store_load("/wall/bd2", out, 8, &n), -1);
+  TEST_CHECK_EQ_INT(xw_props_store_load("/wall/bd2", &out, &n), -1);
+  TEST_CHECK(out == NULL);
+  free(out);
 }
 
 static void test_empty_deletes(void) {
@@ -80,9 +116,11 @@ static void test_empty_deletes(void) {
   snprintf(one[0].value, sizeof(one[0].value), "200");
   TEST_CHECK_EQ_INT(xw_props_store_save("/wall/bd2", one, 1), 0);
   TEST_CHECK_EQ_INT(xw_props_store_save("/wall/bd2", NULL, 0), 0);
-  XWStoredProp out[8];
+  XWStoredProp *out = NULL;
   int n = 0;
-  TEST_CHECK_EQ_INT(xw_props_store_load("/wall/bd2", out, 8, &n), 1);
+  TEST_CHECK_EQ_INT(xw_props_store_load("/wall/bd2", &out, &n), 1);
+  TEST_CHECK(out == NULL);
+  free(out);
 }
 
 static void test_port_roundtrip(void) {
@@ -114,6 +152,7 @@ int main(void) {
   TEST_SUITE("props_store");
   test_key_stable();
   test_roundtrip();
+  test_large_roundtrip();
   test_missing_and_bad();
   test_empty_deletes();
   test_port_roundtrip();

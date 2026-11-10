@@ -565,7 +565,6 @@ static void web_push_audio_ctl(WebCtx *ctx) {
 /* Wallpaper Engine user properties: <root>/project.json general.properties
  * parsed once per wallpaper (dir mode only). Overrides from --set-property
  * shadow the parsed values for list and are replayed after every load. */
-#define XW_WEB_PROPS_CAP 256
 
 static void web_free_parsed(WebCtx *ctx) {
   if (!ctx)
@@ -753,20 +752,22 @@ static void web_disk_save(WebCtx *ctx, const char *key) {
  * prune against freshly parsed project.json. Missing/corrupt file is a
  * no-op (caller keeps memory state). */
 static void web_disk_load(WebCtx *ctx, const char *key) {
-  XWStoredProp s[XW_WEB_PROPS_CAP];
+  XWStoredProp *s = NULL;
   int n = 0, i;
   if (!ctx || !key || !key[0] || !ctx->root_dir[0])
     return;
-  if (xw_props_store_load(key, s, XW_WEB_PROPS_CAP, &n) != 0 || n <= 0)
+  if (xw_props_store_load(key, &s, &n) != 0 || n <= 0) {
+    free(s);
     return;
-  if (n > XW_WEB_PROPS_CAP)
-    return;
+  }
   free(ctx->over);
   ctx->over = NULL;
   ctx->n_over = 0;
   ctx->over = malloc(sizeof(*ctx->over) * (size_t)n);
-  if (!ctx->over)
+  if (!ctx->over) {
+    free(s);
     return;
+  }
   for (i = 0; i < n; i++) {
     web_copy_field(ctx->over[i].name, sizeof(ctx->over[i].name),
                    s[i].name, sizeof(s[i].name));
@@ -775,6 +776,7 @@ static void web_disk_load(WebCtx *ctx, const char *key) {
     web_copy_field(ctx->over[i].value, sizeof(ctx->over[i].value),
                    s[i].value, sizeof(s[i].value));
   }
+  free(s);
   ctx->n_over = n;
   web_prune_overrides(ctx);
   if (ctx->n_over == 0) {
@@ -798,7 +800,7 @@ static void web_load_props(WebCtx *ctx) {
   long sz;
   char *buf;
   size_t nr;
-  XWWebProp *tmp;
+  XWWebProp *tmp = NULL;
   int n;
 
   if (!ctx)
@@ -830,14 +832,16 @@ static void web_load_props(WebCtx *ctx) {
     free(buf);
     return;
   }
-  tmp = malloc(sizeof(*tmp) * XW_WEB_PROPS_CAP);
-  if (!tmp) {
-    free(buf);
+  n = xw_web_props_parse(buf, nr, &tmp);
+  free(buf);
+  if (n < 0) {
+    fprintf(stderr,
+            "xwallpaperd: %s: unreadable properties (malformed or > %d)\n",
+            path, XW_WEB_PROPS_MAX);
+    free(tmp);
     return;
   }
-  n = xw_web_props_parse(buf, nr, tmp, XW_WEB_PROPS_CAP);
-  free(buf);
-  if (n <= 0) {
+  if (n == 0) {
     free(tmp);
     return;
   }
@@ -933,6 +937,8 @@ static int web_list_props(XWBackend *b, char *out, size_t n) {
     int w;
     if (o)
       p = o;
+    if (!p->type[0])
+      continue;
     if (strchr(p->name, '\t') || strchr(p->name, '\n') ||
         strchr(p->value, '\n'))
       continue;
@@ -973,10 +979,6 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
   slot = web_find_prop(ctx->over, ctx->n_over, name);
   if (!slot) {
     XWWebProp *grown;
-    if (ctx->n_over >= XW_WEB_PROPS_CAP) {
-      XW_ERROR_SET(err, 1, "too many property overrides");
-      return -1;
-    }
     grown = realloc(ctx->over, sizeof(*grown) * (size_t)(ctx->n_over + 1));
     if (!grown) {
       XW_ERROR_SET(err, 1, "out of memory");
@@ -1008,7 +1010,6 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
 static int web_clear_props(XWBackend *b, XWError *err) {
   WebCtx *ctx = (b && b->priv) ? (WebCtx *)b->priv : NULL;
   char key[2048];
-  char js[XW_WEB_PROP_JS_MAX + 128];
   if (!ctx) {
     XW_ERROR_SET(err, 1, "invalid args");
     return -1;
@@ -1025,9 +1026,15 @@ static int web_clear_props(XWBackend *b, XWError *err) {
   if (ctx->n_props > 0) {
     XWWebProp *tmp = malloc(sizeof(*tmp) * (size_t)ctx->n_props);
     if (tmp) {
+      size_t need;
+      char *js;
       web_translate_props(ctx, ctx->props, ctx->n_props, tmp);
-      if (xw_web_props_apply_js(tmp, ctx->n_props, js, sizeof(js)) == 0)
+      need = xw_web_props_object_js_len(tmp, ctx->n_props);
+      js = need ? malloc(need + 128) : NULL;
+      if (js && xw_web_props_apply_js(tmp, ctx->n_props, js,
+                                      need + 128) == 0)
         web_eval(ctx, js);
+      free(js);
       free(tmp);
     }
   }
@@ -1293,8 +1300,8 @@ static void web_deliver_we_properties(WebKitWebView *view, WebCtx *ctx) {
         if (j == m && m < ctx->n_props + ctx->n_over)
           tmp[m++] = one;
       }
-      need = (size_t)m * XW_WEB_PROP_JS_MAX + 64;
-      merged = malloc(need);
+      need = xw_web_props_object_js_len(tmp, m);
+      merged = need ? malloc(need) : NULL;
       if (merged &&
           xw_web_props_object_js(tmp, m, merged, need) != 0) {
         free(merged);
