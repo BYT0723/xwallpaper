@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head><title>API:pending</title></head>
+<body>
+<script>
+/* Report which WE globals exist and whether the RGB entry point is safe to
+ * call. The integration test asserts the exact title. */
+var t = typeof window.wallpaperReady;
+var p = typeof window.wpPlugins;
+var led = (window.wpPlugins && window.wpPlugins.led)
+  ? typeof window.wpPlugins.led.setAllDevicesByImageData
+  : 'none';
+var ok = false;
+try {
+  ok = !!window.wpPlugins.led.setAllDevicesByImageData('x', 1, 1);
+} catch (e) {
+  ok = false;
+}
+document.title = 'API:' + t + ':' + p + ':' + led + ':' +
+                 typeof window.cue + ':' + ok;
+</script>
+</body>
+</html>

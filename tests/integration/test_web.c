@@ -1906,6 +1906,54 @@ static void test_we_combo_text(void) {
   xw_x11_destroy_window(win);
 }
 
+/* Undefined WE globals must not break wallpapers that touch them. We expose
+ * wallpaperReady and a no-op wpPlugins.led; window.cue stays undefined, like
+ * WE without iCUE. */
+static void test_we_stub_globals(void) {
+  TEST_BEGIN("WE stub globals exist without faking plugins");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "weapi");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/weapi";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 6);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(title != NULL &&
+               strcmp(title, "API:function:object:function:undefined:true") ==
+                   0);
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_gst_playbin3_pinned();
@@ -1933,5 +1981,6 @@ int main(void) {
   test_we_dir_ondemand();
   test_we_dir_fetchall();
   test_we_combo_text();
+  test_we_stub_globals();
   TEST_SUMMARY();
 }

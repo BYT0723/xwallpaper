@@ -291,6 +291,19 @@ static const char *kMediaJS =
     "var cb=window.__xwRand[id];if(cb){try{cb(url);}catch(e){}}};"
     "})();";
 
+/* WE globals xwallpaper cannot back with real hardware, stubbed so feature-
+ * detecting pages keep running. window.cue stays undefined on purpose: WE
+ * only defines it when iCUE is installed, so pages must feature-detect it.
+ * wallpaperPluginListener is the page's own object and is never faked. */
+static const char *kStubJS =
+    "(function(){"
+    "if(typeof window.wallpaperReady!=='function')"
+    "window.wallpaperReady=function(){};"
+    "window.wpPlugins=window.wpPlugins||{};"
+    "if(!window.wpPlugins.led)window.wpPlugins.led={"
+    "setAllDevicesByImageData:function(){return true;}};"
+    "})();";
+
 /* Runtime audio control. WebKitGTK has no volume API, so the page is driven
  * from inside: every media element is held at the master level, including
  * ones created later, and Web Audio graphs are rerouted through a master
@@ -1616,6 +1629,13 @@ static void web_apply_wallpaper_policy(WebKitWebView *view, WebCtx *ctx) {
   if (media) {
     webkit_user_content_manager_add_script(ucm, media);
     webkit_user_script_unref(media);
+  }
+  WebKitUserScript *stub = webkit_user_script_new(
+      kStubJS, WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES,
+      WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, NULL, NULL);
+  if (stub) {
+    webkit_user_content_manager_add_script(ucm, stub);
+    webkit_user_script_unref(stub);
   }
   webkit_user_content_manager_register_script_message_handler(ucm, "xwAudio");
   g_signal_connect(ucm, "script-message-received::xwAudio",
