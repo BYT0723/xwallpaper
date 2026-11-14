@@ -14,6 +14,8 @@ typedef struct {
   char type[32];
   char value[XW_WEB_PROP_VALUE_MAX];
   char label[XW_WEB_PROP_LABEL_MAX]; /* localized "text", sanitized for TSV */
+  char mode[16];      /* directory: "ondemand" / "fetchall" (else empty) */
+  char file_type[16]; /* directory: "image" / "video" (else empty) */
 } XWWebProp;
 
 /* Map a POSIX locale tag ("zh_CN.UTF-8", "ja_JP", "C") to a WE localization

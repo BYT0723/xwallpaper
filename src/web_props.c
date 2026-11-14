@@ -170,6 +170,7 @@ int xw_web_props_parse(const char *json, size_t len, const char *locale,
 
   json_object_object_foreach(props, key, val) {
     struct json_object *t = NULL, *v = NULL, *txt = NULL, *lbl = NULL;
+    struct json_object *mode = NULL, *ftype = NULL;
     const char *ts = "", *vs = "";
     if (json_object_get_type(val) == json_type_object) {
       if (json_object_object_get_ex(val, "type", &t) && t &&
@@ -184,6 +185,9 @@ int xw_web_props_parse(const char *json, size_t len, const char *locale,
         if (s)
           vs = s;
       }
+      (void)json_object_object_get_ex(val, "mode", &mode);
+      if (!json_object_object_get_ex(val, "fileType", &ftype))
+        (void)json_object_object_get_ex(val, "filetype", &ftype);
     }
     /* Group headings have text/order but no type; they are not settings. */
     if (!ts[0])
@@ -211,6 +215,12 @@ int xw_web_props_parse(const char *json, size_t len, const char *locale,
     snprintf(arr[n].name, sizeof(arr[n].name), "%s", key);
     snprintf(arr[n].type, sizeof(arr[n].type), "%s", ts);
     snprintf(arr[n].value, sizeof(arr[n].value), "%s", vs);
+    if (mode && json_object_get_type(mode) == json_type_string)
+      snprintf(arr[n].mode, sizeof(arr[n].mode), "%s",
+               json_object_get_string(mode));
+    if (ftype && json_object_get_type(ftype) == json_type_string)
+      snprintf(arr[n].file_type, sizeof(arr[n].file_type), "%s",
+               json_object_get_string(ftype));
     if (strings &&
         json_object_object_get_ex(val, "text", &txt) && txt &&
         json_object_get_type(txt) == json_type_string) {

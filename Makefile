@@ -39,7 +39,7 @@ CLI_OBJ := $(CLI_SRC:.c=.o)
 # daemon: owns all wallpaper windows, links the full backend stack.
 DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/x11.c src/app.c src/image.c src/video.c src/web.c \
-              src/web_dir.c src/web_http.c src/web_props.c src/props_store.c src/wl.c src/we_audio.c src/we_pulse.c \
+              src/web_dir.c src/web_http.c src/web_props.c src/web_dir_scan.c src/props_store.c src/wl.c src/we_audio.c src/we_pulse.c \
               src/we_media.c src/keybinds.c src/osd.c
 DAEMON_OBJ := $(DAEMON_SRC:.c=.o)
 
@@ -184,6 +184,9 @@ tests/test_web_http: tests/test_web_http.c src/web_http.o
 
 tests/test_web_props: tests/test_web_props.c src/web_props.o
 	$(CC) $(CFLAGS) $(JSONC_CFLAGS) -o $@ $< src/web_props.o $(JSONC_LIBS)
+
+tests/test_web_dir_scan: tests/test_web_dir_scan.c src/web_dir_scan.o
+	$(CC) $(CFLAGS) -o $@ $< src/web_dir_scan.o $(shell pkg-config --libs glib-2.0)
 
 tests/test_props_store: tests/test_props_store.c src/props_store.o
 	$(CC) $(CFLAGS) $(JSONC_CFLAGS) -o $@ $< src/props_store.o $(JSONC_LIBS) $(shell pkg-config --libs glib-2.0)

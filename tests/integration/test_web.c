@@ -1692,6 +1692,80 @@ static void test_we_general_fps_absent(void) {
   xw_x11_destroy_window(win);
 }
 
+/* WE directory property, ondemand mode: the page asks for a random file and
+ * must receive a loadable URL on this wallpaper's localhost server. */
+static void test_we_dir_ondemand(void) {
+  TEST_BEGIN("ondemand directory property serves random files");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wedirprops");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wedirprops";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 6);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(title != NULL &&
+               strncmp(title, "RAND:http://127.0.0.1:", 21) == 0);
+    TEST_CHECK(title != NULL && strstr(title, "/_xw/dir/") != NULL);
+    TEST_CHECK(title != NULL &&
+               (strstr(title, "one.png") != NULL ||
+                strstr(title, "two.png") != NULL));
+
+    /* a second request keeps working */
+    g_free(run_js_sync(view, "window.__rq()"));
+    pump_gtk(dpy, 3);
+    title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(title != NULL && strstr(title, "/_xw/dir/") != NULL);
+
+    /* a directory that no longer exists yields an empty callback */
+    XWError serr;
+    memset(&serr, 0, sizeof(serr));
+    TEST_CHECK_EQ_INT(backend.set_prop(&backend, "pics", "/no/such/dir",
+                                       &serr), 0);
+    pump_gtk(dpy, 3);
+    g_free(run_js_sync(view, "window.__rq()"));
+    pump_gtk(dpy, 3);
+    title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(title != NULL && strcmp(title, "RAND:EMPTY") == 0);
+
+    /* unknown property names are ignored, not crashed on */
+    g_free(run_js_sync(view,
+        "window.wallpaperRequestRandomFileForProperty('nope', show)"));
+    pump_gtk(dpy, 2);
+    title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(title != NULL && strcmp(title, "RAND:EMPTY") == 0);
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_gst_playbin3_pinned();
@@ -1716,5 +1790,6 @@ int main(void) {
   test_keys_not_swallowed();
   test_we_general_and_paused();
   test_we_general_fps_absent();
+  test_we_dir_ondemand();
   TEST_SUMMARY();
 }
