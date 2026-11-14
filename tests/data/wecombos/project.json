@@ -1,0 +1,14 @@
+{
+  "general": {
+    "properties": {
+      "bgm": {
+        "type": "combo",
+        "value": "0",
+        "options": [
+          {"label": "None", "value": "0"},
+          {"label": "Rain", "value": "1"}
+        ]
+      }
+    }
+  }
+}

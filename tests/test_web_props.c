@@ -243,6 +243,7 @@ static void test_label_sanitized(void) {
 static void test_apply_js(void) {
   TEST_BEGIN("apply fragment escapes and wraps values");
   XWWebProp ps[2];
+  memset(ps, 0, sizeof(ps));
   snprintf(ps[0].name, sizeof(ps[0].name), "bgColor");
   snprintf(ps[0].type, sizeof(ps[0].type), "color");
   snprintf(ps[0].value, sizeof(ps[0].value), "0 1 0");
@@ -398,8 +399,83 @@ static void test_normalize_color(void) {
       xw_web_props_normalize("color", "#00ff00", NULL, 0), -1);
 }
 
+static const char *kCombo =
+    "{\"general\":{\"properties\":{\"bgm\":{"
+    "\"type\":\"combo\",\"value\":1,"
+    "\"options\":[{\"label\":\"None\",\"value\":0},"
+    "{\"label\":\"Rain\",\"value\":1}]}},"
+    "\"localization\":{\"en-us\":{\"Rain\":\"Rain\",\"None\":\"None\"},"
+    "\"zh-chs\":{\"Rain\":\"\xe9\x9b\xa8\"}}}}";
+
+static void test_parse_combo_text(void) {
+  TEST_BEGIN("combo parse resolves the selected option label");
+  XWWebProp *out = NULL;
+  TEST_CHECK_EQ_INT(xw_web_props_parse(kCombo, strlen(kCombo), "zh-chs", &out),
+                    1);
+  if (out) {
+    TEST_CHECK_EQ_STR(out[0].value, "1");
+    TEST_CHECK_EQ_STR(out[0].text, "\xe9\x9b\xa8");
+    free(out);
+  }
+  out = NULL;
+  TEST_CHECK_EQ_INT(xw_web_props_parse(kCombo, strlen(kCombo), "en-us", &out),
+                    1);
+  if (out) {
+    TEST_CHECK_EQ_STR(out[0].text, "Rain");
+    free(out);
+  }
+}
+
+static void test_combo_text_lookup(void) {
+  char out[64];
+  TEST_BEGIN("combo text lookup follows value, name and locale");
+  TEST_CHECK_EQ_INT(xw_web_props_combo_text(kCombo, strlen(kCombo), "zh-chs",
+                                            "bgm", "1", out, sizeof(out)), 0);
+  TEST_CHECK_EQ_STR(out, "\xe9\x9b\xa8");
+  TEST_CHECK_EQ_INT(xw_web_props_combo_text(kCombo, strlen(kCombo), "en-us",
+                                            "bgm", "0", out, sizeof(out)), 0);
+  TEST_CHECK_EQ_STR(out, "None");
+  /* unknown value, unknown name, non-combo, bad args */
+  out[0] = 'x';
+  TEST_CHECK_EQ_INT(xw_web_props_combo_text(kCombo, strlen(kCombo), "en-us",
+                                            "bgm", "9", out, sizeof(out)), 0);
+  TEST_CHECK_EQ_STR(out, "");
+  TEST_CHECK_EQ_INT(xw_web_props_combo_text(kCombo, strlen(kCombo), "en-us",
+                                            "nope", "9", out, sizeof(out)), 0);
+  TEST_CHECK_EQ_STR(out, "");
+  TEST_CHECK_EQ_INT(xw_web_props_combo_text("{\"general\":{\"properties\":{"
+                                            "\"n\":{\"type\":\"slider\",\"value\":1}}}}",
+                                            strlen(kCombo), "en-us", "n", "1",
+                                            out, sizeof(out)), 0);
+  TEST_CHECK_EQ_STR(out, "");
+  TEST_CHECK_EQ_INT(xw_web_props_combo_text(NULL, 0, "en-us", "bgm", "1", out,
+                                            sizeof(out)), -1);
+  TEST_CHECK_EQ_INT(xw_web_props_combo_text(kCombo, strlen(kCombo), "en-us",
+                                            NULL, "1", out, sizeof(out)), -1);
+  TEST_CHECK_EQ_INT(xw_web_props_combo_text(kCombo, strlen(kCombo), "en-us",
+                                            "bgm", NULL, out, sizeof(out)), -1);
+}
+
+static void test_combo_js(void) {
+  XWWebProp p[1];
+  char js[512];
+  TEST_BEGIN("combo JS carries value and text");
+  memset(p, 0, sizeof(p));
+  snprintf(p[0].name, sizeof(p[0].name), "bgm");
+  snprintf(p[0].type, sizeof(p[0].type), "combo");
+  snprintf(p[0].value, sizeof(p[0].value), "1");
+  snprintf(p[0].text, sizeof(p[0].text), "\xe9\x9b\xa8");
+  TEST_CHECK_EQ_INT(xw_web_props_object_js(p, 1, js, sizeof(js)), 0);
+  TEST_CHECK_EQ_STR(js, "{\"bgm\":{\"value\":\"1\",\"text\":\"\xe9\x9b\xa8\"}}");
+  TEST_CHECK_EQ_INT((long long)xw_web_props_object_js_len(p, 1),
+                    (long long)(strlen(js) + 1));
+  /* no label -> no text field, so pages that don't use it see no change */
+  p[0].text[0] = '\0';
+  TEST_CHECK_EQ_INT(xw_web_props_object_js(p, 1, js, sizeof(js)), 0);
+  TEST_CHECK_EQ_STR(js, "{\"bgm\":{\"value\":\"1\"}}");
+}
+
 static void test_dir_props(void) {
-  TEST_BEGIN("directory properties keep mode and fileType");
   const char *json =
       "{\"general\":{\"properties\":{"
       "\"pics\":{\"type\":\"directory\",\"mode\":\"ondemand\","
@@ -437,5 +513,8 @@ int main(void) {
   test_apply_large();
   test_normalize_color();
   test_dir_props();
+  test_parse_combo_text();
+  test_combo_text_lookup();
+  test_combo_js();
   TEST_SUMMARY();
 }

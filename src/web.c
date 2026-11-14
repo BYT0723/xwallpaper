@@ -82,6 +82,8 @@ typedef struct {
   int n_props;
   XWWebProp *over;
   int n_over;
+  char *prop_json;      /* last project.json text, for combo label lookups */
+  size_t prop_json_len;
   XWWebDirState *dir_state;
   int n_dir_state;
 } WebCtx;
@@ -599,6 +601,24 @@ static void web_free_parsed(WebCtx *ctx) {
   free(ctx->props);
   ctx->props = NULL;
   ctx->n_props = 0;
+  free(ctx->prop_json);
+  ctx->prop_json = NULL;
+  ctx->prop_json_len = 0;
+}
+
+/* Overrides carry only a value; re-derive the combo label from the cached
+ * project.json after every set/replay. */
+static void web_combo_text(WebCtx *ctx, XWWebProp *p) {
+  char locale[32];
+  if (!ctx || !p || strcmp(p->type, "combo") != 0)
+    return;
+  p->text[0] = '\0';
+  if (!ctx->prop_json || ctx->prop_json_len == 0)
+    return;
+  xw_web_props_locale(locale, sizeof(locale));
+  (void)xw_web_props_combo_text(ctx->prop_json, ctx->prop_json_len, locale,
+                                p->name, p->value, p->text,
+                                sizeof(p->text));
 }
 
 /* Drop every runtime override (wallpaper switch: old values must not leak
@@ -863,20 +883,23 @@ static void web_load_props(WebCtx *ctx) {
   }
   xw_web_props_locale(locale, sizeof(locale));
   n = xw_web_props_parse(buf, nr, locale, &tmp);
-  free(buf);
   if (n < 0) {
     fprintf(stderr,
             "xwallpaperd: %s: unreadable properties (malformed or > %d)\n",
             path, XW_WEB_PROPS_MAX);
+    free(buf);
     free(tmp);
     return;
   }
   if (n == 0) {
+    free(buf);
     free(tmp);
     return;
   }
   ctx->props = tmp;
   ctx->n_props = n;
+  ctx->prop_json = buf; /* kept for combo label lookups on overrides */
+  ctx->prop_json_len = nr;
 }
 
 static XWWebProp *web_find_prop(XWWebProp *arr, int n, const char *name) {
@@ -1027,6 +1050,7 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
     snprintf(slot->label, sizeof(slot->label), "%s", known->label);
   }
   snprintf(slot->value, sizeof(slot->value), "%s", value);
+  web_combo_text(ctx, slot);
   /* Best effort: a page that has not finished loading (or navigated away)
    * misses this push, but the cached override is replayed on LOAD_FINISHED. */
   {
@@ -1676,10 +1700,14 @@ static void web_deliver_we_properties(WebKitWebView *view, WebCtx *ctx) {
         for (j = 0; j < m; j++)
           if (strcmp(tmp[j].name, one.name) == 0) {
             tmp[j] = one;
+            web_combo_text(ctx, &tmp[j]);
             break;
           }
-        if (j == m && m < ctx->n_props + ctx->n_over)
-          tmp[m++] = one;
+        if (j == m && m < ctx->n_props + ctx->n_over) {
+          tmp[m] = one;
+          web_combo_text(ctx, &tmp[m]);
+          m++;
+        }
       }
       need = xw_web_props_object_js_len(tmp, m);
       merged = need ? malloc(need) : NULL;
