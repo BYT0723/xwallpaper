@@ -1373,6 +1373,43 @@ static int web_dir_url(WebCtx *ctx, int mid, const char *dir, const char *path,
   return 0;
 }
 
+/* Resolve, mount and scan one directory property. Returns the file count
+ * (0 for no http server, bad value or an empty directory); files is NULL in
+ * that case. Shared by fetchall events and ondemand random requests. */
+static int web_dir_collect(WebCtx *ctx, const XWWebProp *base,
+                           const XWWebProp *val, char *dir, size_t dn,
+                           int *mid, char ***files) {
+  int n;
+  *files = NULL;
+  *mid = -1;
+  if (!ctx || !base || !val || !ctx->http)
+    return 0;
+  if (web_dir_value_path(ctx, val->value, dir, dn) != 0)
+    return 0;
+  *mid = xw_web_http_mount_dir(ctx->http, dir);
+  if (*mid < 0)
+    return 0;
+  n = xw_web_dir_scan(dir, base->file_type, files,
+                      XW_WEB_DIR_SCAN_DEFAULT_MAX);
+  return n > 0 ? n : 0;
+}
+
+/* URLs aligned with files; entries stay NULL when a URL cannot be built. */
+static char **web_dir_urls_for(WebCtx *ctx, int mid, const char *dir,
+                               char *const *files, int n) {
+  char **urls;
+  int i;
+  if (n <= 0)
+    return NULL;
+  urls = calloc((size_t)n, sizeof(*urls));
+  for (i = 0; urls && i < n; i++) {
+    char one[4096];
+    if (web_dir_url(ctx, mid, dir, files[i], one, sizeof(one)) == 0)
+      urls[i] = strdup(one);
+  }
+  return urls;
+}
+
 /* Deliver one WE directory event. The page may define the listener after
  * LOAD_FINISHED, so retry briefly rather than dropping the list. */
 static void web_dir_emit(WebCtx *ctx, const char *cb, const char *name,
@@ -1434,23 +1471,8 @@ static void web_dir_refresh(WebCtx *ctx, const char *name) {
   st = web_dir_state_get(ctx, name);
   if (!st)
     return;
-  if (ctx->http && web_dir_value_path(ctx, val->value, dir, sizeof(dir)) == 0) {
-    mid = xw_web_http_mount_dir(ctx->http, dir);
-    if (mid >= 0)
-      n = xw_web_dir_scan(dir, base->file_type, &files, 4096);
-  }
-  if (n < 0) {
-    files = NULL;
-    n = 0;
-  }
-  if (n > 0) {
-    urls = calloc((size_t)n, sizeof(*urls));
-    for (i = 0; urls && i < n; i++) {
-      char one[4096];
-      if (web_dir_url(ctx, mid, dir, files[i], one, sizeof(one)) == 0)
-        urls[i] = strdup(one);
-    }
-  }
+  n = web_dir_collect(ctx, base, val, dir, sizeof(dir), &mid, &files);
+  urls = web_dir_urls_for(ctx, mid, dir, files, n);
   if (xw_web_dir_diff(st->files, st->n, files, n, &add, &na, &rem, &nr) == 0) {
     if (nr > 0) {
       rem_urls = calloc((size_t)nr, sizeof(*rem_urls));
@@ -1531,7 +1553,7 @@ static void web_random_message_cb(WebKitUserContentManager *ucm,
   char *msg = NULL;
   char *nl;
   char dir[4096];
-  int id = 0, port = 0, mid = -1, n = 0;
+  int id = 0, mid = -1, n = 0;
   char **files = NULL;
   (void)ucm;
   if (res) {
@@ -1554,34 +1576,23 @@ static void web_random_message_cb(WebKitUserContentManager *ucm,
     const XWWebProp *val = web_prop_effective(ctx, nl + 1);
     if (!base || !val || strcmp(base->type, "directory") != 0)
       goto out; /* unknown / non-directory properties are ignored */
-    if (!ctx->http || (port = xw_web_http_port(ctx->http)) <= 0 ||
-        web_dir_value_path(ctx, val->value, dir, sizeof(dir)) != 0) {
+    if (!ctx->http) {
       web_random_reply(ctx, id, "");
       goto out;
     }
-    mid = xw_web_http_mount_dir(ctx->http, dir);
-    n = mid >= 0 ? xw_web_dir_scan(dir, base->file_type, &files, 4096) : -1;
+    n = web_dir_collect(ctx, base, val, dir, sizeof(dir), &mid, &files);
   }
   if (n <= 0) {
     web_random_reply(ctx, id, "");
     goto out;
   }
   {
-    const char *rel = files[g_random_int_range(0, n)];
-    size_t dl = strlen(dir);
-    char *esc;
     char url[4096];
-    if (strncmp(rel, dir, dl) == 0)
-      rel += dl;
-    while (*rel == '/')
-      rel++;
-    esc = g_uri_escape_string(rel, "/", FALSE);
-    if (esc && snprintf(url, sizeof(url), "http://127.0.0.1:%d/_xw/dir/%d/%s",
-                        port, mid, esc) < (int)sizeof(url))
+    if (web_dir_url(ctx, mid, dir, files[g_random_int_range(0, n)], url,
+                    sizeof(url)) == 0)
       web_random_reply(ctx, id, url);
     else
       web_random_reply(ctx, id, "");
-    g_free(esc);
   }
 out:
   for (int i = 0; i < n; i++)
@@ -1964,10 +1975,12 @@ static gboolean web_autoplay_policy_cb(WebKitWebView *view,
 static void web_load_changed_cb(WebKitWebView *view,
                                 WebKitLoadEvent load_event, gpointer ud) {
   WebCtx *ctx = (WebCtx *)ud;
-  if (load_event == WEBKIT_LOAD_STARTED)
-    web_dir_state_free(ctx); /* new document: its page needs a full list */
   if (load_event != WEBKIT_LOAD_FINISHED)
     return;
+  /* A new document needs the full file list, not a diff. Clearing on finish
+   * (not start) also covers --set-property arriving before the page has
+   * loaded: that state must not suppress the initial event. */
+  web_dir_state_free(ctx);
   if (ctx->migrating) {
     web_mig_on_finished(view, ctx);
     return;

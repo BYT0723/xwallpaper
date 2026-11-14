@@ -158,12 +158,17 @@ static void combo_text_from(struct json_object *val,
       continue;
     if (!json_object_object_get_ex(o, "value", &v) || !v)
       continue;
-    if (strcmp(json_object_get_string(v), value) != 0)
-      continue;
+    {
+      const char *vs = json_object_get_string(v);
+      if (!vs || strcmp(vs, value) != 0)
+        continue;
+    }
     if (!json_object_object_get_ex(o, "label", &l) || !l ||
         json_object_get_type(l) != json_type_string)
       return;
     label = json_object_get_string(l);
+    if (!label)
+      return;
     if (strings && label && json_object_object_get_ex(strings, label, &tr) &&
         tr && json_object_get_type(tr) == json_type_string)
       label = json_object_get_string(tr);

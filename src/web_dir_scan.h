@@ -8,6 +8,7 @@
 
 /* 1 when path's extension belongs to kind ("video" = webm/ogg/ogv, anything
  * else = the WE image set). NULL/unknown extensions are rejected. */
+#define XW_WEB_DIR_SCAN_DEFAULT_MAX 4096
 int xw_web_dir_match(const char *path, const char *kind);
 
 /* Collect up to max matching regular files under dir into a malloc'd,

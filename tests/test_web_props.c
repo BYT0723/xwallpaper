@@ -454,6 +454,20 @@ static void test_combo_text_lookup(void) {
                                             NULL, "1", out, sizeof(out)), -1);
   TEST_CHECK_EQ_INT(xw_web_props_combo_text(kCombo, strlen(kCombo), "en-us",
                                             "bgm", NULL, out, sizeof(out)), -1);
+  /* JSON null values/labels must not crash the lookup */
+  {
+    const char *bad =
+        "{\"general\":{\"properties\":{\"c\":{\"type\":\"combo\","
+        "\"value\":\"0\",\"options\":[{\"label\":null,\"value\":null},"
+        "{\"label\":\"A\",\"value\":\"0\"},"
+        "{\"label\":null,\"value\":\"1\"}]}}}}";
+    TEST_CHECK_EQ_INT(xw_web_props_combo_text(bad, strlen(bad), "en-us", "c",
+                                              "0", out, sizeof(out)), 0);
+    TEST_CHECK_EQ_STR(out, "A");
+    TEST_CHECK_EQ_INT(xw_web_props_combo_text(bad, strlen(bad), "en-us", "c",
+                                              "1", out, sizeof(out)), 0);
+    TEST_CHECK_EQ_STR(out, "");
+  }
 }
 
 static void test_combo_js(void) {

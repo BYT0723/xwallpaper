@@ -1954,6 +1954,78 @@ static void test_we_stub_globals(void) {
   xw_x11_destroy_window(win);
 }
 
+/* --set-property can arrive before the page finishes loading. The state it
+ * writes must not be mistaken for "already delivered": a new document always
+ * gets the full list. */
+static void test_we_dir_fetchall_before_load(void) {
+  TEST_BEGIN("fetchall initial list survives early --set-property");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wedirfetch2");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  char tmpl[] = "/tmp/opencode/xwearly-XXXXXX";
+  TEST_CHECK(mkdtemp(tmpl) != NULL);
+  {
+    char one[600];
+    FILE *f;
+    snprintf(one, sizeof(one), "%s/x.png", tmpl);
+    f = fopen(one, "w");
+    TEST_CHECK(f != NULL);
+    if (f) {
+      fputs("x", f);
+      fclose(f);
+    }
+  }
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wedirfetch";
+
+  XWBackend *tmpl_b = xw_web_backend_new();
+  XWBackend backend = *tmpl_b;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+
+  /* before start(): no document has loaded yet */
+  XWError serr;
+  memset(&serr, 0, sizeof(serr));
+  TEST_CHECK_EQ_INT(backend.set_prop(&backend, "pics", tmpl, &serr), 0);
+
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 6);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(title != NULL && strcmp(title, "EV:A:pics:1") == 0);
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+  {
+    char one[600];
+    snprintf(one, sizeof(one), "%s/x.png", tmpl);
+    unlink(one);
+    rmdir(tmpl);
+  }
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_gst_playbin3_pinned();
@@ -1982,5 +2054,6 @@ int main(void) {
   test_we_dir_fetchall();
   test_we_combo_text();
   test_we_stub_globals();
+  test_we_dir_fetchall_before_load();
   TEST_SUMMARY();
 }
