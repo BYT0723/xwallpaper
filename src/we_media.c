@@ -2,10 +2,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <gdk-pixbuf/gdk-pixbuf.h>
 #include <gio/gio.h>
 #include <glib.h>
 #include <glib/gstdio.h>
 
+#include "we_color.h"
 #include "we_media.h"
 
 static void copy_utf8(char *dst, size_t n, const char *src) {
@@ -128,9 +130,11 @@ int xw_we_media_format_thumb(const XWMediaInfo *m, char *out, size_t n) {
     s = "";
   }
   w = snprintf(out, n,
-               "{\"thumbnail\":\"%s\",\"primaryColor\":\"\","
-               "\"textColor\":\"\"}",
-               s);
+               "{\"thumbnail\":\"%s\",\"primaryColor\":\"%s\","
+               "\"secondaryColor\":\"%s\",\"tertiaryColor\":\"%s\","
+               "\"textColor\":\"%s\",\"highContrastColor\":\"%s\"}",
+               s, m->color_primary, m->color_secondary, m->color_tertiary,
+               m->color_text, m->color_high);
   g_free(esc);
   return w >= 0 && (size_t)w < n ? 0 : -1;
 }
@@ -291,6 +295,11 @@ int xw_we_media_parse_metadata(GVariant *metadata, XWMediaInfo *m) {
   m->album_artist[0] = '\0';
   m->art_url[0] = '\0';
   m->content_type[0] = '\0';
+  m->color_primary[0] = '\0';
+  m->color_secondary[0] = '\0';
+  m->color_tertiary[0] = '\0';
+  m->color_text[0] = '\0';
+  m->color_high[0] = '\0';
   m->duration = 0.0;
 
   lookup_string(metadata, "xesam:title", m->title, sizeof(m->title));
@@ -373,7 +382,70 @@ static const char *sniff_mime(const unsigned char *data, gsize len) {
   return NULL;
 }
 
-int xw_we_media_resolve_art(const char *url, char **out) {
+#define XW_ART_COLOR_SIDE 64
+
+static void clear_colors(XWMediaInfo *m) {
+  if (!m)
+    return;
+  m->color_primary[0] = '\0';
+  m->color_secondary[0] = '\0';
+  m->color_tertiary[0] = '\0';
+  m->color_text[0] = '\0';
+  m->color_high[0] = '\0';
+}
+
+static void colors_from_pixbuf(GdkPixbuf *pb, XWMediaInfo *m) {
+  if (!pb || !m)
+    return;
+  (void)xw_we_color_palette(gdk_pixbuf_get_pixels(pb), gdk_pixbuf_get_width(pb),
+                            gdk_pixbuf_get_height(pb),
+                            gdk_pixbuf_get_rowstride(pb),
+                            gdk_pixbuf_get_n_channels(pb), m->color_primary,
+                            m->color_secondary, m->color_tertiary,
+                            m->color_text, m->color_high);
+}
+
+static void colors_from_data_url(const char *url, XWMediaInfo *m) {
+  const char *comma, *payload;
+  char *header;
+  guchar *raw;
+  gsize raw_len = 0;
+  GInputStream *stream;
+  GdkPixbuf *pb;
+  if (!url || !m)
+    return;
+  comma = strchr(url, ',');
+  if (!comma)
+    return;
+  header = g_strndup(url + 5, (gsize)(comma - (url + 5)));
+  if (!header)
+    return;
+  if (!strstr(header, ";base64")) {
+    g_free(header);
+    return;
+  }
+  g_free(header);
+  payload = comma + 1;
+  raw = g_base64_decode(payload, &raw_len);
+  if (!raw || raw_len == 0) {
+    g_free(raw);
+    return;
+  }
+  stream = g_memory_input_stream_new_from_data(raw, (gssize)raw_len, g_free);
+  if (!stream) {
+    g_free(raw);
+    return;
+  }
+  pb = gdk_pixbuf_new_from_stream_at_scale(stream, XW_ART_COLOR_SIDE,
+                                           XW_ART_COLOR_SIDE, TRUE, NULL, NULL);
+  g_object_unref(stream);
+  if (pb) {
+    colors_from_pixbuf(pb, m);
+    g_object_unref(pb);
+  }
+}
+
+int xw_we_media_resolve_art(const char *url, char **out, XWMediaInfo *m) {
   XWMediaArtKind kind;
   char *path = NULL;
   GStatBuf st;
@@ -384,12 +456,20 @@ int xw_we_media_resolve_art(const char *url, char **out) {
   if (!out)
     return -1;
   *out = NULL;
+  clear_colors(m);
   kind = xw_we_media_art_kind(url);
   if (kind == XW_WE_MEDIA_ART_NONE)
     return 0;
-  if (kind == XW_WE_MEDIA_ART_HTTP || kind == XW_WE_MEDIA_ART_DATA) {
+  if (kind == XW_WE_MEDIA_ART_HTTP) {
     *out = g_strdup(url);
     return *out ? 0 : -1;
+  }
+  if (kind == XW_WE_MEDIA_ART_DATA) {
+    *out = g_strdup(url);
+    if (!*out)
+      return -1;
+    colors_from_data_url(url, m);
+    return 0;
   }
   if (kind != XW_WE_MEDIA_ART_FILE)
     return -1;
@@ -408,16 +488,26 @@ int xw_we_media_resolve_art(const char *url, char **out) {
     g_free(path);
     return -1;
   }
-  g_free(path);
   if (len > XW_WE_MEDIA_ART_MAX) {
+    g_free(path);
     g_free(data);
     return -1;
   }
   mime = sniff_mime((const unsigned char *)data, len);
   if (!mime) {
+    g_free(path);
     g_free(data);
     return -1;
   }
+  if (m) {
+    GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_scale(
+        path, XW_ART_COLOR_SIDE, XW_ART_COLOR_SIDE, TRUE, NULL);
+    if (pb) {
+      colors_from_pixbuf(pb, m);
+      g_object_unref(pb);
+    }
+  }
+  g_free(path);
   b64 = g_base64_encode((const guchar *)data, len);
   g_free(data);
   if (!b64)
@@ -546,7 +636,7 @@ static void player_update_thumb(XWMediaPlayer *p) {
   char *thumb = NULL;
   if (!p)
     return;
-  if (xw_we_media_resolve_art(p->info.art_url, &thumb) != 0)
+  if (xw_we_media_resolve_art(p->info.art_url, &thumb, &p->info) != 0)
     thumb = NULL;
   g_free(p->thumb);
   p->thumb = thumb;
@@ -562,6 +652,7 @@ static void player_clear_meta(XWMediaPlayer *p) {
   p->info.genres[0] = '\0';
   p->info.album_artist[0] = '\0';
   p->info.art_url[0] = '\0';
+  clear_colors(&p->info);
   p->info.duration = 0.0;
   player_update_thumb(p);
 }
@@ -574,6 +665,7 @@ static void refresh_active(int64_t now, int force) {
   int active_changed = 0;
   int enabled;
   int props_changed = 0;
+  int colors_changed = 0;
   int state_changed = 0;
   double pos;
   const char *want;
@@ -612,9 +704,10 @@ static void refresh_active(int64_t now, int force) {
 
   if (!p) {
     if (active_changed || force) {
+      int had_colors = g_snap.color_primary[0] != '\0';
       if (g_snap.title[0] || g_snap.artist[0] || g_snap.album[0] ||
           g_snap.subtitle[0] || g_snap.genres[0] || g_snap.album_artist[0] ||
-          g_snap.art_url[0] || g_snap.content_type[0]) {
+          g_snap.art_url[0] || g_snap.content_type[0] || had_colors) {
         g_snap.title[0] = '\0';
         g_snap.artist[0] = '\0';
         g_snap.album[0] = '\0';
@@ -623,8 +716,11 @@ static void refresh_active(int64_t now, int force) {
         g_snap.album_artist[0] = '\0';
         g_snap.art_url[0] = '\0';
         g_snap.content_type[0] = '\0';
+        clear_colors(&g_snap);
         g_snap.v_props++;
       }
+      if (had_colors)
+        g_snap.v_thumb++;
       if (g_snap.state != XW_WE_MEDIA_STOPPED) {
         g_snap.state = XW_WE_MEDIA_STOPPED;
         g_snap.v_playback++;
@@ -643,6 +739,12 @@ static void refresh_active(int64_t now, int force) {
     return;
   }
 
+  colors_changed =
+      strcmp(g_snap.color_primary, p->info.color_primary) != 0 ||
+      strcmp(g_snap.color_secondary, p->info.color_secondary) != 0 ||
+      strcmp(g_snap.color_tertiary, p->info.color_tertiary) != 0 ||
+      strcmp(g_snap.color_text, p->info.color_text) != 0 ||
+      strcmp(g_snap.color_high, p->info.color_high) != 0;
   props_changed = active_changed ||
                   strcmp(g_snap.title, p->info.title) != 0 ||
                   strcmp(g_snap.artist, p->info.artist) != 0 ||
@@ -652,6 +754,19 @@ static void refresh_active(int64_t now, int force) {
                   strcmp(g_snap.album_artist, p->info.album_artist) != 0 ||
                   strcmp(g_snap.art_url, p->info.art_url) != 0 ||
                   strcmp(g_snap.content_type, p->info.content_type) != 0;
+  if (colors_changed) {
+    snprintf(g_snap.color_primary, sizeof(g_snap.color_primary), "%s",
+             p->info.color_primary);
+    snprintf(g_snap.color_secondary, sizeof(g_snap.color_secondary), "%s",
+             p->info.color_secondary);
+    snprintf(g_snap.color_tertiary, sizeof(g_snap.color_tertiary), "%s",
+             p->info.color_tertiary);
+    snprintf(g_snap.color_text, sizeof(g_snap.color_text), "%s",
+             p->info.color_text);
+    snprintf(g_snap.color_high, sizeof(g_snap.color_high), "%s",
+             p->info.color_high);
+    g_snap.v_thumb++;
+  }
   if (props_changed) {
     snprintf(g_snap.title, sizeof(g_snap.title), "%s", p->info.title);
     snprintf(g_snap.artist, sizeof(g_snap.artist), "%s", p->info.artist);
@@ -1077,6 +1192,7 @@ void xw_we_media_stop(void) {
   g_snap.album_artist[0] = '\0';
   g_snap.art_url[0] = '\0';
   g_snap.content_type[0] = '\0';
+  clear_colors(&g_snap);
   g_snap.state = XW_WE_MEDIA_STOPPED;
   g_snap.position = 0.0;
   g_snap.duration = 0.0;

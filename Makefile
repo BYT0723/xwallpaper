@@ -39,8 +39,9 @@ CLI_OBJ := $(CLI_SRC:.c=.o)
 # daemon: owns all wallpaper windows, links the full backend stack.
 DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
               src/x11.c src/app.c src/image.c src/video.c src/web.c \
-              src/web_dir.c src/web_http.c src/web_props.c src/web_dir_scan.c src/props_store.c src/wl.c src/we_audio.c src/we_pulse.c \
-              src/we_media.c src/keybinds.c src/osd.c
+              src/web_dir.c src/web_http.c src/web_props.c src/web_dir_scan.c \
+              src/props_store.c src/wl.c src/we_audio.c src/we_pulse.c \
+              src/we_media.c src/we_color.c src/keybinds.c src/osd.c
 DAEMON_OBJ := $(DAEMON_SRC:.c=.o)
 
 # ---- Web user properties (json-c): daemon-only ----
@@ -160,7 +161,7 @@ xwallpaperd: $(DAEMON_OBJ)
 # layout change relinks stale objects against new ones (mixed ABI).
 HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/client.h src/state.h src/x11.h src/app.h src/backends.h \
-  src/wl.h src/daemon.h src/web_dir.h src/web_http.h src/web_props.h src/props_store.h src/web.h src/we_audio.h src/we_pulse.h src/we_media.h \
+  src/wl.h src/daemon.h src/web_dir.h src/web_http.h src/web_props.h src/props_store.h src/web.h src/we_audio.h src/we_pulse.h src/we_media.h src/we_color.h \
   src/keybinds.h src/osd.h \
   $(wildcard src/proto/*-client-protocol.h)
 $(CLI_OBJ) $(DAEMON_OBJ) \
@@ -194,8 +195,12 @@ tests/test_props_store: tests/test_props_store.c src/props_store.o
 tests/test_we_audio: tests/test_we_audio.c src/we_audio.o
 	$(CC) $(CFLAGS) -o $@ $< src/we_audio.o -lm
 
-tests/test_we_media: tests/test_we_media.c src/we_media.o
-	$(CC) $(CFLAGS) -o $@ $< src/we_media.o $(shell pkg-config --libs gio-2.0)
+tests/test_we_media: tests/test_we_media.c src/we_media.o src/we_color.o
+	$(CC) $(CFLAGS) -o $@ $< src/we_media.o src/we_color.o \
+	  $(shell pkg-config --libs gdk-pixbuf-2.0 gio-2.0) -lm
+
+tests/test_we_color: tests/test_we_color.c src/we_color.o
+	$(CC) $(CFLAGS) -o $@ $< src/we_color.o -lm
 
 tests/test_keybinds: tests/test_keybinds.c src/keybinds.o
 	$(CC) $(CFLAGS) -o $@ $< src/keybinds.o

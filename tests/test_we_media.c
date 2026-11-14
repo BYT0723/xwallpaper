@@ -69,9 +69,23 @@ static void test_format_payloads(void) {
                     "\"subtitle\":\"Sub \\\"Live\\\"\",\"genres\":\"Rock, Pop\","
                     "\"albumArtist\":\"AA\"}");
 
+  snprintf(m.color_primary, sizeof(m.color_primary), "#112233");
+  snprintf(m.color_secondary, sizeof(m.color_secondary), "#445566");
+  snprintf(m.color_tertiary, sizeof(m.color_tertiary), "#778899");
+  snprintf(m.color_text, sizeof(m.color_text), "#ffffff");
+  snprintf(m.color_high, sizeof(m.color_high), "#000000");
   TEST_CHECK_EQ_INT(xw_we_media_format_thumb(&m, out, sizeof(out)), 0);
   TEST_CHECK_EQ_STR(out, "{\"thumbnail\":\"data:image/png;base64,AAAA\","
-                         "\"primaryColor\":\"\",\"textColor\":\"\"}");
+                         "\"primaryColor\":\"#112233\","
+                         "\"secondaryColor\":\"#445566\","
+                         "\"tertiaryColor\":\"#778899\","
+                         "\"textColor\":\"#ffffff\","
+                         "\"highContrastColor\":\"#000000\"}");
+  m.color_primary[0] = '\0';
+  m.color_secondary[0] = '\0';
+  m.color_tertiary[0] = '\0';
+  m.color_text[0] = '\0';
+  m.color_high[0] = '\0';
 
   TEST_CHECK_EQ_INT(xw_we_media_format_playback(&m, out, sizeof(out)), 0);
   TEST_CHECK_EQ_STR(out, "{\"state\":0}");
@@ -89,12 +103,14 @@ static void test_format_payloads(void) {
   m.thumbnail = NULL;
   TEST_CHECK_EQ_INT(xw_we_media_format_thumb(&m, out, sizeof(out)), 0);
   TEST_CHECK_EQ_STR(out, "{\"thumbnail\":\"\",\"primaryColor\":\"\","
-                         "\"textColor\":\"\"}");
+                         "\"secondaryColor\":\"\",\"tertiaryColor\":\"\","
+                         "\"textColor\":\"\",\"highContrastColor\":\"\"}");
 
   m.thumbnail = "data:image/png;base64,AA\"BB";
   TEST_CHECK_EQ_INT(xw_we_media_format_thumb(&m, out, sizeof(out)), 0);
   TEST_CHECK_EQ_STR(out, "{\"thumbnail\":\"\",\"primaryColor\":\"\","
-                         "\"textColor\":\"\"}");
+                         "\"secondaryColor\":\"\",\"tertiaryColor\":\"\","
+                         "\"textColor\":\"\",\"highContrastColor\":\"\"}");
 
   TEST_BEGIN("props formatter handles worst-case escaped text");
   char big[6 * XW_WE_MEDIA_TEXT_MAX * 6 + 512];
@@ -218,31 +234,80 @@ static void test_art(void) {
   TEST_CHECK_EQ_INT(xw_we_media_art_kind("smb://x/a.jpg"),
                     XW_WE_MEDIA_ART_OTHER);
 
-  TEST_BEGIN("local artwork becomes a data URL, remote passes through");
+  TEST_BEGIN("local artwork becomes a data URL with palette colors");
   char *abs = g_canonicalize_filename("tests/data/red.png", NULL);
   char *uri = g_filename_to_uri(abs, NULL, NULL);
   char *out = NULL;
+  XWMediaInfo m;
+  memset(&m, 0, sizeof(m));
   TEST_CHECK(uri != NULL);
   if (uri) {
-    TEST_CHECK_EQ_INT(xw_we_media_resolve_art(uri, &out), 0);
+    TEST_CHECK_EQ_INT(xw_we_media_resolve_art(uri, &out, &m), 0);
     TEST_CHECK(out != NULL && strncmp(out, "data:image/png;base64,", 22) == 0);
+    TEST_CHECK_EQ_STR(m.color_primary, "#fd0000");
+    TEST_CHECK_EQ_STR(m.color_secondary, "");
+    TEST_CHECK_EQ_STR(m.color_text, "#000000");
     g_free(out);
     g_free(uri);
   }
   g_free(abs);
+
+  TEST_BEGIN("remote artwork passes through and keeps colors empty");
+  memset(&m, 0xff, sizeof(m));
   out = NULL;
-  TEST_CHECK_EQ_INT(xw_we_media_resolve_art("https://example.test/a.jpg", &out),
+  TEST_CHECK_EQ_INT(xw_we_media_resolve_art("https://example.test/a.jpg", &out,
+                                            &m),
                     0);
   TEST_CHECK_EQ_STR(out, "https://example.test/a.jpg");
+  TEST_CHECK_EQ_STR(m.color_primary, "");
+  TEST_CHECK_EQ_STR(m.color_tertiary, "");
+  TEST_CHECK_EQ_STR(m.color_high, "");
   g_free(out);
+
+  TEST_BEGIN("base64 data URL artwork is decoded for palette colors");
+  gchar *raw = NULL;
+  gsize raw_len = 0;
+  char *b64 = NULL;
+  char *data_url = NULL;
+  char *png_path = g_canonicalize_filename("tests/data/red.png", NULL);
+  if (g_file_get_contents(png_path, &raw, &raw_len, NULL)) {
+    b64 = g_base64_encode((const guchar *)raw, raw_len);
+    data_url = g_strdup_printf("data:image/png;base64,%s", b64);
+  }
+  g_free(png_path);
+  g_free(raw);
+  g_free(b64);
+  TEST_CHECK(data_url != NULL);
+  if (data_url) {
+    memset(&m, 0, sizeof(m));
+    out = NULL;
+    TEST_CHECK_EQ_INT(xw_we_media_resolve_art(data_url, &out, &m), 0);
+    TEST_CHECK_EQ_STR(out, data_url);
+    TEST_CHECK_EQ_STR(m.color_primary, "#fd0000");
+    TEST_CHECK_EQ_STR(m.color_text, "#000000");
+    g_free(out);
+    g_free(data_url);
+  }
+
+  TEST_BEGIN("unparseable data URL keeps artwork but leaves colors empty");
+  memset(&m, 0xff, sizeof(m));
   out = NULL;
-  TEST_CHECK_EQ_INT(xw_we_media_resolve_art("data:image/png;base64,AA", &out),
+  TEST_CHECK_EQ_INT(xw_we_media_resolve_art("data:image/png;base64,AA", &out,
+                                            &m),
                     0);
   TEST_CHECK_EQ_STR(out, "data:image/png;base64,AA");
+  TEST_CHECK_EQ_STR(m.color_primary, "");
+  TEST_CHECK_EQ_STR(m.color_text, "");
   g_free(out);
+
+  TEST_BEGIN("empty artwork clears colors and returns no URL");
+  memset(&m, 0xff, sizeof(m));
   out = NULL;
-  TEST_CHECK_EQ_INT(xw_we_media_resolve_art("", &out), 0);
+  TEST_CHECK_EQ_INT(xw_we_media_resolve_art("", &out, &m), 0);
   TEST_CHECK(out == NULL);
+  TEST_CHECK_EQ_STR(m.color_primary, "");
+  TEST_CHECK_EQ_STR(m.color_secondary, "");
+  TEST_CHECK_EQ_STR(m.color_high, "");
 }
 
 int main(void) {
