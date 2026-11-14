@@ -67,6 +67,60 @@ static void test_scan(void) {
   TEST_CHECK_EQ_INT(xw_web_dir_scan(NULL, "image", &files, 8), -1);
 }
 
+static void test_diff(void) {
+  char *prev[] = {(char *)"a.png", (char *)"b.png", (char *)"d.png"};
+  char *cur[] = {(char *)"b.png", (char *)"c.png", (char *)"d.png",
+                 (char *)"e.png"};
+  char **add = NULL, **rem = NULL;
+  int na = -1, nr = -1, i;
+  TEST_BEGIN("directory diff reports added and removed paths");
+  TEST_CHECK_EQ_INT(xw_web_dir_diff(prev, 3, cur, 4, &add, &na, &rem, &nr), 0);
+  TEST_CHECK_EQ_INT(na, 2);
+  TEST_CHECK_EQ_INT(nr, 1);
+  if (na == 2 && add) {
+    TEST_CHECK_EQ_STR(add[0], "c.png");
+    TEST_CHECK_EQ_STR(add[1], "e.png");
+  }
+  if (nr == 1 && rem)
+    TEST_CHECK_EQ_STR(rem[0], "a.png");
+  for (i = 0; i < na; i++)
+    free(add[i]);
+  free(add);
+  for (i = 0; i < nr; i++)
+    free(rem[i]);
+  free(rem);
+
+  add = rem = NULL;
+  TEST_CHECK_EQ_INT(xw_web_dir_diff(prev, 3, prev, 3, &add, &na, &rem, &nr),
+                    0);
+  TEST_CHECK_EQ_INT(na, 0);
+  TEST_CHECK_EQ_INT(nr, 0);
+  TEST_CHECK(add == NULL && rem == NULL);
+
+  add = rem = NULL;
+  TEST_CHECK_EQ_INT(xw_web_dir_diff(NULL, 0, cur, 4, &add, &na, &rem, &nr),
+                    0);
+  TEST_CHECK_EQ_INT(na, 4);
+  TEST_CHECK_EQ_INT(nr, 0);
+  for (i = 0; i < na; i++)
+    free(add[i]);
+  free(add);
+
+  add = rem = NULL;
+  TEST_CHECK_EQ_INT(xw_web_dir_diff(prev, 3, NULL, 0, &add, &na, &rem, &nr),
+                    0);
+  TEST_CHECK_EQ_INT(na, 0);
+  TEST_CHECK_EQ_INT(nr, 3);
+  for (i = 0; i < nr; i++)
+    free(rem[i]);
+  free(rem);
+
+  TEST_CHECK_EQ_INT(xw_web_dir_diff(NULL, 0, NULL, 0, NULL, &na, NULL, &nr),
+                    -1);
+  TEST_CHECK_EQ_INT(xw_web_dir_diff(prev, 3, cur, 4, &add, NULL, &rem, &nr),
+                    -1);
+}
+
 int main(void) {
   char tmpl[] = "/tmp/opencode/xwscan-XXXXXX";
   char sub[600], leak[700];
@@ -87,5 +141,6 @@ int main(void) {
   symlink(root, leak);
   test_match();
   test_scan();
+  test_diff();
   TEST_SUMMARY();
 }
