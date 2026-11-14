@@ -50,6 +50,11 @@ typedef enum {
   XW_WE_MEDIA_ART_OTHER,
 } XWMediaArtKind;
 
+/* Worst-case props JSON: six text fields, each escaped to at most 6x its
+ * bytes, plus keys/punctuation. Callers that format into a fixed buffer must
+ * size it with this or long metadata silently stops being delivered. */
+#define XW_WE_MEDIA_PROPS_JSON_MAX (6 * XW_WE_MEDIA_TEXT_MAX * 6 + 512)
+
 /* JSON-escape into out (quotes, backslash, control chars). Returns 0, or -1
  * on NULL/too-small output. */
 int xw_we_media_json_escape(const char *in, char *out, size_t n);

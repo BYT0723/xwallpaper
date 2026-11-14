@@ -426,7 +426,7 @@ int xw_web_media_want(void) {
 }
 
 void xw_web_media_push(const XWMediaInfo *m) {
-  char props[3 * XW_WE_MEDIA_TEXT_MAX * 6 + 512];
+  char props[XW_WE_MEDIA_PROPS_JSON_MAX];
   char small[160];
   if (!m)
     return;
