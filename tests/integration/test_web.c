@@ -1575,6 +1575,123 @@ static void test_web_view_mute_follows_ctl(void) {
   xw_x11_destroy_window(win);
 }
 
+/* WE general properties + pause callbacks: the fixture echoes both into the
+ * title (GEN:<fps|none>:<paused|none>). --fps is the number advertised to
+ * pages; without it applyGeneralProperties must not fire. Pause covers both
+ * the user control path and the DPMS freeze hook. */
+static void test_we_general_and_paused(void) {
+  TEST_BEGIN("web delivers general fps and pause state");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "weevents");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/weevents";
+  opt.fps = 24.0;
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 6);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (!view) {
+    backend.destroy(&backend);
+    xw_x11_destroy_window(win);
+    return;
+  }
+  const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+  TEST_CHECK(title != NULL && strcmp(title, "GEN:24:false") == 0);
+
+  XWError cerr;
+  memset(&cerr, 0, sizeof(cerr));
+  TEST_CHECK_EQ_INT(backend.control(&backend, "pause", "on", &cerr), 0);
+  pump_gtk(dpy, 2);
+  title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+  TEST_CHECK(title != NULL && strcmp(title, "GEN:24:true") == 0);
+
+  memset(&cerr, 0, sizeof(cerr));
+  TEST_CHECK_EQ_INT(backend.control(&backend, "pause", "off", &cerr), 0);
+  pump_gtk(dpy, 2);
+  title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+  TEST_CHECK(title != NULL && strcmp(title, "GEN:24:false") == 0);
+
+  backend.set_paused(&backend, 1);
+  pump_gtk(dpy, 2);
+  title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+  TEST_CHECK(title != NULL && strcmp(title, "GEN:24:true") == 0);
+
+  backend.set_paused(&backend, 0);
+  pump_gtk(dpy, 2);
+  title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+  TEST_CHECK(title != NULL && strcmp(title, "GEN:24:false") == 0);
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
+static void test_we_general_fps_absent(void) {
+  TEST_BEGIN("web skips applyGeneralProperties without --fps");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "weevents2");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/weevents";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 6);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(title != NULL && strcmp(title, "GEN:none:false") == 0);
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_gst_playbin3_pinned();
@@ -1597,5 +1714,7 @@ int main(void) {
   test_we_props_disk_and_clear();
   test_audio_control();
   test_keys_not_swallowed();
+  test_we_general_and_paused();
+  test_we_general_fps_absent();
   TEST_SUMMARY();
 }
