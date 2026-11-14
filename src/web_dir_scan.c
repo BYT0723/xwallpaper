@@ -113,3 +113,63 @@ int xw_web_dir_scan(const char *dir, const char *kind, char ***out, int max) {
   *out = arr;
   return n;
 }
+
+int xw_web_dir_diff(char *const *prev, int np, char *const *cur, int nc,
+                    char ***added, int *na, char ***removed, int *nr) {
+  char **add = NULL, **rem = NULL;
+  int ai = 0, ri = 0, i = 0, j = 0;
+  if (!added || !na || !removed || !nr)
+    return -1;
+  *added = NULL;
+  *removed = NULL;
+  *na = 0;
+  *nr = 0;
+  if (np < 0 || nc < 0 || (np > 0 && !prev) || (nc > 0 && !cur))
+    return -1;
+  if (np > 0) {
+    rem = malloc(sizeof(*rem) * (size_t)np);
+    if (!rem)
+      goto fail;
+  }
+  if (nc > 0) {
+    add = malloc(sizeof(*add) * (size_t)nc);
+    if (!add)
+      goto fail;
+  }
+  while (i < np && j < nc) {
+    int c = strcmp(prev[i], cur[j]);
+    if (c == 0) {
+      i++;
+      j++;
+    } else if (c < 0) {
+      rem[ri++] = strdup(prev[i++]);
+    } else {
+      add[ai++] = strdup(cur[j++]);
+    }
+  }
+  while (i < np)
+    rem[ri++] = strdup(prev[i++]);
+  while (j < nc)
+    add[ai++] = strdup(cur[j++]);
+  if (ai == 0) {
+    free(add);
+    add = NULL;
+  }
+  if (ri == 0) {
+    free(rem);
+    rem = NULL;
+  }
+  *added = add;
+  *na = ai;
+  *removed = rem;
+  *nr = ri;
+  return 0;
+fail:
+  for (i = 0; i < ai; i++)
+    free(add[i]);
+  for (i = 0; i < ri; i++)
+    free(rem[i]);
+  free(add);
+  free(rem);
+  return -1;
+}

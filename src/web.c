@@ -35,6 +35,16 @@ enum {
   XW_MEDIA_KINDS
 };
 
+/* Last delivered file list for one WE directory property (fetchall mode).
+ * Paths are canonical absolute paths; urls are what the page received, so a
+ * removed file can still be identified after its directory disappears. */
+typedef struct {
+  char name[128];
+  char **files;
+  char **urls;
+  int n;
+} XWWebDirState;
+
 typedef struct {
   XWWindow *win;
   struct XWWlWindow *wlwin; /* Wayland host window (NULL on X11) */
@@ -72,6 +82,8 @@ typedef struct {
   int n_props;
   XWWebProp *over;
   int n_over;
+  XWWebDirState *dir_state;
+  int n_dir_state;
 } WebCtx;
 
 /* Process-wide registry of live web wallpapers (main thread only:
@@ -85,6 +97,9 @@ int xw_web_we_eval_count(void) { return web_eval_count; }
 int xw_web_media_eval_count(void) { return web_media_eval_count; }
 
 static void web_notify_listener_state(WebCtx *ctx);
+static void web_dir_state_free(WebCtx *ctx);
+static void web_dir_refresh(WebCtx *ctx, const char *name);
+static void web_dir_refresh_all(WebCtx *ctx);
 
 static void web_reg_add(WebCtx *ctx) {
   WebCtx **v = realloc(g_views, sizeof(*v) * (g_nviews + 1));
@@ -1020,6 +1035,8 @@ static int web_set_prop(XWBackend *b, const char *name, const char *value,
     if (xw_web_props_apply_js(&one, 1, js, sizeof(js)) == 0)
       web_eval(ctx, js);
   }
+  if (strcmp(known->type, "directory") == 0)
+    web_dir_refresh(ctx, name);
   {
     char key[2048];
     web_cache_key(ctx->root_dir, ctx->path, key, sizeof(key));
@@ -1060,6 +1077,7 @@ static int web_clear_props(XWBackend *b, XWError *err) {
       free(tmp);
     }
   }
+  web_dir_refresh_all(ctx);
   return 0;
 }
 
@@ -1249,6 +1267,212 @@ static int web_dir_value_path(WebCtx *ctx, const char *value, char *out,
   return 0;
 }
 
+static void web_dir_state_free(WebCtx *ctx) {
+  int i, j;
+  if (!ctx)
+    return;
+  for (i = 0; i < ctx->n_dir_state; i++) {
+    for (j = 0; j < ctx->dir_state[i].n; j++) {
+      free(ctx->dir_state[i].files[j]);
+      if (ctx->dir_state[i].urls)
+        free(ctx->dir_state[i].urls[j]);
+    }
+    free(ctx->dir_state[i].files);
+    free(ctx->dir_state[i].urls);
+  }
+  free(ctx->dir_state);
+  ctx->dir_state = NULL;
+  ctx->n_dir_state = 0;
+}
+
+static XWWebDirState *web_dir_state_get(WebCtx *ctx, const char *name) {
+  XWWebDirState *grown;
+  int i;
+  for (i = 0; i < ctx->n_dir_state; i++)
+    if (strcmp(ctx->dir_state[i].name, name) == 0)
+      return &ctx->dir_state[i];
+  grown = realloc(ctx->dir_state,
+                  sizeof(*grown) * (size_t)(ctx->n_dir_state + 1));
+  if (!grown)
+    return NULL;
+  ctx->dir_state = grown;
+  memset(&grown[ctx->n_dir_state], 0, sizeof(grown[0]));
+  snprintf(grown[ctx->n_dir_state].name,
+           sizeof(grown[ctx->n_dir_state].name), "%s", name);
+  return &grown[ctx->n_dir_state++];
+}
+
+static int web_dir_index(char *const *arr, int n, const char *path) {
+  int i;
+  if (!arr || !path)
+    return -1;
+  for (i = 0; i < n; i++)
+    if (arr[i] && strcmp(arr[i], path) == 0)
+      return i;
+  return -1;
+}
+
+static int web_dir_url(WebCtx *ctx, int mid, const char *dir, const char *path,
+                       char *out, size_t n) {
+  const char *rel = path;
+  char *esc;
+  int port = ctx->http ? xw_web_http_port(ctx->http) : -1;
+  size_t dl = strlen(dir);
+  if (port <= 0 || mid < 0 || !path)
+    return -1;
+  if (strncmp(rel, dir, dl) == 0)
+    rel += dl;
+  while (*rel == '/')
+    rel++;
+  esc = g_uri_escape_string(rel, "/", FALSE);
+  if (!esc)
+    return -1;
+  if (snprintf(out, n, "http://127.0.0.1:%d/_xw/dir/%d/%s", port, mid, esc) >=
+      (int)n) {
+    g_free(esc);
+    return -1;
+  }
+  g_free(esc);
+  return 0;
+}
+
+/* Deliver one WE directory event. The page may define the listener after
+ * LOAD_FINISHED, so retry briefly rather than dropping the list. */
+static void web_dir_emit(WebCtx *ctx, const char *cb, const char *name,
+                         char *const *urls, int n) {
+  GString *arr;
+  char *esc_name, *js, *esc;
+  int i;
+  if (!ctx || !ctx->view || ctx->dead || !cb || !name || !urls || n <= 0)
+    return;
+  arr = g_string_new("[");
+  for (i = 0; i < n; i++) {
+    if (!urls[i] || !urls[i][0])
+      continue;
+    esc = g_strescape(urls[i], NULL);
+    if (arr->len > 1)
+      g_string_append_c(arr, ',');
+    g_string_append_printf(arr, "\"%s\"", esc ? esc : "");
+    g_free(esc);
+  }
+  g_string_append_c(arr, ']');
+  if (arr->len <= 2) { /* nothing the page can load */
+    g_string_free(arr, TRUE);
+    return;
+  }
+  esc_name = g_strescape(name, NULL);
+  js = g_strdup_printf(
+      "(function(){var n=0;function a(){var L=window.wallpaperPropertyListener;"
+      "if(!L||typeof L.%s!=='function'){if(++n<50)setTimeout(a,200);return;}"
+      "try{L.%s(\"%s\",%s);}catch(e){}}a();})();",
+      cb, cb, esc_name ? esc_name : "", arr->str);
+  g_free(esc_name);
+  g_string_free(arr, TRUE);
+  if (!js)
+    return;
+  web_eval(ctx, js);
+  g_free(js);
+}
+
+/* Rescan one fetchall directory property and deliver only the difference
+ * against the last delivery. Empty/missing directories remove everything. */
+static void web_dir_refresh(WebCtx *ctx, const char *name) {
+  const XWWebProp *base, *val;
+  XWWebDirState *st;
+  char dir[4096];
+  char **files = NULL, **urls = NULL;
+  char **add = NULL, **rem = NULL;
+  char **add_urls = NULL, **rem_urls = NULL;
+  int n = 0, mid = -1, na = 0, nr = 0, i;
+  if (!ctx || !name)
+    return;
+  /* Metadata (type/mode/fileType) lives in project.json; overrides only
+   * carry a value, so never read those fields from the effective copy. */
+  base = web_find_prop(ctx->props, ctx->n_props, (char *)name);
+  val = web_prop_effective(ctx, name);
+  if (!base || !val || strcmp(base->type, "directory") != 0)
+    return;
+  if (strcmp(base->mode, "fetchall") != 0)
+    return;
+  st = web_dir_state_get(ctx, name);
+  if (!st)
+    return;
+  if (ctx->http && web_dir_value_path(ctx, val->value, dir, sizeof(dir)) == 0) {
+    mid = xw_web_http_mount_dir(ctx->http, dir);
+    if (mid >= 0)
+      n = xw_web_dir_scan(dir, base->file_type, &files, 4096);
+  }
+  if (n < 0) {
+    files = NULL;
+    n = 0;
+  }
+  if (n > 0) {
+    urls = calloc((size_t)n, sizeof(*urls));
+    for (i = 0; urls && i < n; i++) {
+      char one[4096];
+      if (web_dir_url(ctx, mid, dir, files[i], one, sizeof(one)) == 0)
+        urls[i] = strdup(one);
+    }
+  }
+  if (xw_web_dir_diff(st->files, st->n, files, n, &add, &na, &rem, &nr) == 0) {
+    if (nr > 0) {
+      rem_urls = calloc((size_t)nr, sizeof(*rem_urls));
+      for (i = 0; rem_urls && i < nr; i++) {
+        int idx = web_dir_index(st->files, st->n, rem[i]);
+        if (idx >= 0 && st->urls && st->urls[idx])
+          rem_urls[i] = strdup(st->urls[idx]);
+      }
+      web_dir_emit(ctx, "userDirectoryFilesRemoved", name, rem_urls, nr);
+    }
+    if (na > 0) {
+      add_urls = calloc((size_t)na, sizeof(*add_urls));
+      for (i = 0; add_urls && i < na; i++) {
+        int idx = web_dir_index(files, n, add[i]);
+        if (idx >= 0 && urls && urls[idx])
+          add_urls[i] = strdup(urls[idx]);
+      }
+      web_dir_emit(ctx, "userDirectoryFilesAddedOrChanged", name, add_urls,
+                   na);
+    }
+  }
+  for (i = 0; i < na; i++)
+    free(add[i]);
+  free(add);
+  for (i = 0; i < nr; i++)
+    free(rem[i]);
+  free(rem);
+  if (rem_urls) {
+    for (i = 0; i < nr; i++)
+      free(rem_urls[i]);
+    free(rem_urls);
+  }
+  if (add_urls) {
+    for (i = 0; i < na; i++)
+      free(add_urls[i]);
+    free(add_urls);
+  }
+  for (i = 0; i < st->n; i++) {
+    free(st->files[i]);
+    if (st->urls)
+      free(st->urls[i]);
+  }
+  free(st->files);
+  free(st->urls);
+  st->files = files;
+  st->urls = urls;
+  st->n = n;
+}
+
+static void web_dir_refresh_all(WebCtx *ctx) {
+  int i;
+  if (!ctx)
+    return;
+  for (i = 0; i < ctx->n_props; i++)
+    if (strcmp(ctx->props[i].type, "directory") == 0 &&
+        strcmp(ctx->props[i].mode, "fetchall") == 0)
+      web_dir_refresh(ctx, ctx->props[i].name);
+}
+
 static void web_random_reply(WebCtx *ctx, int id, const char *url) {
   char *esc = g_strescape(url ? url : "", NULL);
   char *js = g_strdup_printf(
@@ -1270,7 +1494,6 @@ static void web_random_message_cb(WebKitUserContentManager *ucm,
   char *msg = NULL;
   char *nl;
   char dir[4096];
-  const XWWebProp *p;
   int id = 0, port = 0, mid = -1, n = 0;
   char **files = NULL;
   (void)ucm;
@@ -1287,16 +1510,21 @@ static void web_random_message_cb(WebKitUserContentManager *ucm,
     goto out;
   *nl = '\0';
   id = atoi(msg);
-  p = web_prop_effective(ctx, nl + 1);
-  if (!p || strcmp(p->type, "directory") != 0)
-    goto out; /* unknown / non-directory properties are ignored */
-  if (!ctx->http || (port = xw_web_http_port(ctx->http)) <= 0 ||
-      web_dir_value_path(ctx, p->value, dir, sizeof(dir)) != 0) {
-    web_random_reply(ctx, id, "");
-    goto out;
+  {
+    /* Metadata comes from project.json: overrides only carry a value. */
+    const XWWebProp *base =
+        web_find_prop(ctx->props, ctx->n_props, nl + 1);
+    const XWWebProp *val = web_prop_effective(ctx, nl + 1);
+    if (!base || !val || strcmp(base->type, "directory") != 0)
+      goto out; /* unknown / non-directory properties are ignored */
+    if (!ctx->http || (port = xw_web_http_port(ctx->http)) <= 0 ||
+        web_dir_value_path(ctx, val->value, dir, sizeof(dir)) != 0) {
+      web_random_reply(ctx, id, "");
+      goto out;
+    }
+    mid = xw_web_http_mount_dir(ctx->http, dir);
+    n = mid >= 0 ? xw_web_dir_scan(dir, base->file_type, &files, 4096) : -1;
   }
-  mid = xw_web_http_mount_dir(ctx->http, dir);
-  n = mid >= 0 ? xw_web_dir_scan(dir, p->file_type, &files, 4096) : -1;
   if (n <= 0) {
     web_random_reply(ctx, id, "");
     goto out;
@@ -1688,6 +1916,8 @@ static gboolean web_autoplay_policy_cb(WebKitWebView *view,
 static void web_load_changed_cb(WebKitWebView *view,
                                 WebKitLoadEvent load_event, gpointer ud) {
   WebCtx *ctx = (WebCtx *)ud;
+  if (load_event == WEBKIT_LOAD_STARTED)
+    web_dir_state_free(ctx); /* new document: its page needs a full list */
   if (load_event != WEBKIT_LOAD_FINISHED)
     return;
   if (ctx->migrating) {
@@ -1700,6 +1930,7 @@ static void web_load_changed_cb(WebKitWebView *view,
   if (!ctx->root_dir[0])
     return; /* only local dirs have a sibling project.json */
   web_deliver_we_properties(view, ctx);
+  web_dir_refresh_all(ctx);
 }
 
 /* Never brick the wallpaper on a failed migration load: fall through to
@@ -2223,6 +2454,7 @@ static void web_destroy(XWBackend *b) {
     web_disk_save(ctx, key);
   }
   web_free_props(ctx);
+  web_dir_state_free(ctx);
   /* Let the destroy finalize promptly so the reparented X child and the
    * WebView release their GPU/DMA-BUF handles without waiting for the
    * next daemon poll tick. */

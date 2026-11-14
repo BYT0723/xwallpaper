@@ -1,0 +1,12 @@
+{
+  "general": {
+    "properties": {
+      "pics": {
+        "type": "directory",
+        "mode": "fetchall",
+        "fileType": "image",
+        "value": "."
+      }
+    }
+  }
+}

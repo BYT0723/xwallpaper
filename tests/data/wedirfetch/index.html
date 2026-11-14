@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head><title>EV:none</title></head>
+<body>
+<script>
+/* Accumulate WE directory events into the title so the integration test can
+ * assert the exact added/removed sequence. */
+window.__ev = [];
+window.__url = '';
+window.wallpaperPropertyListener = {
+  applyUserProperties: function (p) {},
+  userDirectoryFilesAddedOrChanged: function (name, files) {
+    window.__ev.push('A:' + name + ':' + files.length);
+    if (files && files.length)
+      window.__url = files[0];
+    document.title = 'EV:' + window.__ev.join('|');
+  },
+  userDirectoryFilesRemoved: function (name, files) {
+    window.__ev.push('R:' + name + ':' + files.length);
+    document.title = 'EV:' + window.__ev.join('|');
+  }
+};
+</script>
+</body>
+</html>

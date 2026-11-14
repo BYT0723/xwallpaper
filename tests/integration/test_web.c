@@ -1766,6 +1766,95 @@ static void test_we_dir_ondemand(void) {
   xw_x11_destroy_window(win);
 }
 
+/* WE directory property, fetchall mode: the page receives the whole file
+ * list on load and diffs on --set-property. */
+static void test_we_dir_fetchall(void) {
+  TEST_BEGIN("fetchall directory property delivers added/removed diffs");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wedirfetch");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wedirfetch";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 6);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(title != NULL && strcmp(title, "EV:A:pics:2") == 0);
+
+    char *url = run_js_sync(view, "window.__url");
+    TEST_CHECK(url != NULL &&
+               strncmp(url, "http://127.0.0.1:", 17) == 0 &&
+               strstr(url, "/_xw/dir/") != NULL);
+    g_free(url);
+
+    /* a directory with one image: removed old two, added the new one */
+    char tmpl[] = "/tmp/opencode/xwfetch-XXXXXX";
+    TEST_CHECK(mkdtemp(tmpl) != NULL);
+    {
+      char one[600];
+      FILE *f;
+      snprintf(one, sizeof(one), "%s/x.png", tmpl);
+      f = fopen(one, "w");
+      TEST_CHECK(f != NULL);
+      if (f) {
+        fputs("x", f);
+        fclose(f);
+      }
+    }
+    XWError serr;
+    memset(&serr, 0, sizeof(serr));
+    TEST_CHECK_EQ_INT(backend.set_prop(&backend, "pics", tmpl, &serr), 0);
+    pump_gtk(dpy, 4);
+    title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(title != NULL &&
+               strcmp(title, "EV:A:pics:2|R:pics:2|A:pics:1") == 0);
+
+    /* missing directory: only removals, no dead links */
+    memset(&serr, 0, sizeof(serr));
+    TEST_CHECK_EQ_INT(backend.set_prop(&backend, "pics", "/no/such/dir",
+                                       &serr), 0);
+    pump_gtk(dpy, 4);
+    title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(title != NULL &&
+               strcmp(title, "EV:A:pics:2|R:pics:2|A:pics:1|R:pics:1") == 0);
+
+    {
+      char one[600];
+      snprintf(one, sizeof(one), "%s/x.png", tmpl);
+      unlink(one);
+      rmdir(tmpl);
+    }
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_gst_playbin3_pinned();
@@ -1791,5 +1880,6 @@ int main(void) {
   test_we_general_and_paused();
   test_we_general_fps_absent();
   test_we_dir_ondemand();
+  test_we_dir_fetchall();
   TEST_SUMMARY();
 }

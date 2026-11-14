@@ -15,4 +15,10 @@ int xw_web_dir_match(const char *path, const char *kind);
  * arguments or when dir cannot be opened. Caller frees each entry + array. */
 int xw_web_dir_scan(const char *dir, const char *kind, char ***out, int max);
 
+/* Diff two sorted path arrays (as produced by xw_web_dir_scan). Returns 0
+ * and malloc'd added/removed arrays (counts may be 0, arrays then NULL).
+ * Caller frees each entry and the arrays. Returns -1 on bad arguments. */
+int xw_web_dir_diff(char *const *prev, int np, char *const *cur, int nc,
+                    char ***added, int *na, char ***removed, int *nr);
+
 #endif /* XW_WEB_DIR_SCAN_H */
