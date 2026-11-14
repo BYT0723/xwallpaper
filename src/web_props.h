@@ -39,9 +39,11 @@ int xw_web_props_parse(const char *json, size_t len, const char *locale,
                        XWWebProp **out);
 
 /* Build a JS statement calling
- * window.wallpaperPropertyListener.applyUserProperties({name:{value:"..."}})
- * for n props. Values are JSON-escaped. Returns 0, or -1 when n <= 0,
- * props/out is NULL, or the buffer is too small. */
+ * window.wallpaperPropertyListener.applyUserProperties({name:{value:...}})
+ * for n props. bool ("true"/"false") and slider (valid JSON number) values
+ * are emitted as native JS values, matching WE; every other type is a
+ * JSON-escaped string. Returns 0, or -1 when n <= 0, props/out is NULL, or
+ * the buffer is too small. */
 int xw_web_props_apply_js(const XWWebProp *props, int n,
                            char *out, size_t m);
 
@@ -53,8 +55,9 @@ int xw_web_props_apply_js(const XWWebProp *props, int n,
 int xw_web_props_normalize(const char *type, const char *value,
                             char *out, size_t m);
 
-/* Build just the properties object literal: {"name":{"value":"..."},...}.
+/* Build just the properties object literal: {"name":{"value":...},...}.
  * Used to sequence overrides after the page's own project.json fetch.
+ * bool/slider values keep their native JS type (see xw_web_props_apply_js).
  * Returns 0, or -1 on bad input or a too-small buffer. */
 int xw_web_props_object_js(const XWWebProp *props, int n,
                             char *out, size_t m);

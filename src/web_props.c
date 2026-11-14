@@ -356,6 +356,55 @@ static int lit_append(char *out, size_t m, size_t *off, const char *s) {
   return 0;
 }
 
+/* JSON number grammar (RFC 8259): -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?
+ * Anything else (leading zeros, spaces, inf/nan, hex) must stay a string:
+ * an unquoted value ends up as a JS expression, not JSON. */
+static int is_json_number(const char *s) {
+  const char *p = s;
+  if (!p)
+    return 0;
+  if (*p == '-')
+    p++;
+  if (*p == '0') {
+    p++;
+  } else if (*p >= '1' && *p <= '9') {
+    while (*p >= '0' && *p <= '9')
+      p++;
+  } else {
+    return 0;
+  }
+  if (*p == '.') {
+    p++;
+    if (*p < '0' || *p > '9')
+      return 0;
+    while (*p >= '0' && *p <= '9')
+      p++;
+  }
+  if (*p == 'e' || *p == 'E') {
+    p++;
+    if (*p == '+' || *p == '-')
+      p++;
+    if (*p < '0' || *p > '9')
+      return 0;
+    while (*p >= '0' && *p <= '9')
+      p++;
+  }
+  return *p == '\0';
+}
+
+/* WE delivers booleans and numbers as native JS values. Only the exact
+ * forms WE itself emits are unquoted; everything else falls back to a
+ * string so a hostile value can never become executable JS. */
+static int prop_value_is_raw(const XWWebProp *p) {
+  if (!p)
+    return 0;
+  if (strcmp(p->type, "bool") == 0)
+    return strcmp(p->value, "true") == 0 || strcmp(p->value, "false") == 0;
+  if (strcmp(p->type, "slider") == 0)
+    return is_json_number(p->value);
+  return 0;
+}
+
 int xw_web_props_object_js(const XWWebProp *props, int n,
                             char *out, size_t m) {
   size_t off = 0;
@@ -369,9 +418,17 @@ int xw_web_props_object_js(const XWWebProp *props, int n,
       return -1;
     if (lit_append(out, m, &off, "\"") != 0 ||
         esc_append(out, m, &off, props[i].name) != 0 ||
-        lit_append(out, m, &off, "\":{\"value\":\"") != 0 ||
-        esc_append(out, m, &off, props[i].value) != 0 ||
-        lit_append(out, m, &off, "\"}") != 0)
+        lit_append(out, m, &off, "\":{\"value\":") != 0)
+      return -1;
+    if (prop_value_is_raw(&props[i])) {
+      if (lit_append(out, m, &off, props[i].value) != 0)
+        return -1;
+    } else if (lit_append(out, m, &off, "\"") != 0 ||
+               esc_append(out, m, &off, props[i].value) != 0 ||
+               lit_append(out, m, &off, "\"") != 0) {
+      return -1;
+    }
+    if (lit_append(out, m, &off, "}") != 0)
       return -1;
   }
   if (lit_append(out, m, &off, "}") != 0)
@@ -388,8 +445,11 @@ size_t xw_web_props_object_js_len(const XWWebProp *props, int n) {
   if (!props || n <= 0)
     return 0;
   for (i = 0; i < n; i++) {
-    /* opening quote + ":{\"value\":\"" + closing quote/brace */
-    size_t add = 15 + esc_len(props[i].name) + esc_len(props[i].value);
+    /* opening quote + ":{\"value\":" + closing brace; string values add
+     * the two quotes around the escaped value */
+    size_t add = 13 + esc_len(props[i].name) + esc_len(props[i].value);
+    if (!prop_value_is_raw(&props[i]))
+      add += 2;
     if (i > 0)
       add++;
     if (add > (size_t)-1 - total)

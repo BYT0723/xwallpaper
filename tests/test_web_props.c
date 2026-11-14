@@ -266,10 +266,61 @@ static void test_object_js(void) {
   snprintf(ps[0].value, sizeof(ps[0].value), "200");
   char js[512];
   TEST_CHECK_EQ_INT(xw_web_props_object_js(ps, 1, js, sizeof(js)), 0);
-  TEST_CHECK_EQ_STR(js, "{\"roleScale\":{\"value\":\"200\"}}");
+  TEST_CHECK_EQ_STR(js, "{\"roleScale\":{\"value\":200}}");
   TEST_CHECK_EQ_INT(xw_web_props_object_js(NULL, 0, js, sizeof(js)), -1);
   TEST_CHECK_EQ_INT((long long)xw_web_props_object_js_len(ps, 1),
                     (long long)(strlen(js) + 1));
+}
+
+/* WE sends bools as booleans and sliders as numbers. Only those two types
+ * may leave the emitter unquoted; anything questionable stays a string so
+ * the page never receives invalid JS. */
+static void test_typed_values(void) {
+  TEST_BEGIN("bool and slider overrides keep their native JSON type");
+  XWWebProp ps[7];
+  char js[2048];
+
+  memset(ps, 0, sizeof(ps));
+  snprintf(ps[0].name, sizeof(ps[0].name), "on");
+  snprintf(ps[0].type, sizeof(ps[0].type), "bool");
+  snprintf(ps[0].value, sizeof(ps[0].value), "true");
+  snprintf(ps[1].name, sizeof(ps[1].name), "off");
+  snprintf(ps[1].type, sizeof(ps[1].type), "bool");
+  snprintf(ps[1].value, sizeof(ps[1].value), "false");
+  snprintf(ps[2].name, sizeof(ps[2].name), "n");
+  snprintf(ps[2].type, sizeof(ps[2].type), "slider");
+  snprintf(ps[2].value, sizeof(ps[2].value), "-2.5e1");
+  snprintf(ps[3].name, sizeof(ps[3].name), "zeroPad");
+  snprintf(ps[3].type, sizeof(ps[3].type), "slider");
+  snprintf(ps[3].value, sizeof(ps[3].value), "0012");
+  snprintf(ps[4].name, sizeof(ps[4].name), "spaced");
+  snprintf(ps[4].type, sizeof(ps[4].type), "slider");
+  snprintf(ps[4].value, sizeof(ps[4].value), " 200");
+  snprintf(ps[5].name, sizeof(ps[5].name), "color");
+  snprintf(ps[5].type, sizeof(ps[5].type), "color");
+  snprintf(ps[5].value, sizeof(ps[5].value), "0 0.2 0");
+  snprintf(ps[6].name, sizeof(ps[6].name), "upper");
+  snprintf(ps[6].type, sizeof(ps[6].type), "bool");
+  snprintf(ps[6].value, sizeof(ps[6].value), "TRUE");
+
+  TEST_CHECK_EQ_INT(xw_web_props_object_js(ps, 7, js, sizeof(js)), 0);
+  TEST_CHECK_EQ_STR(
+      js,
+      "{\"on\":{\"value\":true},\"off\":{\"value\":false},"
+      "\"n\":{\"value\":-2.5e1},\"zeroPad\":{\"value\":\"0012\"},"
+      "\"spaced\":{\"value\":\" 200\"},\"color\":{\"value\":\"0 0.2 0\"},"
+      "\"upper\":{\"value\":\"TRUE\"}}");
+  TEST_CHECK_EQ_INT((long long)xw_web_props_object_js_len(ps, 7),
+                    (long long)(strlen(js) + 1));
+
+  /* inf/nan/hex are never JSON numbers */
+  snprintf(ps[0].value, sizeof(ps[0].value), "inf");
+  snprintf(ps[0].type, sizeof(ps[0].type), "slider");
+  TEST_CHECK_EQ_INT(xw_web_props_object_js(ps, 1, js, sizeof(js)), 0);
+  TEST_CHECK_EQ_STR(js, "{\"on\":{\"value\":\"inf\"}}");
+  snprintf(ps[0].value, sizeof(ps[0].value), "0x10");
+  TEST_CHECK_EQ_INT(xw_web_props_object_js(ps, 1, js, sizeof(js)), 0);
+  TEST_CHECK_EQ_STR(js, "{\"on\":{\"value\":\"0x10\"}}");
 }
 
 static void test_object_js_len_escaped(void) {
@@ -311,8 +362,8 @@ static void test_apply_large(void) {
   TEST_CHECK(js != NULL);
   if (js) {
     TEST_CHECK_EQ_INT(xw_web_props_apply_js(ps, n, js, need + 128), 0);
-    TEST_CHECK(strstr(js, "\"p0\":{\"value\":\"0\"}") != NULL);
-    TEST_CHECK(strstr(js, "\"p599\":{\"value\":\"599\"}") != NULL);
+    TEST_CHECK(strstr(js, "\"p0\":{\"value\":0}") != NULL);
+    TEST_CHECK(strstr(js, "\"p599\":{\"value\":599}") != NULL);
   }
   free(js);
   free(ps);
@@ -359,6 +410,7 @@ int main(void) {
   test_label_sanitized();
   test_apply_js();
   test_object_js();
+  test_typed_values();
   test_object_js_len_escaped();
   test_apply_large();
   test_normalize_color();

@@ -736,7 +736,7 @@ static void test_we_props_list_set(void) {
   TEST_CHECK_EQ_INT(backend.set_prop(&backend, "zoom", "200", &serr), 0);
   pump_gtk(dpy, 3);
   const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
-  TEST_CHECK(title != NULL && strstr(title, "\"zoom\":{\"value\":\"200\"}") != NULL);
+  TEST_CHECK(title != NULL && strstr(title, "\"zoom\":{\"value\":200}") != NULL);
 
   /* ... and shadows the default in list */
   memset(lines, 0, sizeof(lines));
@@ -747,7 +747,7 @@ static void test_we_props_list_set(void) {
   webkit_web_view_reload(WEBKIT_WEB_VIEW(view));
   pump_gtk(dpy, 8);
   title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
-  TEST_CHECK(title != NULL && strstr(title, "\"zoom\":{\"value\":\"200\"}") != NULL);
+  TEST_CHECK(title != NULL && strstr(title, "\"zoom\":{\"value\":200}") != NULL);
 
   /* hex colors normalize to the WE triple the page parses ... */
   memset(&serr, 0, sizeof(serr));
