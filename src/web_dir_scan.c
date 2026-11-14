@@ -142,15 +142,29 @@ int xw_web_dir_diff(char *const *prev, int np, char *const *cur, int nc,
       i++;
       j++;
     } else if (c < 0) {
-      rem[ri++] = strdup(prev[i++]);
+      char *s = strdup(prev[i++]);
+      if (!s)
+        goto fail;
+      rem[ri++] = s;
     } else {
-      add[ai++] = strdup(cur[j++]);
+      char *s = strdup(cur[j++]);
+      if (!s)
+        goto fail;
+      add[ai++] = s;
     }
   }
-  while (i < np)
-    rem[ri++] = strdup(prev[i++]);
-  while (j < nc)
-    add[ai++] = strdup(cur[j++]);
+  while (i < np) {
+    char *s = strdup(prev[i++]);
+    if (!s)
+      goto fail;
+    rem[ri++] = s;
+  }
+  while (j < nc) {
+    char *s = strdup(cur[j++]);
+    if (!s)
+      goto fail;
+    add[ai++] = s;
+  }
   if (ai == 0) {
     free(add);
     add = NULL;
