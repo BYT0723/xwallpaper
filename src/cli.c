@@ -140,6 +140,7 @@ void xw_cli_usage(FILE *f) {
     "  --rotate <0|90|180|270> video: static rotation (e.g. portrait clips)\n"
     "  --keybinds <file>       video: mpv input.conf-style keybindings\n"
     "  --fps <number>          video: target frame rate (keeps speed, drops frames)\n"
+    "                          web: frame limit advertised to the page\n"
     "  --mute --volume <0-100> video\n"
     "  --audio-client-name <name>   audio API client name (default: xwallpaper)\n"
     "  -o <0.0-1.0>            window opacity\n"

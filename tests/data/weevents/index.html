@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head><title>GEN:none:none</title></head>
+<body>
+<script>
+/* Echo WE general properties and pause callbacks into the title so the
+ * integration test can observe what native delivered. */
+window.__fps = 'none';
+window.__paused = 'none';
+window.wallpaperPropertyListener = {
+  applyGeneralProperties: function (p) {
+    if (p && typeof p.fps !== 'undefined')
+      window.__fps = String(p.fps);
+    document.title = 'GEN:' + window.__fps + ':' + window.__paused;
+  },
+  setPaused: function (v) {
+    window.__paused = v ? 'true' : 'false';
+    document.title = 'GEN:' + window.__fps + ':' + window.__paused;
+  }
+};
+</script>
+</body>
+</html>

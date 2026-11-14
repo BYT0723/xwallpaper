@@ -64,6 +64,7 @@ typedef struct {
   int ctl_quiet;       /* transient lock-screen mute: no pause, no state */
   int ctl_started;     /* 0 = leave the page's own mixing alone */
   int dpms_paused;     /* DPMS power-off freeze, independent of ctl_paused */
+  double fps;          /* --fps: frame limit advertised to the page (0 = unset) */
   /* WE user properties from <root>/project.json (dir mode only) plus
    * runtime overrides set via --set-property (replayed after each load). */
   XWWebProp *props;
@@ -81,6 +82,8 @@ static int web_media_eval_count;
 
 int xw_web_we_eval_count(void) { return web_eval_count; }
 int xw_web_media_eval_count(void) { return web_media_eval_count; }
+
+static void web_notify_listener_state(WebCtx *ctx);
 
 static void web_reg_add(WebCtx *ctx) {
   WebCtx **v = realloc(g_views, sizeof(*v) * (g_nviews + 1));
@@ -141,7 +144,7 @@ void xw_web_we_tick(void) {
   clock_gettime(CLOCK_MONOTONIC, &ts);
   uint64_t now = (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
   static uint64_t last = 0;
-  if (now - last < 50)
+  if (now - last < 33)
     return;
   last = now;
   if (!xw_web_we_want()) {
@@ -1104,6 +1107,8 @@ static int web_control(XWBackend *b, const char *name, const char *value,
                want ? "pause" : "play");
       web_eval(ctx, js);
     }
+    if (strcmp(name, "pause") == 0)
+      web_notify_listener_state(ctx);
     web_osd(ctx, name, value, want);
     return 0;
   }
@@ -1329,6 +1334,32 @@ static void web_deliver_we_properties(WebKitWebView *view, WebCtx *ctx) {
   g_free(script);
 }
 
+/* WE general application state: pages read the user's frame limit from
+ * applyGeneralProperties and react to pause/resume via setPaused. Both
+ * methods are optional, and a page may define the listener after
+ * document-start, so retry briefly like the property path. Pause has one
+ * source of truth: the user paused OR DPMS froze the screen. */
+static void web_notify_listener_state(WebCtx *ctx) {
+  char gen[128] = "";
+  char js[512];
+  if (!ctx || !ctx->view || ctx->dead)
+    return;
+  if (ctx->fps > 0.0)
+    snprintf(gen, sizeof(gen),
+             "try{if(L.applyGeneralProperties)"
+             "L.applyGeneralProperties({fps:%d});}catch(e){}",
+             (int)(ctx->fps + 0.5));
+  snprintf(js, sizeof(js),
+           "(function(){var n=0;function a(){"
+           "var L=window.wallpaperPropertyListener;"
+           "if(!L){if(++n<50)setTimeout(a,200);return;}"
+           "%s"
+           "try{if(L.setPaused)L.setPaused(%s);}catch(e){}"
+           "}a();})();",
+           gen, (ctx->dpms_paused || ctx->ctl_paused) ? "true" : "false");
+  web_eval(ctx, js);
+}
+
 /* One-shot file:// -> http localStorage migration. The file:// era keyed
  * each wallpaper's storage under "file://"; the http server changed the
  * origin, orphaning it (same data dir, different origin key). Once per
@@ -1480,6 +1511,7 @@ static void web_mig_on_finished(WebKitWebView *view, WebCtx *ctx) {
   /* stage 3 reload landed, or anything unexpected: back to normal. */
   ctx->migrating = 0;
   web_push_audio_ctl(ctx);
+  web_notify_listener_state(ctx);
   if (ctx->root_dir[0])
     web_deliver_we_properties(view, ctx);
 }
@@ -1526,6 +1558,7 @@ static void web_load_changed_cb(WebKitWebView *view,
   }
   /* the shim is re-injected per document, so re-apply the stored level */
   web_push_audio_ctl(ctx);
+  web_notify_listener_state(ctx);
   if (!ctx->root_dir[0])
     return; /* only local dirs have a sibling project.json */
   web_deliver_we_properties(view, ctx);
@@ -1841,6 +1874,7 @@ static int web_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWErro
   ctx->ctl_started = (opt->mute || (opt->volume > 0.0 && opt->volume != 100.0))
                          ? 1
                          : 0;
+  ctx->fps = opt->fps;
   ctx->path = strdup(opt->path);
   if (!ctx->path) {
     XW_ERROR_SET(err, 1, "out of memory");
@@ -1961,6 +1995,7 @@ static void web_set_paused(XWBackend *b, int paused) {
     if (!ctx->ctl_paused)
       web_eval(ctx, "window.__xwCtlMedia&&window.__xwCtlMedia('play');");
   }
+  web_notify_listener_state(ctx);
 }
 
 /* 同类型复用: 同一壁纸只换 URL 重新加载; 换到不同壁纸则重建整个
@@ -1998,6 +2033,7 @@ static int web_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
     web_cache_save(new_key, ctx->over, ctx->n_over);
     web_disk_save(ctx, new_key);
   }
+  ctx->fps = opt->fps;
   free(ctx->path);
   ctx->path = strdup(opt->path);
   if (!ctx->path)
@@ -2198,6 +2234,7 @@ static int web_init_wl(XWBackend *b, XWWlWindow *win,
   ctx->ctl_started = (opt->mute || (opt->volume > 0.0 && opt->volume != 100.0))
                          ? 1
                          : 0;
+  ctx->fps = opt->fps;
   ctx->path = strdup(opt->path);
   if (!ctx->path) {
     XW_ERROR_SET(err, 1, "out of memory");
