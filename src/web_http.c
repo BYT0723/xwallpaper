@@ -26,6 +26,8 @@ struct XWWebHttp {
   volatile gint active; /* in-flight connection workers */
   char *aliases[XW_HTTP_ALIAS_MAX];
   int n_alias;
+  char *dirs[XW_HTTP_DIR_MAX];
+  int n_dir;
 };
 
 const char *xw_web_http_mime(const char *path) {
@@ -309,6 +311,110 @@ static int http_alias_lookup(XWWebHttp *h, const char *target,
   return path ? 0 : -1;
 }
 
+int xw_web_http_mount_dir(XWWebHttp *h, const char *abs_dir) {
+  struct stat st;
+  char *canon;
+  int i, id = -1;
+  if (!h || !abs_dir || abs_dir[0] != '/')
+    return -1;
+  canon = realpath(abs_dir, NULL);
+  if (!canon)
+    return -1;
+  if (stat(canon, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    free(canon);
+    return -1;
+  }
+  pthread_mutex_lock(&h->lock);
+  for (i = 0; i < h->n_dir; i++) {
+    if (strcmp(h->dirs[i], canon) == 0) {
+      id = i;
+      break;
+    }
+  }
+  if (id < 0 && h->n_dir < XW_HTTP_DIR_MAX) {
+    h->dirs[h->n_dir] = canon;
+    id = h->n_dir++;
+    canon = NULL;
+  }
+  pthread_mutex_unlock(&h->lock);
+  free(canon);
+  return id;
+}
+
+/* Directory route: /_xw/dir/<id>/<rel> -> canonical path inside that root.
+ * The candidate (including any ".." or symlinks) is canonicalized and then
+ * prefix-checked, so nothing outside the mounted root can be served.
+ * Returns 0 on success, -2 when the target escapes the root, -1 otherwise. */
+static int http_dir_lookup(XWWebHttp *h, const char *target, char *out,
+                           size_t n) {
+  static const char *kPre = "/_xw/dir/";
+  const char *p;
+  const char *rel;
+  char *end, *dec = NULL, *cand = NULL, *rp = NULL, *root = NULL;
+  long id;
+  int rc = -1;
+  if (!h || !target || !out || n == 0)
+    return -1;
+  if (strncmp(target, kPre, strlen(kPre)) != 0)
+    return -1;
+  p = target + strlen(kPre);
+  if (*p < '0' || *p > '9')
+    return -1;
+  id = strtol(p, &end, 10);
+  if (*end != '/')
+    return -1;
+  rel = end + 1;
+  if (!*rel)
+    return -1;
+  {
+    char *tmp = g_strdup(rel);
+    char *q;
+    if (!tmp)
+      return -1;
+    q = strpbrk(tmp, "?#");
+    if (q)
+      *q = '\0';
+    dec = g_uri_unescape_string(tmp, NULL);
+    g_free(tmp);
+  }
+  /* Signed char check: a decoded NUL or an absolute path never escapes. */
+  if (!dec || !dec[0] || dec[0] == '/')
+    goto out;
+  pthread_mutex_lock(&h->lock);
+  if (id >= 0 && id < h->n_dir)
+    root = g_strdup(h->dirs[id]);
+  pthread_mutex_unlock(&h->lock);
+  if (!root)
+    goto out;
+  cand = g_build_filename(root, dec, NULL);
+  if (!cand)
+    goto out;
+  rp = realpath(cand, NULL);
+  if (!rp) {
+    rc = -1;
+    goto out;
+  }
+  {
+    size_t rl = strlen(root);
+    if (strncmp(rp, root, rl) != 0 ||
+        (rp[rl] != '/' && rp[rl] != '\0')) {
+      rc = -2;
+      goto out;
+    }
+    if (rp[rl] == '\0') /* the root itself is not a file */
+      goto out;
+  }
+  if (snprintf(out, n, "%s", rp) >= (int)n)
+    goto out;
+  rc = 0;
+out:
+  g_free(root);
+  g_free(cand);
+  free(rp);
+  g_free(dec);
+  return rc;
+}
+
 /* Connection worker: blocking I/O runs here so an idle peer (TCP
  * preconnect, half-open socket) can never stall the server thread, let
  * alone the daemon's GTK main loop. */
@@ -427,37 +533,52 @@ static void http_serve(XWWebHttp *h, GSocketConnection *conn) {
       if (http_alias_lookup(h, target, abuf, sizeof(abuf)) == 0) {
         serve = abuf;
       } else {
-        int rc = xw_web_http_resolve(root, target, full, sizeof(full));
-        if (rc == -2) {
-          http_send_status(os, 403, "Forbidden", NULL, keep_alive);
+        int drc = http_dir_lookup(h, target, abuf, sizeof(abuf));
+        int is_dir_route = strncmp(target, "/_xw/dir/", 9) == 0;
+        if (drc == 0) {
+          serve = abuf;
+        } else if (drc == -2 || is_dir_route) {
+          /* -2: canonical path escaped the mounted root. A malformed or
+           * unknown /_xw/dir/ target is a 404, never a root-relative hit. */
+          http_send_status(os, drc == -2 ? 403 : 404,
+                           drc == -2 ? "Forbidden" : "Not Found", NULL,
+                           keep_alive);
           if (!keep_alive)
             goto done;
           goto next;
-        }
-        if (rc != 0) {
-          http_send_status(os, 400, "Bad Request", NULL, keep_alive);
-          if (!keep_alive)
-            goto done;
-          goto next;
-        }
-        {
-          char *rp = realpath(full, NULL);
-          size_t rl = strlen(root);
-          int inside;
-          if (!rp) {
-            http_send_status(os, 404, "Not Found", NULL, keep_alive);
-            if (!keep_alive)
-              goto done;
-            goto next;
-          }
-          inside = strncmp(rp, root, rl) == 0 &&
-                   (rp[rl] == '/' || rp[rl] == '\0');
-          free(rp);
-          if (!inside) {
+        } else {
+          int rc = xw_web_http_resolve(root, target, full, sizeof(full));
+          if (rc == -2) {
             http_send_status(os, 403, "Forbidden", NULL, keep_alive);
             if (!keep_alive)
               goto done;
             goto next;
+          }
+          if (rc != 0) {
+            http_send_status(os, 400, "Bad Request", NULL, keep_alive);
+            if (!keep_alive)
+              goto done;
+            goto next;
+          }
+          {
+            char *rp = realpath(full, NULL);
+            size_t rl = strlen(root);
+            int inside;
+            if (!rp) {
+              http_send_status(os, 404, "Not Found", NULL, keep_alive);
+              if (!keep_alive)
+                goto done;
+              goto next;
+            }
+            inside = strncmp(rp, root, rl) == 0 &&
+                     (rp[rl] == '/' || rp[rl] == '\0');
+            free(rp);
+            if (!inside) {
+              http_send_status(os, 403, "Forbidden", NULL, keep_alive);
+              if (!keep_alive)
+                goto done;
+              goto next;
+            }
           }
         }
       }
@@ -737,6 +858,8 @@ void xw_web_http_stop(XWWebHttp *h) {
     g_usleep(1000);
   for (i = 0; i < h->n_alias; i++)
     free(h->aliases[i]);
+  for (i = 0; i < h->n_dir; i++)
+    free(h->dirs[i]);
   pthread_cond_destroy(&h->cond);
   pthread_mutex_destroy(&h->lock);
   free(h->root);

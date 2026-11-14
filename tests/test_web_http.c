@@ -7,12 +7,14 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/select.h>
 
 static void test_keepalive(void);
 static void test_keepalive_range(void);
+static void test_dir_mount(void);
 
 static void test_mime(void) {
   TEST_BEGIN("wasm/js/html mime types map correctly");
@@ -136,6 +138,7 @@ int main(void) {
   test_range();
   test_alias();
   test_preferred_port();
+  test_dir_mount();
   test_keepalive();
   test_keepalive_range();
   TEST_SUMMARY();
@@ -294,4 +297,149 @@ static void test_keepalive_range(void) {
   TEST_CHECK(blen > 0);
   close(fd);
   xw_web_http_stop(h);
+}
+
+/* One-shot request: returns 0 when a response was read; body points into the
+ * shared store inside test_read_response. Use only for GET (HEAD has no
+ * body, so read it with test_recv_all instead). */
+static int http_get(int port, const char *path, const char *range,
+                    char *hdr, size_t hcap, char **body, size_t *blen) {
+  int fd = test_tcp_connect(port);
+  char req[1024];
+  if (fd < 0)
+    return -1;
+  if (range)
+    snprintf(req, sizeof(req),
+             "GET %s HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: %s\r\n"
+             "Connection: close\r\n\r\n", path, range);
+  else
+    snprintf(req, sizeof(req),
+             "GET %s HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+             "Connection: close\r\n\r\n", path);
+  if (send(fd, req, strlen(req), 0) != (ssize_t)strlen(req)) {
+    close(fd);
+    return -1;
+  }
+  {
+    int rc = test_read_response(fd, hdr, hcap, body, blen);
+    close(fd);
+    return rc;
+  }
+}
+
+/* Directory mounts back WE "directory" user properties: a read-only route
+ * outside the wallpaper root, with realpath containment. */
+static void test_dir_mount(void) {
+  XWWebHttp *h = NULL;
+  XWError err;
+  char tmpl[] = "/tmp/opencode/xwdir-XXXXXX";
+  char root[512], sub[600], file[700], leak[700], mk[700];
+  char secret[128], path[900], hdr[8192], *body = NULL;
+  size_t blen = 0;
+  FILE *f;
+  int id, port, fd, i, n;
+  TEST_BEGIN("directory mounts serve only files inside the root");
+
+  memset(&err, 0, sizeof(err));
+  h = xw_web_http_start("tests/data/webunity", 0, &err);
+  TEST_CHECK(h != NULL);
+  if (!h)
+    return;
+  port = xw_web_http_port(h);
+  TEST_CHECK(port > 0);
+
+  TEST_CHECK(mkdtemp(tmpl) != NULL);
+  snprintf(root, sizeof(root), "%s", tmpl);
+  snprintf(sub, sizeof(sub), "%s/sub", root);
+  snprintf(file, sizeof(file), "%s/a.txt", sub);
+  snprintf(leak, sizeof(leak), "%s/leak", root);
+  TEST_CHECK(mkdir(sub, 0755) == 0);
+  f = fopen(file, "w");
+  TEST_CHECK(f != NULL);
+  if (f) {
+    fputs("hello", f);
+    fclose(f);
+  }
+  TEST_CHECK(symlink("/etc/passwd", leak) == 0);
+  snprintf(secret, sizeof(secret), "/tmp/opencode/xwdir-secret-%d.txt",
+           (int)getpid());
+  f = fopen(secret, "w");
+  if (f) {
+    fputs("nope", f);
+    fclose(f);
+  }
+
+  id = xw_web_http_mount_dir(h, root);
+  TEST_CHECK(id >= 0);
+  TEST_CHECK_EQ_INT(xw_web_http_mount_dir(h, root), id);
+  TEST_CHECK_EQ_INT(xw_web_http_mount_dir(h, file), -1);
+  TEST_CHECK_EQ_INT(xw_web_http_mount_dir(h, "/no/such/dir"), -1);
+  TEST_CHECK_EQ_INT(xw_web_http_mount_dir(h, NULL), -1);
+  TEST_CHECK_EQ_INT(xw_web_http_mount_dir(NULL, root), -1);
+
+  snprintf(path, sizeof(path), "/_xw/dir/%d/sub/a.txt", id);
+  TEST_CHECK(http_get(port, path, NULL, hdr, sizeof(hdr), &body, &blen) == 0);
+  TEST_CHECK(strstr(hdr, "200") != NULL);
+  TEST_CHECK(strstr(hdr, "text/plain") != NULL);
+  TEST_CHECK(blen == 5 && memcmp(body, "hello", 5) == 0);
+
+  /* range still works through the directory route */
+  TEST_CHECK(http_get(port, path, "bytes=1-3", hdr, sizeof(hdr), &body,
+                      &blen) == 0);
+  TEST_CHECK(strstr(hdr, "206") != NULL);
+  TEST_CHECK(blen == 3 && memcmp(body, "ell", 3) == 0);
+
+  /* traversal and symlink escape are refused, not served */
+  snprintf(path, sizeof(path), "/_xw/dir/%d/../%s", id,
+           strrchr(secret, '/') + 1);
+  TEST_CHECK(http_get(port, path, NULL, hdr, sizeof(hdr), &body, &blen) == 0);
+  TEST_CHECK(strstr(hdr, "403") != NULL);
+  snprintf(path, sizeof(path), "/_xw/dir/%d/leak", id);
+  TEST_CHECK(http_get(port, path, NULL, hdr, sizeof(hdr), &body, &blen) == 0);
+  TEST_CHECK(strstr(hdr, "403") != NULL);
+  snprintf(path, sizeof(path), "/_xw/dir/99/sub/a.txt");
+  TEST_CHECK(http_get(port, path, NULL, hdr, sizeof(hdr), &body, &blen) == 0);
+  TEST_CHECK(strstr(hdr, "404") != NULL);
+
+  /* HEAD returns headers only */
+  snprintf(path, sizeof(path), "/_xw/dir/%d/sub/a.txt", id);
+  fd = test_tcp_connect(port);
+  TEST_CHECK(fd >= 0);
+  if (fd >= 0) {
+    char req[1024], buf[4096];
+    snprintf(req, sizeof(req),
+             "HEAD %s HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+             path);
+    TEST_CHECK(send(fd, req, strlen(req), 0) == (ssize_t)strlen(req));
+    n = test_recv_all(fd, buf, sizeof(buf));
+    TEST_CHECK(n > 0 && strstr(buf, "200") != NULL);
+    {
+      char *eoh = n > 0 ? strstr(buf, "\r\n\r\n") : NULL;
+      TEST_CHECK(eoh != NULL && (size_t)(eoh - buf) + 4 == (size_t)n);
+    }
+    close(fd);
+  }
+
+  /* mount cap: stable ids for distinct roots, then a hard failure */
+  for (i = 1; i < XW_HTTP_DIR_MAX; i++) {
+    snprintf(mk, sizeof(mk), "%s/m%d", root, i);
+    TEST_CHECK(mkdir(mk, 0755) == 0);
+    TEST_CHECK(xw_web_http_mount_dir(h, mk) >= 0);
+  }
+  snprintf(mk, sizeof(mk), "%s/over", root);
+  TEST_CHECK(mkdir(mk, 0755) == 0);
+  TEST_CHECK_EQ_INT(xw_web_http_mount_dir(h, mk), -1);
+
+  xw_web_http_stop(h);
+  unlink(leak);
+  unlink(file);
+  rmdir(sub);
+  unlink(secret);
+  for (i = 1; i < XW_HTTP_DIR_MAX; i++) {
+    snprintf(mk, sizeof(mk), "%s/m%d", root, i);
+    rmdir(mk);
+  }
+  snprintf(mk, sizeof(mk), "%s/over", root);
+  rmdir(mk);
+  rmdir(root);
 }

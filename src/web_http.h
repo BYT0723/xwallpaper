@@ -38,4 +38,14 @@ int xw_web_http_parse_range(const char *hdr, long long size, long long *a,
 #define XW_HTTP_ALIAS_MAX 64
 int xw_web_http_alias(XWWebHttp *h, const char *abs_path);
 
+/* Directory mounts: expose a directory tree (e.g. a WE "directory" user
+ * property) as /_xw/dir/<id>/<rel>. abs_dir is canonicalized with realpath
+ * once; every lookup canonicalizes the candidate and refuses anything that
+ * escapes the root (including through symlinks). Ids are stable per
+ * canonical path and live with the server. Only existing directories are
+ * accepted. Returns the id, or -1 (including when the mount table is full).
+ * Thread-safe. */
+#define XW_HTTP_DIR_MAX 8
+int xw_web_http_mount_dir(XWWebHttp *h, const char *abs_dir);
+
 #endif /* XW_WEB_HTTP_H */
