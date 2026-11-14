@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head><title>COMBO:none</title></head>
+<body>
+<script>
+/* Echo applyUserProperties so the test can see value + text for combos. */
+window.wallpaperPropertyListener = {
+  applyUserProperties: function (p) {
+    try {
+      document.title = 'COMBO:' + JSON.stringify(p);
+    } catch (e) {
+      document.title = 'COMBO:ERR';
+    }
+  }
+};
+</script>
+</body>
+</html>

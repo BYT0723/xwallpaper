@@ -16,6 +16,7 @@ typedef struct {
   char label[XW_WEB_PROP_LABEL_MAX]; /* localized "text", sanitized for TSV */
   char mode[16];      /* directory: "ondemand" / "fetchall" (else empty) */
   char file_type[16]; /* directory: "image" / "video" (else empty) */
+  char text[XW_WEB_PROP_LABEL_MAX]; /* combo: selected option label (localized) */
 } XWWebProp;
 
 /* Map a POSIX locale tag ("zh_CN.UTF-8", "ja_JP", "C") to a WE localization
@@ -39,6 +40,14 @@ void xw_web_props_locale(char *out, size_t n);
  * input, allocation failure, or more than XW_WEB_PROPS_MAX entries. */
 int xw_web_props_parse(const char *json, size_t len, const char *locale,
                        XWWebProp **out);
+
+/* Resolve the display label of a combo property's selected value from the
+ * project.json text: general.properties.<name>.options[].label, translated
+ * through general.localization when the label is a key. Unknown name, value
+ * or non-combo properties return 0 with an empty string; bad input is -1. */
+int xw_web_props_combo_text(const char *json, size_t len, const char *locale,
+                            const char *name, const char *value,
+                            char *out, size_t n);
 
 /* Build a JS statement calling
  * window.wallpaperPropertyListener.applyUserProperties({name:{value:...}})

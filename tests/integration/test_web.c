@@ -1855,6 +1855,57 @@ static void test_we_dir_fetchall(void) {
   xw_x11_destroy_window(win);
 }
 
+/* Combo overrides must carry the selected option's display label, because
+ * overrides bypass the page's own project.json fetch. */
+static void test_we_combo_text(void) {
+  TEST_BEGIN("combo override delivers value and text");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "wecombos");
+  cfg.geom_x = 0; cfg.geom_y = 0; cfg.geom_w = 400; cfg.geom_h = 300;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/wecombos";
+
+  XWBackend *tmpl = xw_web_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  pump_gtk(dpy, 6);
+
+  GtkWidget *view = find_web_view();
+  TEST_CHECK(view != NULL);
+  if (view) {
+    XWError serr;
+    memset(&serr, 0, sizeof(serr));
+    TEST_CHECK_EQ_INT(backend.set_prop(&backend, "bgm", "1", &serr), 0);
+    pump_gtk(dpy, 3);
+    const char *title = webkit_web_view_get_title(WEBKIT_WEB_VIEW(view));
+    TEST_CHECK(title != NULL &&
+               strstr(title, "\"bgm\":{\"value\":\"1\",\"text\":\"Rain\"}") !=
+                   NULL);
+  }
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
   test_web_gst_playbin3_pinned();
@@ -1881,5 +1932,6 @@ int main(void) {
   test_we_general_fps_absent();
   test_we_dir_ondemand();
   test_we_dir_fetchall();
+  test_we_combo_text();
   TEST_SUMMARY();
 }

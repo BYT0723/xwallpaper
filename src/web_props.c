@@ -136,6 +136,43 @@ static void copy_label(char *dst, size_t dn, const char *src) {
   dst[o] = '\0';
 }
 
+/* Look up the selected option's label in one parsed combo property. */
+static void combo_text_from(struct json_object *val,
+                            struct json_object *strings, const char *value,
+                            char *out, size_t n) {
+  struct json_object *opts = NULL, *o, *v, *l, *tr = NULL;
+  const char *label;
+  int i, cnt;
+  if (out && n)
+    out[0] = '\0';
+  if (!val || !value || !out || n == 0 ||
+      json_object_get_type(val) != json_type_object)
+    return;
+  if (!json_object_object_get_ex(val, "options", &opts) || !opts ||
+      json_object_get_type(opts) != json_type_array)
+    return;
+  cnt = (int)json_object_array_length(opts);
+  for (i = 0; i < cnt; i++) {
+    o = json_object_array_get_idx(opts, i);
+    if (!o || json_object_get_type(o) != json_type_object)
+      continue;
+    if (!json_object_object_get_ex(o, "value", &v) || !v)
+      continue;
+    if (strcmp(json_object_get_string(v), value) != 0)
+      continue;
+    if (!json_object_object_get_ex(o, "label", &l) || !l ||
+        json_object_get_type(l) != json_type_string)
+      return;
+    label = json_object_get_string(l);
+    if (strings && label && json_object_object_get_ex(strings, label, &tr) &&
+        tr && json_object_get_type(tr) == json_type_string)
+      label = json_object_get_string(tr);
+    if (label)
+      snprintf(out, n, "%s", label);
+    return;
+  }
+}
+
 int xw_web_props_parse(const char *json, size_t len, const char *locale,
                        XWWebProp **out) {
   struct json_object *root = NULL, *general = NULL, *props = NULL;
@@ -221,6 +258,10 @@ int xw_web_props_parse(const char *json, size_t len, const char *locale,
     if (ftype && json_object_get_type(ftype) == json_type_string)
       snprintf(arr[n].file_type, sizeof(arr[n].file_type), "%s",
                json_object_get_string(ftype));
+    if (json_object_get_type(val) == json_type_object &&
+        strcmp(arr[n].type, "combo") == 0)
+      combo_text_from(val, strings, arr[n].value, arr[n].text,
+                      sizeof(arr[n].text));
     if (strings &&
         json_object_object_get_ex(val, "text", &txt) && txt &&
         json_object_get_type(txt) == json_type_string) {
@@ -275,6 +316,41 @@ static int esc_append(char *out, size_t m, size_t *off, const char *s) {
     *off += (size_t)w;
   }
   return 0;
+}
+
+int xw_web_props_combo_text(const char *json, size_t len, const char *locale,
+                            const char *name, const char *value, char *out,
+                            size_t n) {
+  struct json_object *root = NULL, *general = NULL, *props = NULL;
+  struct json_object *val = NULL, *t = NULL, *loc = NULL, *strings = NULL;
+  char *text;
+  int rc = -1;
+  if (!json || !len || !name || !value || !out || n == 0)
+    return -1;
+  out[0] = '\0';
+  text = malloc(len + 1);
+  if (!text)
+    return -1;
+  memcpy(text, json, len);
+  text[len] = '\0';
+  root = json_tokener_parse(text);
+  free(text);
+  if (!root)
+    return -1;
+  rc = 0;
+  if (json_object_object_get_ex(root, "general", &general) && general &&
+      json_object_object_get_ex(general, "properties", &props) && props &&
+      json_object_object_get_ex(props, name, &val) && val &&
+      json_object_get_type(val) == json_type_object &&
+      json_object_object_get_ex(val, "type", &t) && t &&
+      json_object_get_type(t) == json_type_string &&
+      strcmp(json_object_get_string(t), "combo") == 0) {
+    if (json_object_object_get_ex(general, "localization", &loc))
+      strings = pick_localization(loc, locale);
+    combo_text_from(val, strings, value, out, n);
+  }
+  json_object_put(root);
+  return rc;
 }
 
 int xw_web_props_normalize(const char *type, const char *value,
@@ -438,6 +514,12 @@ int xw_web_props_object_js(const XWWebProp *props, int n,
                lit_append(out, m, &off, "\"") != 0) {
       return -1;
     }
+    if (strcmp(props[i].type, "combo") == 0 && props[i].text[0]) {
+      if (lit_append(out, m, &off, ",\"text\":\"") != 0 ||
+          esc_append(out, m, &off, props[i].text) != 0 ||
+          lit_append(out, m, &off, "\"") != 0)
+        return -1;
+    }
     if (lit_append(out, m, &off, "}") != 0)
       return -1;
   }
@@ -460,6 +542,8 @@ size_t xw_web_props_object_js_len(const XWWebProp *props, int n) {
     size_t add = 13 + esc_len(props[i].name) + esc_len(props[i].value);
     if (!prop_value_is_raw(&props[i]))
       add += 2;
+    if (strcmp(props[i].type, "combo") == 0 && props[i].text[0])
+      add += 10 + esc_len(props[i].text);
     if (i > 0)
       add++;
     if (add > (size_t)-1 - total)
