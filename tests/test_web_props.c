@@ -398,6 +398,28 @@ static void test_normalize_color(void) {
       xw_web_props_normalize("color", "#00ff00", NULL, 0), -1);
 }
 
+static void test_dir_props(void) {
+  TEST_BEGIN("directory properties keep mode and fileType");
+  const char *json =
+      "{\"general\":{\"properties\":{"
+      "\"pics\":{\"type\":\"directory\",\"mode\":\"ondemand\","
+      "\"fileType\":\"image\",\"value\":\".\"},"
+      "\"vids\":{\"type\":\"directory\",\"mode\":\"fetchall\","
+      "\"filetype\":\"video\",\"value\":\"/x\"},"
+      "\"n\":{\"type\":\"slider\",\"value\":1}}}}";
+  XWWebProp *out = NULL;
+  TEST_CHECK_EQ_INT(xw_web_props_parse(json, strlen(json), "en-us", &out), 3);
+  if (out) {
+    TEST_CHECK_EQ_STR(out[0].mode, "ondemand");
+    TEST_CHECK_EQ_STR(out[0].file_type, "image");
+    TEST_CHECK_EQ_STR(out[1].mode, "fetchall");
+    TEST_CHECK_EQ_STR(out[1].file_type, "video");
+    TEST_CHECK_EQ_STR(out[2].mode, "");
+    TEST_CHECK_EQ_STR(out[2].file_type, "");
+    free(out);
+  }
+}
+
 int main(void) {
   TEST_SUITE("web_props");
   test_parse_ok();
@@ -414,5 +436,6 @@ int main(void) {
   test_object_js_len_escaped();
   test_apply_large();
   test_normalize_color();
+  test_dir_props();
   TEST_SUMMARY();
 }

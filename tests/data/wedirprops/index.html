@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head><title>RAND:none</title></head>
+<body>
+<script>
+/* Ask for a random file from the ondemand directory property and echo the
+ * result into the title: RAND:<url> on success, RAND:EMPTY when native has
+ * nothing (no directory, empty directory, unknown property name). */
+function show(url) {
+  document.title = 'RAND:' + (url || 'EMPTY');
+}
+window.wallpaperPropertyListener = {
+  applyUserProperties: function (p) {}
+};
+window.wallpaperRequestRandomFileForProperty('pics', show);
+window.__rq = function () {
+  window.wallpaperRequestRandomFileForProperty('pics', show);
+};
+</script>
+</body>
+</html>

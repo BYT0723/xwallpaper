@@ -21,6 +21,7 @@
 #include "we_pulse.h"
 #include "web.h"
 #include "web_dir.h"
+#include "web_dir_scan.h"
 #include "web_http.h"
 #include "web_props.h"
 #include "x11.h"
@@ -263,6 +264,14 @@ static const char *kMediaJS =
     "window.__xwMediaPlayback=function(o){emit('playback',o);};"
     "window.__xwMediaTimeline=function(o){emit('timeline',o);};"
     "window.__xwMediaStatus=function(o){emit('status',o);};"
+    "window.__xwRand=[];"
+    "window.wallpaperRequestRandomFileForProperty=function(name,cb){"
+    "if(typeof cb!=='function')return;"
+    "var id=window.__xwRand.length;window.__xwRand.push(cb);"
+    "try{window.webkit.messageHandlers.xwRandom.postMessage(id+'\\n'+name);}"
+    "catch(e){}};"
+    "window.__xwRandomFile=function(id,url){"
+    "var cb=window.__xwRand[id];if(cb){try{cb(url);}catch(e){}}};"
     "})();";
 
 /* Runtime audio control. WebKitGTK has no volume API, so the page is driven
@@ -1190,6 +1199,132 @@ static void web_media_message_cb(WebKitUserContentManager *ucm,
   g_free(kind);
 }
 
+/* The effective value of a user property: --set-property overrides win over
+ * project.json defaults, exactly like list/set do. */
+static const XWWebProp *web_prop_effective(WebCtx *ctx, const char *name) {
+  XWWebProp *p;
+  if (!ctx || !name || !name[0])
+    return NULL;
+  p = web_find_prop(ctx->over, ctx->n_over, (char *)name);
+  if (!p)
+    p = web_find_prop(ctx->props, ctx->n_props, (char *)name);
+  return p;
+}
+
+/* Directory property values are file:// URIs, absolute paths, or paths
+ * relative to the wallpaper root. Only these three sources are trusted; the
+ * page never supplies a path, only the property name. */
+static int web_dir_value_path(WebCtx *ctx, const char *value, char *out,
+                              size_t n) {
+  char tmp[2048];
+  struct stat st;
+  char *rp;
+  if (!ctx || !value || !value[0] || !out || n == 0)
+    return -1;
+  if (strncmp(value, "file://", 7) == 0) {
+    char *p = g_filename_from_uri(value, NULL, NULL);
+    if (!p)
+      return -1;
+    snprintf(tmp, sizeof(tmp), "%s", p);
+    g_free(p);
+  } else if (value[0] == '/') {
+    snprintf(tmp, sizeof(tmp), "%s", value);
+  } else {
+    if (!ctx->root_dir[0])
+      return -1;
+    snprintf(tmp, sizeof(tmp), "%s/%s", ctx->root_dir, value);
+  }
+  rp = realpath(tmp, NULL);
+  if (!rp)
+    return -1;
+  if (stat(rp, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    free(rp);
+    return -1;
+  }
+  if (snprintf(out, n, "%s", rp) >= (int)n) {
+    free(rp);
+    return -1;
+  }
+  free(rp);
+  return 0;
+}
+
+static void web_random_reply(WebCtx *ctx, int id, const char *url) {
+  char *esc = g_strescape(url ? url : "", NULL);
+  char *js = g_strdup_printf(
+      "window.__xwRandomFile&&window.__xwRandomFile(%d,\"%s\");", id,
+      esc ? esc : "");
+  g_free(esc);
+  if (!js)
+    return;
+  web_eval(ctx, js);
+  g_free(js);
+}
+
+/* ondemand directory property: page posts "<callback id>\n<property name>";
+ * native resolves the directory, picks a random matching file and replies
+ * with an http URL (file:// is unreadable from an http-origin page). */
+static void web_random_message_cb(WebKitUserContentManager *ucm,
+                                  WebKitJavascriptResult *res, gpointer ud) {
+  WebCtx *ctx = (WebCtx *)ud;
+  char *msg = NULL;
+  char *nl;
+  char dir[4096];
+  const XWWebProp *p;
+  int id = 0, port = 0, mid = -1, n = 0;
+  char **files = NULL;
+  (void)ucm;
+  if (res) {
+    JSCValue *v = webkit_javascript_result_get_js_value(res);
+    if (v)
+      msg = jsc_value_to_string(v);
+    webkit_javascript_result_unref(res);
+  }
+  if (!ctx || !msg)
+    goto out;
+  nl = strchr(msg, '\n');
+  if (!nl)
+    goto out;
+  *nl = '\0';
+  id = atoi(msg);
+  p = web_prop_effective(ctx, nl + 1);
+  if (!p || strcmp(p->type, "directory") != 0)
+    goto out; /* unknown / non-directory properties are ignored */
+  if (!ctx->http || (port = xw_web_http_port(ctx->http)) <= 0 ||
+      web_dir_value_path(ctx, p->value, dir, sizeof(dir)) != 0) {
+    web_random_reply(ctx, id, "");
+    goto out;
+  }
+  mid = xw_web_http_mount_dir(ctx->http, dir);
+  n = mid >= 0 ? xw_web_dir_scan(dir, p->file_type, &files, 4096) : -1;
+  if (n <= 0) {
+    web_random_reply(ctx, id, "");
+    goto out;
+  }
+  {
+    const char *rel = files[g_random_int_range(0, n)];
+    size_t dl = strlen(dir);
+    char *esc;
+    char url[4096];
+    if (strncmp(rel, dir, dl) == 0)
+      rel += dl;
+    while (*rel == '/')
+      rel++;
+    esc = g_uri_escape_string(rel, "/", FALSE);
+    if (esc && snprintf(url, sizeof(url), "http://127.0.0.1:%d/_xw/dir/%d/%s",
+                        port, mid, esc) < (int)sizeof(url))
+      web_random_reply(ctx, id, url);
+    else
+      web_random_reply(ctx, id, "");
+    g_free(esc);
+  }
+out:
+  for (int i = 0; i < n; i++)
+    free(files[i]);
+  free(files);
+  g_free(msg);
+}
+
 static void web_apply_wallpaper_policy(WebKitWebView *view, WebCtx *ctx) {
   WebKitUserContentManager *ucm =
       webkit_web_view_get_user_content_manager(view);
@@ -1236,6 +1371,9 @@ static void web_apply_wallpaper_policy(WebKitWebView *view, WebCtx *ctx) {
   webkit_user_content_manager_register_script_message_handler(ucm, "xwMedia");
   g_signal_connect(ucm, "script-message-received::xwMedia",
                    G_CALLBACK(web_media_message_cb), ctx);
+  webkit_user_content_manager_register_script_message_handler(ucm, "xwRandom");
+  g_signal_connect(ucm, "script-message-received::xwRandom",
+                   G_CALLBACK(web_random_message_cb), ctx);
 }
 
 /* Per-wallpaper WebsiteDataManager: storage/cookies/cache land under
