@@ -110,6 +110,53 @@ static void test_context_menu_blocked(void) {
   xw_x11_destroy_window(win);
 }
 
+/* Legacy playbin's on-disk buffering (downloadbuffer) deadlocks on
+ * video-only webm: the whole file downloads before playback starts, then
+ * GStreamer reports 3% buffered forever, WebKit pauses "for buffering" and
+ * the page never gets its 'playing' event (wallpaper frozen on the loading
+ * hint). The backend pins playbin3 in the environment before the WebProcess
+ * spawns, which sidesteps that path. Before that pin the variable is absent
+ * and this test fails. */
+static void test_web_gst_playbin3_pinned(void) {
+  XWError err;
+  Display *dpy;
+  XWConfig cfg;
+  XWWindow *win;
+  XWBackendOpt opt;
+  XWBackend backend;
+
+  TEST_BEGIN("web backend pins playbin3 for regular media");
+  unsetenv("WEBKIT_GST_USE_PLAYBIN3");
+  memset(&err, 0, sizeof(err));
+  dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_GEOM;
+  cfg.have_geom = 1;
+  snprintf(cfg.name, sizeof(cfg.name), "webgst");
+  cfg.geom_w = 400;
+  cfg.geom_h = 300;
+  win = xw_x11_create_window(dpy, &cfg, 0, 0, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_WEB;
+  opt.path = "tests/data/webdir";
+  backend = *xw_web_backend_new();
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+
+  const char *v = getenv("WEBKIT_GST_USE_PLAYBIN3");
+  TEST_CHECK(v != NULL && strcmp(v, "1") == 0);
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
 static void test_web_paints(void) {
   TEST_BEGIN("web backend paints non-black pixels");
   XWError err;
@@ -1530,6 +1577,7 @@ static void test_web_view_mute_follows_ctl(void) {
 
 int main(void) {
   TEST_SUITE("web backend (Xvfb)");
+  test_web_gst_playbin3_pinned();
   test_web_paints();
   test_web_unity_wasm_headers();
   test_web_file_prop_aliased();

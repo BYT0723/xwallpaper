@@ -1586,18 +1586,28 @@ static void web_process_terminated_cb(WebKitWebView *view,
   webkit_web_view_reload(view);
 }
 
-/* GStreamer's OpenAL sink aborts the whole WebProcess when Pulse is
- * unreachable (pa_threaded_mainloop_start assertion); native runs show
- * autoaudiosink falls back to it once pulsesink fails. Take openal out
- * of auto-selection so a Pulse hiccup degrades to another sink instead
- * of killing the page. Inherited by the WebProcess via the environment. */
-static void web_pin_audio_sink(void) {
-  static int done = 0;
+/* Pin GStreamer choices in the environment before the WebProcess starts.
+ *
+ * WEBKIT_GST_USE_PLAYBIN3: legacy playbin enables WebKit's on-disk buffering
+ * (downloadbuffer) for non-live media. For a video-only webm (no audio track)
+ * the download can finish before playback starts; GStreamer then reports 3%
+ * buffered forever, WebKit pauses the pipeline "for buffering" and the frame
+ * stays frozen at the first GOP while the page waits for 'playing' - the
+ * wallpaper sits on its loading hint. playbin3 does not hit that
+ * downloadbuffer stall. WebKit already uses playbin3 for MSE/Blob sources, so
+ * this only changes the regular media path. An explicit value wins.
+ *
+ * GST_PLUGIN_FEATURE_RANK: GStreamer's OpenAL sink aborts the whole WebProcess
+ * when Pulse is unreachable (pa_threaded_mainloop_start assertion); native
+ * runs show autoaudiosink falls back to it once pulsesink fails. Take openal
+ * out of auto-selection so a Pulse hiccup degrades to another sink instead of
+ * killing the page. Inherited by the WebProcess via the environment. */
+static void web_pin_gst_env(void) {
   const char *cur;
   char *merged;
-  if (done)
-    return;
-  done = 1;
+  cur = getenv("WEBKIT_GST_USE_PLAYBIN3");
+  if (!cur || !cur[0])
+    g_setenv("WEBKIT_GST_USE_PLAYBIN3", "1", TRUE);
   cur = getenv("GST_PLUGIN_FEATURE_RANK");
   if (!cur || !cur[0]) {
     g_setenv("GST_PLUGIN_FEATURE_RANK", "openalsink:NONE", TRUE);
@@ -1618,7 +1628,9 @@ static void web_pin_audio_sink(void) {
  * per-wallpaper data manager above. Disk backing (unlike ephemeral) keeps
  * wallpaper settings across daemon restarts. */
 static int web_attach_context(WebCtx *ctx, XWError *err) {
-  WebKitWebsiteDataManager *man = web_new_data_manager(ctx);
+  WebKitWebsiteDataManager *man;
+  web_pin_gst_env();
+  man = web_new_data_manager(ctx);
   if (!man) {
     XW_ERROR_SET(err, 1, "webkit_website_data_manager_new failed");
     return -1;
@@ -1662,7 +1674,6 @@ static int web_attach_context(WebCtx *ctx, XWError *err) {
                    G_CALLBACK(web_load_failed_cb), ctx);
   g_signal_connect(ctx->view, "web-process-terminated",
                    G_CALLBACK(web_process_terminated_cb), ctx);
-  web_pin_audio_sink();
   web_apply_wallpaper_policy(WEBKIT_WEB_VIEW(ctx->view), ctx);
   return 0;
 }
