@@ -16,6 +16,9 @@ typedef struct {
   char title[XW_WE_MEDIA_TEXT_MAX];
   char artist[XW_WE_MEDIA_TEXT_MAX];
   char album[XW_WE_MEDIA_TEXT_MAX];
+  char subtitle[XW_WE_MEDIA_TEXT_MAX];
+  char genres[XW_WE_MEDIA_TEXT_MAX];
+  char album_artist[XW_WE_MEDIA_TEXT_MAX];
   char content_type[32];
   char art_url[XW_WE_MEDIA_URL_MAX];
   char *thumbnail; /* data: URL or http(s) URL; NULL means no artwork */
@@ -59,9 +62,10 @@ int xw_we_media_format_playback(const XWMediaInfo *m, char *out, size_t n);
 int xw_we_media_format_timeline(const XWMediaInfo *m, char *out, size_t n);
 int xw_we_media_format_status(const XWMediaInfo *m, char *out, size_t n);
 
-/* Fill title/artist/album/content_type/art_url/duration from an MPRIS
- * Metadata a{sv}. Missing keys become empty/zero. Leaves state/position/
- * versions/enabled alone. Returns 0, or -1 on bad args. */
+/* Fill title/artist/album/subtitle/genres/album_artist/content_type/art_url/
+ * duration from an MPRIS Metadata a{sv}. Missing keys become empty/zero.
+ * Leaves state/position/versions/enabled alone. Returns 0, or -1 on bad
+ * args. */
 int xw_we_media_parse_metadata(GVariant *metadata, XWMediaInfo *m);
 
 int xw_we_media_state_from_status(const char *s);

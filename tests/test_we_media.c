@@ -9,7 +9,8 @@
 #include "harness.h"
 #include "../src/we_media.h"
 
-static GVariant *metadata_full(GVariant *artist, GVariant *length) {
+static GVariant *metadata_full(GVariant *artist, GVariant *length,
+                               GVariant *album_artist) {
   GVariantBuilder b;
   g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
   g_variant_builder_add(&b, "{sv}", "xesam:title",
@@ -17,6 +18,13 @@ static GVariant *metadata_full(GVariant *artist, GVariant *length) {
   g_variant_builder_add(&b, "{sv}", "xesam:artist", artist);
   g_variant_builder_add(&b, "{sv}", "xesam:album",
                         g_variant_new_string("Album"));
+  g_variant_builder_add(&b, "{sv}", "xesam:subtitle",
+                        g_variant_new_string("Live at X"));
+  g_variant_builder_add(&b, "{sv}", "xesam:genre",
+                        g_variant_new_strv((const char *[]){"Rock", "Indie", "",
+                                                           NULL},
+                                           -1));
+  g_variant_builder_add(&b, "{sv}", "xesam:albumArtist", album_artist);
   g_variant_builder_add(&b, "{sv}", "mpris:artUrl",
                         g_variant_new_string("file:///tmp/cover.png"));
   g_variant_builder_add(&b, "{sv}", "mpris:length", length);
@@ -44,6 +52,9 @@ static void test_format_payloads(void) {
   snprintf(m.title, sizeof(m.title), "Song \"One\"");
   snprintf(m.artist, sizeof(m.artist), "歌手");
   snprintf(m.album, sizeof(m.album), "Album");
+  snprintf(m.subtitle, sizeof(m.subtitle), "Sub \"Live\"");
+  snprintf(m.genres, sizeof(m.genres), "Rock, Pop");
+  snprintf(m.album_artist, sizeof(m.album_artist), "AA");
   snprintf(m.content_type, sizeof(m.content_type), "music");
   m.state = XW_WE_MEDIA_PLAYING;
   m.position = 12.5;
@@ -54,7 +65,9 @@ static void test_format_payloads(void) {
   TEST_CHECK_EQ_INT(xw_we_media_format_props(&m, out, sizeof(out)), 0);
   TEST_CHECK_EQ_STR(out,
                     "{\"title\":\"Song \\\"One\\\"\",\"artist\":\"歌手\","
-                    "\"albumTitle\":\"Album\",\"contentType\":\"music\"}");
+                    "\"albumTitle\":\"Album\",\"contentType\":\"music\","
+                    "\"subtitle\":\"Sub \\\"Live\\\"\",\"genres\":\"Rock, Pop\","
+                    "\"albumArtist\":\"AA\"}");
 
   TEST_CHECK_EQ_INT(xw_we_media_format_thumb(&m, out, sizeof(out)), 0);
   TEST_CHECK_EQ_STR(out, "{\"thumbnail\":\"data:image/png;base64,AAAA\","
@@ -84,11 +97,14 @@ static void test_format_payloads(void) {
                          "\"textColor\":\"\"}");
 
   TEST_BEGIN("props formatter handles worst-case escaped text");
-  char big[3 * XW_WE_MEDIA_TEXT_MAX * 6 + 512];
+  char big[6 * XW_WE_MEDIA_TEXT_MAX * 6 + 512];
   memset(&m, 0, sizeof(m));
   memset(m.title, 1, sizeof(m.title) - 1);
   memset(m.artist, 1, sizeof(m.artist) - 1);
   memset(m.album, 1, sizeof(m.album) - 1);
+  memset(m.subtitle, 1, sizeof(m.subtitle) - 1);
+  memset(m.genres, 1, sizeof(m.genres) - 1);
+  memset(m.album_artist, 1, sizeof(m.album_artist) - 1);
   snprintf(m.content_type, sizeof(m.content_type), "music");
   TEST_CHECK_EQ_INT(xw_we_media_format_props(&m, big, sizeof(big)), 0);
   TEST_CHECK(strstr(big, "\\u0001") != NULL);
@@ -97,25 +113,39 @@ static void test_format_payloads(void) {
 static void test_parse_metadata(void) {
   TEST_BEGIN("MPRIS metadata maps title/artist/album/art/length");
   const char *artists[] = {"A", "B", NULL};
-  GVariant *meta = metadata_full(g_variant_new_strv(artists, -1),
-                                 g_variant_new_uint64(252186996));
+  const char *album_artists[] = {"AA", "BB", NULL};
+  GVariant *meta = metadata_full(
+      g_variant_new_strv(artists, -1), g_variant_new_uint64(252186996),
+      g_variant_new_strv(album_artists, -1));
   XWMediaInfo m;
+  char out[4096];
   memset(&m, 0, sizeof(m));
   TEST_CHECK_EQ_INT(xw_we_media_parse_metadata(meta, &m), 0);
   TEST_CHECK_EQ_STR(m.title, "Song");
   TEST_CHECK_EQ_STR(m.artist, "A, B");
   TEST_CHECK_EQ_STR(m.album, "Album");
+  TEST_CHECK_EQ_STR(m.subtitle, "Live at X");
+  TEST_CHECK_EQ_STR(m.genres, "Rock, Indie");
+  TEST_CHECK_EQ_STR(m.album_artist, "AA, BB");
   TEST_CHECK_EQ_STR(m.art_url, "file:///tmp/cover.png");
   TEST_CHECK_EQ_STR(m.content_type, "video");
   TEST_CHECK(m.duration > 252.18 && m.duration < 252.19);
+  TEST_CHECK_EQ_INT(xw_we_media_format_props(&m, out, sizeof(out)), 0);
+  TEST_CHECK_EQ_STR(out,
+                    "{\"title\":\"Song\",\"artist\":\"A, B\","
+                    "\"albumTitle\":\"Album\",\"contentType\":\"video\","
+                    "\"subtitle\":\"Live at X\",\"genres\":\"Rock, Indie\","
+                    "\"albumArtist\":\"AA, BB\"}");
   g_variant_unref(meta);
 
   TEST_BEGIN("MPRIS int64 length and single-string artist also parse");
   meta = metadata_full(g_variant_new_string("Solo"),
-                       g_variant_new_int64(438000000));
+                       g_variant_new_int64(438000000),
+                       g_variant_new_string("Solo AA"));
   memset(&m, 0, sizeof(m));
   TEST_CHECK_EQ_INT(xw_we_media_parse_metadata(meta, &m), 0);
   TEST_CHECK_EQ_STR(m.artist, "Solo");
+  TEST_CHECK_EQ_STR(m.album_artist, "Solo AA");
   TEST_CHECK(m.duration > 437.99 && m.duration < 438.01);
   g_variant_unref(meta);
 
@@ -124,11 +154,19 @@ static void test_parse_metadata(void) {
   g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
   meta = g_variant_builder_end(&b);
   memset(&m, 0xff, sizeof(m));
+  /* Keep the stale 0xff bytes NUL-terminated so a parse that forgets to
+   * clear cannot make strcmp read past the array. */
+  m.subtitle[sizeof(m.subtitle) - 1] = '\0';
+  m.genres[sizeof(m.genres) - 1] = '\0';
+  m.album_artist[sizeof(m.album_artist) - 1] = '\0';
   m.duration = 99;
   TEST_CHECK_EQ_INT(xw_we_media_parse_metadata(meta, &m), 0);
   TEST_CHECK_EQ_STR(m.title, "");
   TEST_CHECK_EQ_STR(m.artist, "");
   TEST_CHECK_EQ_STR(m.album, "");
+  TEST_CHECK_EQ_STR(m.subtitle, "");
+  TEST_CHECK_EQ_STR(m.genres, "");
+  TEST_CHECK_EQ_STR(m.album_artist, "");
   TEST_CHECK_EQ_STR(m.art_url, "");
   TEST_CHECK_EQ_STR(m.content_type, "music");
   TEST_CHECK(m.duration == 0.0);

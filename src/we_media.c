@@ -73,6 +73,9 @@ int xw_we_media_format_props(const XWMediaInfo *m, char *out, size_t n) {
   char t[XW_WE_MEDIA_TEXT_MAX * 6 + 1];
   char a[XW_WE_MEDIA_TEXT_MAX * 6 + 1];
   char al[XW_WE_MEDIA_TEXT_MAX * 6 + 1];
+  char sub[XW_WE_MEDIA_TEXT_MAX * 6 + 1];
+  char g[XW_WE_MEDIA_TEXT_MAX * 6 + 1];
+  char aa[XW_WE_MEDIA_TEXT_MAX * 6 + 1];
   char ct[sizeof(m->content_type) * 6 + 1];
   int w;
   if (!m || !out || n == 0)
@@ -80,12 +83,16 @@ int xw_we_media_format_props(const XWMediaInfo *m, char *out, size_t n) {
   if (xw_we_media_json_escape(m->title, t, sizeof(t)) != 0 ||
       xw_we_media_json_escape(m->artist, a, sizeof(a)) != 0 ||
       xw_we_media_json_escape(m->album, al, sizeof(al)) != 0 ||
+      xw_we_media_json_escape(m->subtitle, sub, sizeof(sub)) != 0 ||
+      xw_we_media_json_escape(m->genres, g, sizeof(g)) != 0 ||
+      xw_we_media_json_escape(m->album_artist, aa, sizeof(aa)) != 0 ||
       xw_we_media_json_escape(m->content_type, ct, sizeof(ct)) != 0)
     return -1;
   w = snprintf(out, n,
                "{\"title\":\"%s\",\"artist\":\"%s\",\"albumTitle\":\"%s\","
-               "\"contentType\":\"%s\"}",
-               t, a, al, ct);
+               "\"contentType\":\"%s\",\"subtitle\":\"%s\",\"genres\":\"%s\","
+               "\"albumArtist\":\"%s\"}",
+               t, a, al, ct, sub, g, aa);
   return w >= 0 && (size_t)w < n ? 0 : -1;
 }
 
@@ -180,30 +187,49 @@ static void lookup_string(GVariant *dict, const char *key, char *out,
   }
 }
 
-static void lookup_artist(GVariant *dict, char *out, size_t n) {
-  GVariant *v;
-  copy_utf8(out, n, "");
-  v = lookup_value(dict, "xesam:artist");
-  if (!v)
-    return;
-  if (g_variant_is_of_type(v, G_VARIANT_TYPE_STRING)) {
-    copy_utf8(out, n, g_variant_get_string(v, NULL));
-  } else if (g_variant_is_of_type(v, G_VARIANT_TYPE_STRING_ARRAY)) {
-    GString *s = g_string_new(NULL);
-    gsize count = g_variant_n_children(v);
-    for (gsize i = 0; i < count; i++) {
-      GVariant *child = g_variant_get_child_value(v, i);
-      const char *name = g_variant_get_string(child, NULL);
-      if (name && name[0]) {
+/* MPRIS publishes multi-value text as `as`; WE wants one ", "-joined string. */
+static void join_string_array(GVariant *v, char *out, size_t n) {
+  GString *s = g_string_new(NULL);
+  gsize count = g_variant_n_children(v);
+  for (gsize i = 0; i < count; i++) {
+    GVariant *child = g_variant_get_child_value(v, i);
+    if (g_variant_is_of_type(child, G_VARIANT_TYPE_STRING)) {
+      const char *item = g_variant_get_string(child, NULL);
+      if (item && item[0]) {
         if (s->len)
           g_string_append(s, ", ");
-        g_string_append(s, name);
+        g_string_append(s, item);
       }
-      g_variant_unref(child);
     }
-    copy_utf8(out, n, s->str);
-    g_string_free(s, TRUE);
+    g_variant_unref(child);
   }
+  copy_utf8(out, n, s->str);
+  g_string_free(s, TRUE);
+}
+
+static void lookup_string_array(GVariant *dict, const char *key, char *out,
+                                size_t n) {
+  GVariant *v;
+  copy_utf8(out, n, "");
+  v = lookup_value(dict, key);
+  if (!v)
+    return;
+  if (g_variant_is_of_type(v, G_VARIANT_TYPE_STRING_ARRAY))
+    join_string_array(v, out, n);
+  g_variant_unref(v);
+}
+
+static void lookup_string_or_array(GVariant *dict, const char *key, char *out,
+                                   size_t n) {
+  GVariant *v;
+  copy_utf8(out, n, "");
+  v = lookup_value(dict, key);
+  if (!v)
+    return;
+  if (g_variant_is_of_type(v, G_VARIANT_TYPE_STRING))
+    copy_utf8(out, n, g_variant_get_string(v, NULL));
+  else if (g_variant_is_of_type(v, G_VARIANT_TYPE_STRING_ARRAY))
+    join_string_array(v, out, n);
   g_variant_unref(v);
 }
 
@@ -260,13 +286,22 @@ int xw_we_media_parse_metadata(GVariant *metadata, XWMediaInfo *m) {
   m->title[0] = '\0';
   m->artist[0] = '\0';
   m->album[0] = '\0';
+  m->subtitle[0] = '\0';
+  m->genres[0] = '\0';
+  m->album_artist[0] = '\0';
   m->art_url[0] = '\0';
   m->content_type[0] = '\0';
   m->duration = 0.0;
 
   lookup_string(metadata, "xesam:title", m->title, sizeof(m->title));
-  lookup_artist(metadata, m->artist, sizeof(m->artist));
+  lookup_string_or_array(metadata, "xesam:artist", m->artist,
+                         sizeof(m->artist));
   lookup_string(metadata, "xesam:album", m->album, sizeof(m->album));
+  lookup_string(metadata, "xesam:subtitle", m->subtitle,
+                sizeof(m->subtitle));
+  lookup_string_array(metadata, "xesam:genre", m->genres, sizeof(m->genres));
+  lookup_string_or_array(metadata, "xesam:albumArtist", m->album_artist,
+                         sizeof(m->album_artist));
   lookup_string(metadata, "mpris:artUrl", m->art_url, sizeof(m->art_url));
   lookup_string(metadata, "xesam:url", url, sizeof(url));
 
@@ -523,6 +558,9 @@ static void player_clear_meta(XWMediaPlayer *p) {
   p->info.title[0] = '\0';
   p->info.artist[0] = '\0';
   p->info.album[0] = '\0';
+  p->info.subtitle[0] = '\0';
+  p->info.genres[0] = '\0';
+  p->info.album_artist[0] = '\0';
   p->info.art_url[0] = '\0';
   p->info.duration = 0.0;
   player_update_thumb(p);
@@ -575,10 +613,14 @@ static void refresh_active(int64_t now, int force) {
   if (!p) {
     if (active_changed || force) {
       if (g_snap.title[0] || g_snap.artist[0] || g_snap.album[0] ||
+          g_snap.subtitle[0] || g_snap.genres[0] || g_snap.album_artist[0] ||
           g_snap.art_url[0] || g_snap.content_type[0]) {
         g_snap.title[0] = '\0';
         g_snap.artist[0] = '\0';
         g_snap.album[0] = '\0';
+        g_snap.subtitle[0] = '\0';
+        g_snap.genres[0] = '\0';
+        g_snap.album_artist[0] = '\0';
         g_snap.art_url[0] = '\0';
         g_snap.content_type[0] = '\0';
         g_snap.v_props++;
@@ -605,12 +647,19 @@ static void refresh_active(int64_t now, int force) {
                   strcmp(g_snap.title, p->info.title) != 0 ||
                   strcmp(g_snap.artist, p->info.artist) != 0 ||
                   strcmp(g_snap.album, p->info.album) != 0 ||
+                  strcmp(g_snap.subtitle, p->info.subtitle) != 0 ||
+                  strcmp(g_snap.genres, p->info.genres) != 0 ||
+                  strcmp(g_snap.album_artist, p->info.album_artist) != 0 ||
                   strcmp(g_snap.art_url, p->info.art_url) != 0 ||
                   strcmp(g_snap.content_type, p->info.content_type) != 0;
   if (props_changed) {
     snprintf(g_snap.title, sizeof(g_snap.title), "%s", p->info.title);
     snprintf(g_snap.artist, sizeof(g_snap.artist), "%s", p->info.artist);
     snprintf(g_snap.album, sizeof(g_snap.album), "%s", p->info.album);
+    snprintf(g_snap.subtitle, sizeof(g_snap.subtitle), "%s", p->info.subtitle);
+    snprintf(g_snap.genres, sizeof(g_snap.genres), "%s", p->info.genres);
+    snprintf(g_snap.album_artist, sizeof(g_snap.album_artist), "%s",
+             p->info.album_artist);
     snprintf(g_snap.art_url, sizeof(g_snap.art_url), "%s", p->info.art_url);
     snprintf(g_snap.content_type, sizeof(g_snap.content_type), "%s",
              p->info.content_type);
@@ -1023,6 +1072,9 @@ void xw_we_media_stop(void) {
   g_snap.title[0] = '\0';
   g_snap.artist[0] = '\0';
   g_snap.album[0] = '\0';
+  g_snap.subtitle[0] = '\0';
+  g_snap.genres[0] = '\0';
+  g_snap.album_artist[0] = '\0';
   g_snap.art_url[0] = '\0';
   g_snap.content_type[0] = '\0';
   g_snap.state = XW_WE_MEDIA_STOPPED;
