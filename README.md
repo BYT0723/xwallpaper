@@ -55,7 +55,9 @@ and shares one active-player snapshot across all web walls.
 - `Playing` beats `Paused`; when several players are active, the most recently
   active one wins. `playerctld` is ignored to avoid duplicate proxies.
 - Local `file://` artwork is embedded as a `data:` URL; remote `http(s)` artwork
-  is passed to the page as a URL. `primaryColor`/`textColor` are currently empty.
+  is passed to the page as a URL. Local and embedded artwork also gets
+  `primaryColor`, `secondaryColor`, `tertiaryColor`, `textColor` and
+  `highContrastColor` derived from the image; remote artwork keeps them empty.
 - Read-only: xwallpaper never controls the player; page-local `<audio>/<video>`
   control remains the existing key binding/`xwallpaper pause|seek` path.
 

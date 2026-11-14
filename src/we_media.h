@@ -22,6 +22,12 @@ typedef struct {
   char content_type[32];
   char art_url[XW_WE_MEDIA_URL_MAX];
   char *thumbnail; /* data: URL or http(s) URL; NULL means no artwork */
+  /* Album-art palette (#rrggbb); empty when unknown/remote. */
+  char color_primary[8];
+  char color_secondary[8];
+  char color_tertiary[8];
+  char color_text[8];
+  char color_high[8];
   int state;       /* 0 playing, 1 paused, 2 stopped */
   double position; /* seconds */
   double duration; /* seconds, 0 when unknown */
@@ -80,8 +86,10 @@ XWMediaArtKind xw_we_media_art_kind(const char *url);
 /* Resolve MPRIS artUrl to something an <img> can load:
  * file:// or absolute path -> data:image/...;base64,... (2 MiB raw cap),
  * http(s)/data -> g_strdup(url). On success *out is NULL (no art) or a
- * heap string owned by the caller. Returns 0, or -1 on bad args/read error. */
-int xw_we_media_resolve_art(const char *url, char **out);
+ * heap string owned by the caller. When m is non-NULL its color_* fields are
+ * refreshed from decodable artwork (empty for http(s) or decode failure).
+ * Returns 0, or -1 on bad args/read error. */
+int xw_we_media_resolve_art(const char *url, char **out, XWMediaInfo *m);
 
 /* Process-wide MPRIS reader (main thread only, one bus connection for all
  * web views). start() is idempotent; stop() releases everything. */
