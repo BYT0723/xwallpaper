@@ -5,6 +5,7 @@ xwallpaperd
 /tests/test_cli
 /tests/test_client
 /tests/test_geom
+/tests/test_image_cache
 /tests/test_keybinds
 /tests/test_state
 /tests/test_we_audio

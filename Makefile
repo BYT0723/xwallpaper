@@ -38,7 +38,8 @@ CLI_OBJ := $(CLI_SRC:.c=.o)
 
 # daemon: owns all wallpaper windows, links the full backend stack.
 DAEMON_SRC := src/dmain.c src/daemon.c src/state.c src/cli.c src/proto.c \
-              src/x11.c src/app.c src/image.c src/video.c src/web.c \
+              src/x11.c src/app.c src/image.c src/image_cache.c \
+              src/video.c src/web.c \
               src/web_dir.c src/web_http.c src/web_props.c src/web_dir_scan.c \
               src/props_store.c src/wl.c src/we_audio.c src/we_pulse.c \
               src/we_media.c src/we_color.c src/keybinds.c src/osd.c
@@ -161,6 +162,7 @@ xwallpaperd: $(DAEMON_OBJ)
 # layout change relinks stale objects against new ones (mixed ABI).
 HEADER_DEPS := src/cli.h src/backend.h src/xw_err.h src/proto.h \
   src/client.h src/state.h src/x11.h src/app.h src/backends.h \
+  src/image_cache.h \
   src/wl.h src/daemon.h src/web_dir.h src/web_http.h src/web_props.h src/props_store.h src/web.h src/we_audio.h src/we_pulse.h src/we_media.h src/we_color.h \
   src/keybinds.h src/osd.h \
   $(wildcard src/proto/*-client-protocol.h)
@@ -179,6 +181,9 @@ tests/test_state: tests/test_state.c src/state.o src/cli.o src/web_dir.o
 
 tests/test_web_dir: tests/test_web_dir.c src/web_dir.o
 	$(CC) $(CFLAGS) -o $@ $< src/web_dir.o
+
+tests/test_image_cache: tests/test_image_cache.c src/image_cache.o
+	$(CC) $(CFLAGS) -o $@ $< src/image_cache.o
 
 tests/test_web_http: tests/test_web_http.c src/web_http.o
 	$(CC) $(CFLAGS) -o $@ $< src/web_http.o $(shell pkg-config --libs glib-2.0 gio-2.0)

@@ -6,16 +6,57 @@
 #include <X11/Xlib.h>
 
 #include "backend.h"
+#include "image_cache.h"
 #include "x11.h"
 
 typedef struct {
   XWWindow *win;
   Imlib_Context ctx;    /* per-instance context (avoids GC caching across windows) */
-  Imlib_Image img;      /* original */
+  XWImageRef *ref;      /* shared, refcounted decode of img */
+  Imlib_Image img;      /* original (owned by ref, never freed here) */
   Imlib_Image scaled;   /* scaled to current window size */
   int scale_mode;
   int last_w, last_h;
+  Pixmap pix;           /* window-sized backing, also the window background */
+  int pix_w, pix_h;
+  GC gc;
 } ImageCtx;
+
+/* One cache for the whole daemon: every image window showing the same file
+ * shares a single decode. Always used from the main loop thread. */
+static XWImageCache *g_cache;
+static Imlib_Context g_cache_ctx;
+
+static void *cache_load(void *ud, const char *path) {
+  Imlib_Context c = (Imlib_Context)ud;
+  Imlib_Image img;
+  imlib_context_push(c);
+  img = imlib_load_image_immediately_without_cache(path);
+  imlib_context_pop();
+  return img;
+}
+
+static void cache_free(void *ud, void *p) {
+  Imlib_Context c = (Imlib_Context)ud;
+  imlib_context_push(c);
+  imlib_context_set_image((Imlib_Image)p);
+  imlib_free_image();
+  imlib_context_pop();
+}
+
+static XWImageCache *img_cache(void) {
+  XWImageCacheOps ops;
+  if (g_cache)
+    return g_cache;
+  g_cache_ctx = imlib_context_new();
+  if (!g_cache_ctx)
+    return NULL;
+  ops.load = cache_load;
+  ops.free = cache_free;
+  ops.ud = g_cache_ctx;
+  g_cache = xw_image_cache_new(&ops);
+  return g_cache;
+}
 
 static void img_get_size(Imlib_Context ctx, Imlib_Image img, int *w, int *h) {
   imlib_context_push(ctx);
@@ -47,9 +88,16 @@ static int image_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWEr
   /* disable the XImage/GC cache: it holds a GC pointing at a destroyed window
    * when windows are torn down and recreated within one process */
   imlib_set_ximage_cache_size_max(0);
-
-  ctx->img = imlib_load_image_immediately_without_cache(opt->path);
   imlib_context_pop();
+
+  if (!img_cache()) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    imlib_context_free(ctx->ctx);
+    free(ctx);
+    return -1;
+  }
+  ctx->ref = xw_image_cache_get(g_cache, opt->path);
+  ctx->img = xw_image_ref_image(ctx->ref);
   if (!ctx->img) {
     XW_ERROR_SET(err, 1, "cannot load image '%s'", opt->path);
     imlib_context_free(ctx->ctx);
@@ -67,7 +115,7 @@ static void render_tiled(ImageCtx *ctx) {
   int H = ctx->win->height;
 
   imlib_context_push(ctx->ctx);
-  imlib_context_set_drawable(ctx->win->win);
+  imlib_context_set_drawable(ctx->pix);
   imlib_context_set_image(ctx->img);
   for (int y = 0; y < H; y += ih)
     for (int x = 0; x < W; x += iw)
@@ -109,6 +157,10 @@ static void render_scaled(ImageCtx *ctx) {
     ctx->scaled = NULL;
   }
   if (!ctx->scaled) {
+    /* the free above left the context without a current image, and
+     * imlib_create_cropped_scaled_image() scales whatever is current:
+     * without this the source is NULL and the resize silently no-ops. */
+    imlib_context_set_image(ctx->img);
     ctx->scaled = imlib_create_cropped_scaled_image(0, 0, iw, ih, ow, oh);
     ctx->last_w = ow;
     ctx->last_h = oh;
@@ -118,17 +170,67 @@ static void render_scaled(ImageCtx *ctx) {
     return;
   }
 
-  imlib_context_set_drawable(ctx->win->win);
+  imlib_context_set_drawable(ctx->pix);
   imlib_context_set_image(ctx->scaled);
   imlib_render_image_on_drawable(ox, oy);
   imlib_context_pop();
 }
 
-static void redraw(ImageCtx *ctx) {
+/* Window-sized backing store: it is also installed as the window background,
+ * so the X server repaints an exposed area itself and an expose costs the
+ * daemon no pixel work. Returns 1 when a fresh (unpainted) pixmap was made. */
+static int image_pixmap(ImageCtx *ctx) {
+  Display *dpy = ctx->win->dpy;
+  int W = ctx->win->width, H = ctx->win->height;
+  Pixmap pix;
+
+  if (W <= 0 || H <= 0)
+    return 0;
+  if (ctx->pix != None && ctx->pix_w == W && ctx->pix_h == H)
+    return 0;
+  pix = XCreatePixmap(dpy, ctx->win->win, (unsigned int)W, (unsigned int)H,
+                      DefaultDepth(dpy, DefaultScreen(dpy)));
+  if (pix == None)
+    return 0;
+  /* install first: the server must never paint from a freed pixmap */
+  XSetWindowBackgroundPixmap(dpy, ctx->win->win, pix);
+  if (ctx->pix != None)
+    XFreePixmap(dpy, ctx->pix);
+  ctx->pix = pix;
+  ctx->pix_w = W;
+  ctx->pix_h = H;
+  return 1;
+}
+
+static GC image_gc(ImageCtx *ctx) {
+  if (!ctx->gc)
+    ctx->gc = XCreateGC(ctx->win->dpy, ctx->win->win, 0, NULL);
+  return ctx->gc;
+}
+
+static void paint(ImageCtx *ctx) {
+  Display *dpy = ctx->win->dpy;
+  GC gc;
+  image_pixmap(ctx);
+  if (ctx->pix == None)
+    return;
+  /* CONTAIN leaves bars; match the black background the window was created
+   * with instead of leaving the new pixmap uninitialised */
+  gc = image_gc(ctx);
+  if (gc) {
+    XSetForeground(dpy, gc, BlackPixel(dpy, DefaultScreen(dpy)));
+    XFillRectangle(dpy, ctx->pix, gc, 0, 0, (unsigned int)ctx->pix_w,
+                   (unsigned int)ctx->pix_h);
+  }
   if (ctx->scale_mode == XW_SCALE_TILE)
     render_tiled(ctx);
   else
     render_scaled(ctx);
+}
+
+static void redraw(ImageCtx *ctx) {
+  paint(ctx);
+  XClearWindow(ctx->win->dpy, ctx->win->win);
   XFlush(ctx->win->dpy);
 }
 
@@ -141,7 +243,9 @@ static int image_on_event(XWBackend *b, XEvent *ev) {
   ImageCtx *ctx = (ImageCtx *)b->priv;
   if (ev->type == Expose) {
     XExposeEvent *ex = &ev->xexpose;
-    if (ex->count == 0)
+    /* nothing to do while the window background is installed; only a window
+     * without a pixmap (never painted, or create failed) needs a client draw */
+    if (ctx->pix == None && ex->count == 0)
       redraw(ctx);
     return 1;
   }
@@ -149,7 +253,9 @@ static int image_on_event(XWBackend *b, XEvent *ev) {
     XConfigureEvent *ce = &ev->xconfigure;
     ctx->win->width = ce->width;
     ctx->win->height = ce->height;
-    redraw(ctx);
+    /* a move also reports ConfigureNotify: repaint only a real size change */
+    if (ce->width != ctx->pix_w || ce->height != ctx->pix_h)
+      redraw(ctx);
     return 1;
   }
   return 0;
@@ -164,11 +270,23 @@ static void image_destroy(XWBackend *b) {
     imlib_context_set_image(ctx->scaled);
     imlib_free_image();
   }
-  if (ctx->img) {
-    imlib_context_set_image(ctx->img);
-    imlib_free_image();
-  }
+  /* imlib_context_free() frees whatever image the context currently holds;
+   * the original belongs to the cache, so drop the pointer first or the
+   * context and the cache both free it. */
+  imlib_context_set_image(NULL);
   imlib_context_pop();
+  /* the original stays decoded only while some window still shows it */
+  xw_image_cache_put(g_cache, ctx->ref);
+  ctx->ref = NULL;
+  if (ctx->gc) {
+    XFreeGC(ctx->win->dpy, ctx->gc);
+    ctx->gc = NULL;
+  }
+  if (ctx->pix != None) {
+    XSetWindowBackgroundPixmap(ctx->win->dpy, ctx->win->win, None);
+    XFreePixmap(ctx->win->dpy, ctx->pix);
+    ctx->pix = None;
+  }
   imlib_set_ximage_cache_size_max(0); /* drop GCs tied to the destroyed window */
   imlib_context_free(ctx->ctx);
   free(ctx);
@@ -178,28 +296,35 @@ static void image_destroy(XWBackend *b) {
 /* 同类型复用: 加载新图替换旧图 (失败保留旧壁纸), 再重绘。 */
 static int image_reload(XWBackend *b, const XWBackendOpt *opt, XWError *err) {
   ImageCtx *ctx = (ImageCtx *)b->priv;
+  XWImageRef *ref;
+  Imlib_Image img;
   if (!ctx)
     return -1;
-  imlib_context_push(ctx->ctx);
-  Imlib_Image img = imlib_load_image_immediately_without_cache(opt->path);
-  if (img) {
-    if (ctx->img) {
-      imlib_context_set_image(ctx->img);
-      imlib_free_image();
-    }
+  if (!img_cache()) {
+    XW_ERROR_SET(err, 1, "out of memory");
+    return -1;
+  }
+  /* acquire first: re-setting the same file then hits the cache and keeps
+   * the decode (and, with it, the already scaled copy) untouched */
+  ref = xw_image_cache_get(g_cache, opt->path);
+  img = xw_image_ref_image(ref);
+  if (!img) {
+    XW_ERROR_SET(err, 1, "cannot load image '%s'", opt->path);
+    return -1;
+  }
+  if (img != ctx->img || ctx->scale_mode != opt->scale_mode) {
+    imlib_context_push(ctx->ctx);
     if (ctx->scaled) {
       imlib_context_set_image(ctx->scaled);
       imlib_free_image();
       ctx->scaled = NULL;
     }
-    ctx->img = img;
-    ctx->scale_mode = opt->scale_mode;
+    imlib_context_pop();
   }
-  imlib_context_pop();
-  if (!ctx->img) {
-    XW_ERROR_SET(err, 1, "cannot load image '%s'", opt->path);
-    return -1;
-  }
+  xw_image_cache_put(g_cache, ctx->ref);
+  ctx->ref = ref;
+  ctx->img = img;
+  ctx->scale_mode = opt->scale_mode;
   redraw(ctx);
   return 0;
 }

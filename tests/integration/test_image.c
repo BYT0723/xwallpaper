@@ -23,17 +23,53 @@
 #include "../../src/x11.h"
 #include "../../src/cli.h"
 
-static int read_center_red(Display *dpy, Window win, int w, int h) {
-  int cx = w / 2, cy = h / 2;
-  XImage *img = XGetImage(dpy, win, cx, cy, 1, 1, AllPlanes, ZPixmap);
+static int read_pixel_rgb(Display *dpy, Window win, int x, int y, int *r,
+                          int *g, int *b) {
+  XImage *img = XGetImage(dpy, win, x, y, 1, 1, AllPlanes, ZPixmap);
   if (!img)
-    return 0;
+    return -1;
   unsigned long px = XGetPixel(img, 0, 0);
   XFree(img);
-  int r = (px >> 16) & 0xff;
-  int g = (px >> 8) & 0xff;
-  int b = px & 0xff;
+  *r = (int)((px >> 16) & 0xff);
+  *g = (int)((px >> 8) & 0xff);
+  *b = (int)(px & 0xff);
+  return 0;
+}
+
+static int read_center_red(Display *dpy, Window win, int w, int h) {
+  int r, g, b;
+  if (read_pixel_rgb(dpy, win, w / 2, h / 2, &r, &g, &b) != 0)
+    return 0;
   return r > 150 && g < 100 && b < 100;
+}
+
+static int pixel_is_blue(Display *dpy, Window win, int x, int y) {
+  int r, g, b;
+  if (read_pixel_rgb(dpy, win, x, y, &r, &g, &b) != 0)
+    return 0;
+  return b > 150 && r < 100 && g < 100;
+}
+
+static int pixel_is_red(Display *dpy, Window win, int x, int y) {
+  int r, g, b;
+  if (read_pixel_rgb(dpy, win, x, y, &r, &g, &b) != 0)
+    return 0;
+  return r > 150 && g < 100 && b < 100;
+}
+
+/* 2x1 PPM: left red, right blue. A stretched resize must put blue on the
+ * right of the new area; stale pixels or tiled background stay red there. */
+static int write_two_color_ppm(const char *path) {
+  FILE *f = fopen(path, "wb");
+  static const unsigned char px[6] = {255, 0, 0, 0, 0, 255};
+  if (!f)
+    return -1;
+  if (fputs("P6\n2 1\n255\n", f) < 0 || fwrite(px, 1, sizeof(px), f) != sizeof(px)) {
+    fclose(f);
+    return -1;
+  }
+  fclose(f);
+  return 0;
 }
 
 static void send_resize(XWBackend *backend, int w, int h) {
@@ -94,6 +130,94 @@ static void test_image_render(Display *dpy, int x, int y, unsigned int w,
 
   backend.destroy(&backend);
   xw_x11_destroy_window(win);
+}
+
+static void test_image_background_repaint(Display *dpy, int x, int y,
+                                          unsigned int w, unsigned int h) {
+  TEST_BEGIN("X server repaints an exposed area from the window background");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_PRIMARY;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, x, y, w, h, &err);
+  TEST_CHECK(win != NULL);
+  if (!win)
+    return;
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_IMAGE;
+  opt.path = "tests/data/red.png";
+  opt.scale_mode = XW_SCALE_STRETCH;
+
+  XWBackend *tmpl = xw_image_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  XSync(dpy, False);
+  TEST_CHECK(read_center_red(dpy, win->win, (int)w, (int)h));
+
+  /* Clear without exposures: the client is not told, so only a window
+   * background can put the wallpaper back. */
+  XClearArea(dpy, win->win, 0, 0, 0, 0, False);
+  XSync(dpy, False);
+  TEST_CHECK(read_center_red(dpy, win->win, (int)w, (int)h));
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+}
+
+static void test_image_resize_rescales(Display *dpy, int x, int y) {
+  TEST_BEGIN("a real resize re-scales instead of keeping stale pixels");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+
+  char tmp[64];
+  snprintf(tmp, sizeof(tmp), "/tmp/xwtest-2c-%d.ppm", (int)getpid());
+  if (write_two_color_ppm(tmp) != 0) {
+    TEST_FAIL("cannot stage two-color image");
+    return;
+  }
+
+  XWConfig cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.target = XW_TARGET_PRIMARY;
+
+  XWWindow *win = xw_x11_create_window(dpy, &cfg, x, y, 400, 300, &err);
+  TEST_CHECK(win != NULL);
+  if (!win) {
+    unlink(tmp);
+    return;
+  }
+
+  XWBackendOpt opt;
+  memset(&opt, 0, sizeof(opt));
+  opt.type = XW_BACKEND_IMAGE;
+  opt.path = tmp;
+  opt.scale_mode = XW_SCALE_STRETCH;
+
+  XWBackend *tmpl = xw_image_backend_new();
+  XWBackend backend = *tmpl;
+  TEST_CHECK_EQ_INT(backend.init(&backend, win, &opt, &err), 0);
+  TEST_CHECK_EQ_INT(backend.start(&backend), 0);
+  XSync(dpy, False);
+  TEST_CHECK(pixel_is_red(dpy, win->win, 50, 150));
+  TEST_CHECK(pixel_is_blue(dpy, win->win, 350, 150));
+
+  /* grow the window for real, then hand the backend the configure event the
+   * daemon loop would deliver; (600,500) lies outside the old 400x300 area */
+  XResizeWindow(dpy, win->win, 800, 600);
+  XSync(dpy, False);
+  send_resize(&backend, 800, 600);
+  XSync(dpy, False);
+  TEST_CHECK(pixel_is_blue(dpy, win->win, 600, 500));
+
+  backend.destroy(&backend);
+  xw_x11_destroy_window(win);
+  unlink(tmp);
 }
 
 static void test_image_missing_file_resize(Display *dpy, int x, int y,
@@ -167,6 +291,8 @@ int main(void) {
   }
 
   test_image_render(dpy, x, y, w, h);
+  test_image_background_repaint(dpy, x, y, w, h);
+  test_image_resize_rescales(dpy, x, y);
   test_image_missing_file_resize(dpy, x, y, w, h);
   xw_x11_close_display(dpy);
   TEST_SUMMARY();
