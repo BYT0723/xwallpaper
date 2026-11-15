@@ -2,7 +2,7 @@
 # What each backend costs inside xwallpaperd, one fresh daemon per backend so
 # leftover heap from a previous backend cannot pollute the next number.
 #
-#   ./daemon-cost.sh              # Xvfb + llvmpipe (video skipped: vo=gpu aborts)
+#   ./daemon-cost.sh              # Xvfb + llvmpipe (video falls back to vo=x11)
 #   DISPLAY_SPEC=:0 ./daemon-cost.sh
 #
 # Output: tab-separated lines in results/daemon-cost.txt (PSS is the number to
@@ -87,12 +87,7 @@ X="$ROOT/xwallpaper"
 
 run_scenario idle 2 true
 run_scenario image 2 "$X" set $G "$ROOT/tests/data/red.png"
-if [ "$DISPLAY_SPEC" = xvfb ]; then
-  echo "video	skipped: libmpv vo=gpu aborts under llvmpipe (no DRI3); rerun with DISPLAY_SPEC=:0" |
-    tee -a "$OUT/daemon-cost.txt"
-else
-  run_scenario video 3 "$X" set $G --video "$ROOT/tests/data/bounce.mp4" --mute
-fi
+run_scenario video 3 "$X" set $G --video "$ROOT/tests/data/bounce.mp4" --mute
 
 # web, then clear inside the same daemon: the residual line is what a user sees
 # after switching a web wallpaper off.
