@@ -2,6 +2,9 @@
  * Verifies: display opens, geometry resolves, desktop-type window is created
  * with the right size and props, and destruction is clean. */
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <stdio.h>
@@ -169,6 +172,40 @@ static void test_two_windows_siblings(void) {
   XSync(dpy, False);
 }
 
+/* libmpv closes fd 0 whenever stdin is not a tty, so a display opened after
+ * mpv ran used to land on fd 0 and die on mpv's next close(): "X connection
+ * broken" and exit(1), or a SIGSEGV in the daemon. The display must never sit
+ * on fd 0-2. */
+static void test_display_avoids_low_fds(void) {
+  TEST_BEGIN("display connection never lands on fd 0-2");
+  XWError err;
+  memset(&err, 0, sizeof(err));
+
+  Display *dpy = xw_x11_open_display(&err);
+  TEST_CHECK(dpy != NULL);
+  if (!dpy)
+    return;
+  xw_x11_close_display(dpy);
+
+  close(0);
+  for (int i = 0; i < 2; i++) {
+    dpy = xw_x11_open_display(&err);
+    TEST_CHECK(dpy != NULL);
+    if (!dpy)
+      break;
+    TEST_CHECK(ConnectionNumber(dpy) >= 3);
+    xw_x11_close_display(dpy);
+  }
+
+  /* leave stdin usable for whatever runs next */
+  int devnull = open("/dev/null", O_RDWR);
+  if (devnull >= 0) {
+    dup2(devnull, 0);
+    if (devnull != 0)
+      close(devnull);
+  }
+}
+
 int main(void) {
   TEST_SUITE("x11 integration (Xvfb)");
   test_open_display();
@@ -176,5 +213,6 @@ int main(void) {
   test_resolve_geometry_override();
   test_create_window();
   test_two_windows_siblings();
+  test_display_avoids_low_fds();
   TEST_SUMMARY();
 }

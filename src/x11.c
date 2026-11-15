@@ -1,6 +1,9 @@
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <X11/Xatom.h>
 #include <X11/Xproto.h>
@@ -14,10 +17,31 @@
 
 static Display *shared_dpy = NULL;
 
+/* XOpenDisplay() binds the socket to the lowest free fd. libmpv closes fd 0
+ * whenever stdin is not a tty (its terminal setup), so a display opened after
+ * mpv ran can land on fd 0 and die on mpv's next close(): Xlib then reports
+ * "X connection to :N broken" and exits the process. Keep 0-2 occupied while
+ * opening so the connection never sits on a fd another library closes. */
+static int occupy_low_fds(int fds[3]) {
+  int n = 0;
+  for (int fd = 0; fd < 3; fd++) {
+    if (fcntl(fd, F_GETFD) < 0 && errno == EBADF) {
+      int t = open("/dev/null", O_RDWR);
+      if (t >= 0)
+        fds[n++] = t;
+    }
+  }
+  return n;
+}
+
 Display *xw_x11_open_display(XWError *err) {
   if (shared_dpy)
     return shared_dpy;
+  int guard[3];
+  int nguard = occupy_low_fds(guard);
   shared_dpy = XOpenDisplay(NULL);
+  for (int i = 0; i < nguard; i++)
+    close(guard[i]);
   if (!shared_dpy) {
     XW_ERROR_SET(err, 1, "could not open X display (is DISPLAY set?)");
     return NULL;
