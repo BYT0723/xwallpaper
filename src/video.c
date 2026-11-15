@@ -38,6 +38,17 @@ static void load_file(VideoBase *m) {
   mpv_command(m->mpv, cmd);
 }
 
+/* Accelerated GL needs DRI3 on X11; without it Mesa falls back to llvmpipe,
+ * where mpv's GL vo renders nothing under Xvfb/Xvnc and deadlocks on the
+ * second teardown in one process. Wayland builds leave win->dpy NULL and keep
+ * the GL vo. */
+static int video_gl_unavailable(XWWindow *win) {
+  int ev, err, maj;
+  if (!win || !win->dpy)
+    return 0;
+  return !XQueryExtension(win->dpy, "DRI3", &maj, &ev, &err);
+}
+
 static int video_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWError *err) {
   VideoCtx *ctx = calloc(1, sizeof(*ctx));
   if (!ctx) {
@@ -65,8 +76,17 @@ static int video_init(XWBackend *b, XWWindow *win, const XWBackendOpt *opt, XWEr
     return -1;
   }
   mpv_set_option_string(ctx->base.mpv, "loop-file", "inf");
-  mpv_set_option_string(ctx->base.mpv, "vo", "gpu");
-  mpv_set_option_string(ctx->base.mpv, "hwdec", "auto-safe");
+  if (video_gl_unavailable(win)) {
+    /* No DRI3 (Xvfb, Xvnc, most VMs): Mesa would hand mpv llvmpipe, where the
+     * GL vo shows no picture and its teardown deadlocks as soon as a second
+     * video backend is destroyed in the same process. The software vo works
+     * there, so pick it up front instead of hanging. */
+    mpv_set_option_string(ctx->base.mpv, "vo", "x11");
+    mpv_set_option_string(ctx->base.mpv, "hwdec", "no");
+  } else {
+    mpv_set_option_string(ctx->base.mpv, "vo", "gpu");
+    mpv_set_option_string(ctx->base.mpv, "hwdec", "auto-safe");
+  }
   mpv_set_option_string(ctx->base.mpv, "input-default-bindings", "no");
   mpv_set_option_string(ctx->base.mpv, "input-vo-keyboard", "no");
   mpv_set_option_string(ctx->base.mpv, "osc", "no");
