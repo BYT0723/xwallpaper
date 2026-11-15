@@ -38,3 +38,9 @@ tasks/
 /tests/test_osd
 /tests/test_web_http
 /tests/test_web_dir_scan
+
+# web engine bench (manual only, see docs/specs/web-engine-eval.md)
+bench/web-engine/wbench-4.1
+bench/web-engine/wbench-6.0
+bench/web-engine/results/
+bench/web-engine/results-gpu/
